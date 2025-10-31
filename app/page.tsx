@@ -1,123 +1,320 @@
-"use client";
+'use client'
 
-import { useEffect, useRef, useState } from "react";
+import { useState, useRef, useEffect } from 'react'
+import styles from './page.module.css'
 
-type ChatChunk = {
-  textDelta?: string;
-  audioBase64Delta?: string;
-};
+export default function Home() {
+  const [isConnected, setIsConnected] = useState(false)
+  const [transcription, setTranscription] = useState('')
+  const [partialTranscription, setPartialTranscription] = useState('')
+  const [transcriptionHistory, setTranscriptionHistory] = useState<string[]>([])
+  const [isListening, setIsListening] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const pcRef = useRef<RTCPeerConnection | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
-export default function Page() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [message, setMessage] = useState("");
-  const [transcript, setTranscript] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const PIPECAT_URL = process.env.NEXT_PUBLIC_PIPECAT_URL || 'http://localhost:7860'
+
+  interface ExtendedRTCPeerConnection extends RTCPeerConnection {
+    pc_id?: string
+    pendingIceCandidates: RTCIceCandidate[]
+    canSendIceCandidates: boolean
+  }
 
   useEffect(() => {
-    (async () => {
+    return () => {
+      stopConnection()
+    }
+  }, [])
+
+  const sendIceCandidate = async (pc: ExtendedRTCPeerConnection, candidate: RTCIceCandidate) => {
+    if (!pc.pc_id) {
+      console.error('Cannot send ICE candidate: pc_id not set')
+      return
+    }
+
+    await fetch(`${PIPECAT_URL}/api/offer`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pc_id: pc.pc_id,
+        candidates: [{
+          candidate: candidate.candidate,
+          sdp_mid: candidate.sdpMid,
+          sdp_mline_index: candidate.sdpMLineIndex,
+        }],
+      }),
+    })
+  }
+
+  const createSmallWebRTCConnection = async (audioTrack: MediaStreamTrack) => {
+    const config = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+      ],
+    }
+
+    const pc = new RTCPeerConnection(config) as ExtendedRTCPeerConnection
+
+    // Queue to store ICE candidates until we have received the answer and have a session in progress
+    pc.pendingIceCandidates = []
+    pc.canSendIceCandidates = false
+
+    // Handle incoming audio tracks (TTS audio from server)
+    pc.ontrack = (event) => {
+      console.log('Received remote track:', event.track.kind)
+      if (event.track.kind === 'audio') {
+        const audioElement = audioRef.current
+        if (audioElement) {
+          audioElement.srcObject = event.streams[0]
+          audioElement.play().catch(console.error)
+        }
+      }
+    }
+
+    // SmallWebRTCTransport expects to receive both transceivers
+    pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
+    pc.addTransceiver('video', { direction: 'sendrecv' })
+
+    // Create data channel for receiving transcription messages from server
+    // This must be created BEFORE creating the offer
+    const dataChannel = pc.createDataChannel('messages', { ordered: true })
+    
+    dataChannel.onopen = () => {
+      console.log('Data channel opened')
+    }
+    
+    dataChannel.onmessage = (event) => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+        const data = JSON.parse(event.data)
+        console.log('Received data channel message:', data)
+        if (data.type === 'transcription') {
+          setTranscription(data.text)
+          setPartialTranscription('')
+          if (data.text) {
+            setTranscriptionHistory(prev => [...prev, data.text])
+          }
+        } else if (data.type === 'partial') {
+          setPartialTranscription(data.text)
         }
       } catch (e) {
-        // ignore
+        console.error('Error parsing data channel message:', e)
       }
-    })();
-  }, []);
-
-  const handleSend = async () => {
-    if (!message.trim()) return;
-    setIsLoading(true);
-    setTranscript("");
-    let audioBase64 = "";
-
-    try {
-      // Capture a snapshot from the camera
-      let imageDataUrl: string | undefined = undefined;
-      if (videoRef.current) {
-        const video = videoRef.current;
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 360;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          imageDataUrl = canvas.toDataURL("image/jpeg", 0.85);
-        }
-      }
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, imageDataUrl })
-      });
-
-      if (!res.body) throw new Error("No response body");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line) continue;
-          try {
-            const chunk: ChatChunk = JSON.parse(line);
-            if (chunk.textDelta) setTranscript((t) => t + chunk.textDelta);
-            if (chunk.audioBase64Delta) audioBase64 += chunk.audioBase64Delta;
-          } catch {}
-        }
-      }
-
-      if (audioBase64 && audioRef.current) {
-        const bytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "audio/wav" });
-        const url = URL.createObjectURL(blob);
-        audioRef.current.src = url;
-        await audioRef.current.play().catch(() => {});
-      }
-    } catch (e) {
-      // ignore
-    } finally {
-      setIsLoading(false);
     }
-  };
+    
+    dataChannel.onerror = (error) => {
+      console.error('Data channel error:', error)
+    }
+    
+    // Also listen for data channels created by server (backup)
+    pc.ondatachannel = (event) => {
+      const serverChannel = event.channel
+      console.log('Server data channel received:', serverChannel.label)
+      
+      serverChannel.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          console.log('Received from server channel:', data)
+          if (data.type === 'transcription') {
+            setTranscription(data.text)
+            setPartialTranscription('')
+            if (data.text) {
+              setTranscriptionHistory(prev => [...prev, data.text])
+            }
+          } else if (data.type === 'partial') {
+            setPartialTranscription(data.text)
+          }
+        } catch (e) {
+          console.error('Error parsing server channel message:', e)
+        }
+      }
+      
+      serverChannel.onopen = () => {
+        console.log('Server data channel opened')
+      }
+    }
+
+    // Handle ICE candidates
+    pc.onicecandidate = async (event) => {
+      if (event.candidate) {
+        console.log('New ICE candidate:', event.candidate)
+        // Check if we can send ICE candidates (we have received the answer with pc_id)
+        if (pc.canSendIceCandidates && pc.pc_id) {
+          // Send immediately
+          await sendIceCandidate(pc, event.candidate)
+        } else {
+          // Queue the candidate until we have pc_id
+          pc.pendingIceCandidates.push(event.candidate)
+        }
+      } else {
+        console.log('All ICE candidates have been sent.')
+      }
+    }
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE connection state:', pc.iceConnectionState)
+    }
+
+    pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState)
+      if (pc.connectionState === 'connected') {
+        setIsConnected(true)
+        setIsListening(true)
+      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        setIsConnected(false)
+        setIsListening(false)
+      }
+    }
+
+    // Create offer
+    await pc.setLocalDescription(await pc.createOffer())
+    const offer = pc.localDescription
+
+    // Send offer to server
+    const response = await fetch(`${PIPECAT_URL}/api/offer`, {
+      body: JSON.stringify({ sdp: offer!.sdp, type: offer!.type }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`)
+    }
+
+    const answer = await response.json()
+    pc.pc_id = answer.pc_id
+
+    // Set remote description from server answer
+    await pc.setRemoteDescription(answer)
+
+    // Now we can send ICE candidates
+    pc.canSendIceCandidates = true
+
+    // Send any queued ICE candidates
+    for (const candidate of pc.pendingIceCandidates) {
+      await sendIceCandidate(pc, candidate)
+    }
+    pc.pendingIceCandidates = []
+
+    return pc
+  }
+
+  const startConnection = async () => {
+    try {
+      setError(null)
+      setIsConnected(false)
+      setIsListening(false)
+
+      // Get user media (audio only)
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = audioStream
+
+      // Create SmallWebRTC connection
+      const pc = await createSmallWebRTCConnection(audioStream.getAudioTracks()[0])
+      pcRef.current = pc
+
+      console.log('WebRTC connection established')
+
+    } catch (err) {
+      console.error('Error starting connection:', err)
+      setError(err instanceof Error ? err.message : 'Failed to start connection')
+      stopConnection()
+    }
+  }
+
+  const stopConnection = () => {
+    if (pcRef.current) {
+      pcRef.current.close()
+      pcRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    if (audioRef.current) {
+      audioRef.current.srcObject = null
+    }
+    setIsConnected(false)
+    setIsListening(false)
+    setTranscription('')
+    setPartialTranscription('')
+  }
+
+  // Note: Transcription and TTS are handled by the pipeline on the server side
+  // The WebRTC connection streams audio bidirectionally, so speech goes directly to STT
+  // and TTS audio comes back through the audio track
 
   return (
-    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1fr", maxWidth: 900, margin: "0 auto" }}>
-      <h1 style={{ margin: 0 }}>Qwen3 Omni (Text + Audio) with Camera</h1>
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-        <div>
-          <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8, background: "#111" }} />
-        </div>
-        <div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type your message"
-              rows={5}
-              style={{ width: "100%", resize: "vertical" }}
-            />
-            <button onClick={handleSend} disabled={isLoading}>
-              {isLoading ? "Sending..." : "Send"}
+    <main className={styles.main}>
+      <div className={styles.container}>
+        <h1 className={styles.title}>TARS Omni</h1>
+        <p className={styles.subtitle}>Real-time Voice AI with Speechmatics & ElevenLabs (WebRTC)</p>
+        
+        {error && (
+          <div className={styles.error}>
+            Error: {error}
+          </div>
+        )}
+        
+        <div className={styles.controls}>
+          {!isConnected ? (
+            <button 
+              onClick={startConnection} 
+              className={styles.button}
+            >
+              Start Voice Session
             </button>
-          </div>
-          <div style={{ marginTop: 12, padding: 12, background: "#f5f5f5", minHeight: 120, borderRadius: 8, whiteSpace: "pre-wrap" }}>
-            {transcript || (isLoading ? "Waiting for response..." : "Model response will appear here.")}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <audio ref={audioRef} controls />
-          </div>
+          ) : (
+            <button 
+              onClick={stopConnection} 
+              className={`${styles.button} ${styles.stopButton}`}
+            >
+              Stop Session
+            </button>
+          )}
         </div>
+        
+        {isListening && (
+          <div className={styles.status}>
+            <div className={styles.pulse}></div>
+            <span>Listening...</span>
+          </div>
+        )}
+        
+        <div className={styles.transcription}>
+          <h2>Live Transcription</h2>
+          {!transcription && !partialTranscription && (
+            <p className={styles.placeholder}>
+              Transcription will appear here as you speak...
+            </p>
+          )}
+          {transcription && (
+            <div className={styles.finalTranscript}>
+              <strong>Final:</strong> {transcription}
+            </div>
+          )}
+          {partialTranscription && (
+            <div className={styles.partialTranscript}>
+              <em>Listening: {partialTranscription}</em>
+            </div>
+          )}
+          {transcriptionHistory.length > 0 && (
+            <div className={styles.history}>
+              <h3>History:</h3>
+              {transcriptionHistory.slice(-5).reverse().map((text, idx) => (
+                <div key={idx} className={styles.historyItem}>{text}</div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        <audio ref={audioRef} className={styles.audio} controls autoPlay />
+        <p className={styles.info}>
+          Audio from your microphone is sent to the server via WebRTC.
+          TTS audio responses will play automatically above.
+        </p>
       </div>
-    </div>
-  );
+    </main>
+  )
 }
-

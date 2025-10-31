@@ -1,15 +1,20 @@
-export const metadata = {
-  title: "Qwen3 Omni Web",
-  description: "Chat with text + audio and camera preview"
-};
+import type { Metadata } from 'next'
+import './globals.css'
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const metadata: Metadata = {
+  title: 'TARS Omni - Real-time Voice AI',
+  description: 'Real-time transcription and text-to-speech using Speechmatics and ElevenLabs',
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
   return (
     <html lang="en">
-      <body style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system', margin: 0, padding: 16 }}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
-  );
+  )
 }
 

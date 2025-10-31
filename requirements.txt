@@ -1,5 +1,7 @@
-openai>=1.0.0
+pipecat-ai[speechmatics,elevenlabs,webrtc]>=0.0.48
 python-dotenv>=1.0.0
-requests>=2.25.0
-numpy>=1.23.0
-soundfile>=0.12.1
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+loguru>=0.7.0
+certifi>=2024.0.0
+
