@@ -1,0 +1,6 @@
+# Environment variables for Qwen3 Omni Turbo Realtime
+# Copy this file to .env and add your actual API key
+
+# Get your API key from Alibaba Cloud Model Studio
+# https://dashscope.console.aliyun.com/
+DASHSCOPE_API_KEY=your_api_key_here
