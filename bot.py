@@ -1,0 +1,281 @@
+"""Bot pipeline setup and execution."""
+
+import json
+import os
+import logging
+
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.frames.frames import LLMRunFrame, UserImageRequestFrame
+from pipecat.pipeline.parallel_pipeline import ParallelPipeline
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineTask
+from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.services.llm_service import FunctionCallParams
+from pipecat.services.moondream.vision import MoondreamService
+from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.qwen.llm import QwenLLMService
+from pipecat.transcriptions.language import Language
+from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+
+from loguru import logger
+
+from config import (
+    SPEECHMATICS_API_KEY,
+    ELEVENLABS_API_KEY,
+    ELEVENLABS_VOICE_ID,
+    QWEN_API_KEY,
+    QWEN_MODEL,
+)
+from processors import SimpleTranscriptionLogger, VideoPassThrough
+
+
+async def fetch_user_image(params: FunctionCallParams):
+    """Fetch the user image for vision analysis.
+
+    When called, this function pushes a UserImageRequestFrame upstream to the
+    transport. As a result, the transport will request the user image and push a
+    UserImageRawFrame downstream to Moondream for processing.
+    """
+    user_id = params.arguments["user_id"]
+    question = params.arguments["question"]
+    logger.info(f"📸 Requesting image with user_id={user_id}, question={question}")
+
+    # Request a user image frame. We don't want the requested
+    # image to be added to the context because we will process it with
+    # Moondream.
+    await params.llm.push_frame(
+        UserImageRequestFrame(user_id=user_id, text=question, append_to_context=False),
+        FrameDirection.UPSTREAM,
+    )
+
+    await params.result_callback(None)
+
+
+async def run_bot(webrtc_connection):
+    """Run the bot pipeline with the given WebRTC connection"""
+    logger.info("Starting bot pipeline for WebRTC connection...")
+
+    try:
+        # Create SmallWebRTC transport from the connection
+        pipecat_transport = SmallWebRTCTransport(
+            webrtc_connection=webrtc_connection,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                video_in_enabled=True,
+                video_out_enabled=True,
+                video_out_is_live=True,
+            ),
+        )
+
+        # Initialize Speechmatics STT
+        logger.info("Initializing Speechmatics STT...")
+        stt = None
+        try:
+            stt = SpeechmaticsSTTService(
+                api_key=SPEECHMATICS_API_KEY,
+                params=SpeechmaticsSTTService.InputParams(
+                    language=Language.EN,
+                ),
+            )
+            logger.info("✓ Speechmatics STT initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
+            return
+
+        # Initialize ElevenLabs TTS with Flash model
+        logger.info("Initializing ElevenLabs TTS...")
+        tts = None
+        try:
+            tts = ElevenLabsTTSService(
+                api_key=ELEVENLABS_API_KEY,
+                voice_id=ELEVENLABS_VOICE_ID,
+                model="eleven_flash_v2_5"
+            )
+            logger.info("✓ ElevenLabs TTS initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
+            return
+
+        # Initialize Qwen LLM service
+        logger.info("Initializing Qwen LLM...")
+        if not QWEN_API_KEY or len(QWEN_API_KEY) < 10:
+            logger.error(f"QWEN_API_KEY appears invalid (length: {len(QWEN_API_KEY) if QWEN_API_KEY else 0}). Please check your .env.local file.")
+            return
+        logger.info(f"Using Qwen API key starting with: {QWEN_API_KEY[:8]}... (model: {QWEN_MODEL})")
+        llm = None
+        try:
+            llm = QwenLLMService(
+                api_key=QWEN_API_KEY,
+                model=QWEN_MODEL
+            )
+            # Register function for image requests
+            llm.register_function("fetch_user_image", fetch_user_image)
+            logger.info(f"✓ Qwen LLM initialized with model: {QWEN_MODEL}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Qwen LLM: {e}", exc_info=True)
+            logger.error("This might be due to an invalid API key. Please check your QWEN_API_KEY in .env.local")
+            return
+
+        # Initialize Moondream vision service
+        logger.info("Initializing Moondream vision service...")
+        try:
+            moondream = MoondreamService()
+            logger.info("✓ Moondream vision service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Moondream: {e}", exc_info=True)
+            logger.error("Moondream initialization failed. Make sure pipecat-ai[moondream] is installed.")
+            return
+
+        if not stt or not tts or not llm:
+            logger.error("Failed to initialize services. Cannot start bot.")
+            return
+
+        # Create LLM context and aggregator pair
+        logger.info("Creating LLM context aggregator pair...")
+
+        # Load system prompt from character.json
+        character_file = os.path.join(os.path.dirname(__file__), "character.json")
+        try:
+            with open(character_file, "r", encoding="utf-8") as f:
+                system_prompt = json.load(f)
+            logger.info(f"✓ Loaded character prompt from {character_file}")
+        except FileNotFoundError:
+            logger.warning(f"character.json not found at {character_file}, using default prompt")
+            system_prompt = {
+                "role": "system",
+                "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing character.json: {e}, using default prompt")
+            system_prompt = {
+                "role": "system",
+                "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
+            }
+
+        # Create function schema for image fetching
+        fetch_image_function = FunctionSchema(
+            name="fetch_user_image",
+            description="Called when the user requests a description of their camera feed or wants to know what they're showing on camera",
+            properties={
+                "user_id": {
+                    "type": "string",
+                    "description": "The ID of the user to grab the image from",
+                },
+                "question": {
+                    "type": "string",
+                    "description": "The question that the user is asking about the image",
+                },
+            },
+            required=["user_id", "question"],
+        )
+        tools = ToolsSchema(standard_tools=[fetch_image_function])
+
+        messages = [system_prompt]
+        context = LLMContext(messages, tools)
+        context_aggregator = LLMContextAggregatorPair(context)
+
+        # Create simple transcription logger with WebRTC connection for sending messages
+        transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
+
+        # Create the video pass-through processor
+        # We'll use it in two places: right after input to handle video early,
+        # and before output as a fallback
+        video_passthrough_early = VideoPassThrough()
+        video_passthrough_late = VideoPassThrough()
+
+        # Create pipeline with ParallelPipeline for Qwen + Moondream
+        # Pipeline flow:
+        #   transport.input() -> video_passthrough_early (converts InputImageRawFrame to OutputImageRawFrame) ->
+        #   STT -> logger -> context_aggregator.user() ->
+        #   ParallelPipeline([llm], [moondream]) -> TTS -> video_passthrough_late (fallback) ->
+        #   transport.output() -> context_aggregator.assistant()
+        #
+        # Qwen LLM and Moondream process in parallel:
+        # - Qwen handles text responses and can call fetch_user_image function
+        # - Moondream processes UserImageRawFrame requests from Qwen
+        # - Video frames are passed through early for display, and also passed through late as fallback
+        logger.info("Creating audio/video pipeline with Qwen + Moondream...")
+
+        # Build parallel pipeline branches
+        parallel_branches = [llm]  # Qwen LLM branch
+        if moondream:
+            parallel_branches.append(moondream)  # Moondream vision branch
+
+        pipeline = Pipeline([
+            pipecat_transport.input(),      # Receives all frames (audio and video)
+            video_passthrough_early,        # Convert InputImageRawFrame to OutputImageRawFrame early
+            stt,                            # Speech to text
+            transcription_logger,           # Log transcriptions
+            context_aggregator.user(),      # Process user input into context
+            ParallelPipeline(parallel_branches),  # Parallel processing: Qwen + Moondream
+            tts,                            # Text to speech
+            video_passthrough_late,         # Fallback: handle any video frames that made it here
+            pipecat_transport.output(),     # Sends both TTS audio and video to transport
+            context_aggregator.assistant(), # Process assistant response into context
+        ])
+
+        # Store client_id and task reference for event handlers
+        client_id_storage = {"client_id": None}
+        task_ref = {"task": None}
+
+        # Set up event handlers before creating task
+        @pipecat_transport.event_handler("on_client_connected")
+        async def on_client_connected(transport, client):
+            logger.info("Pipecat Client connected")
+            # Capture camera video stream
+            try:
+                await pipecat_transport.capture_participant_video("camera")
+                logger.info("Camera video capture started")
+            except Exception as e:
+                logger.error(f"Error capturing camera video: {e}", exc_info=True)
+
+            # Get client ID for function calls
+            # For SmallWebRTC, we'll use a simple identifier
+            client_id_storage["client_id"] = "user_1"
+
+            # Test if we can send a message
+            try:
+                if webrtc_connection.is_connected():
+                    logger.info("WebRTC connection is ready for sending messages")
+                    # Test message
+                    webrtc_connection.send_app_message({
+                        "type": "system",
+                        "message": "Connection established"
+                    })
+                else:
+                    logger.warning("WebRTC connection not ready yet")
+            except Exception as e:
+                logger.error(f"Error sending test message: {e}", exc_info=True)
+
+            # Kick off the conversation with introduction
+            if task_ref["task"]:
+                messages.append({
+                    "role": "system",
+                    "content": f"Please introduce yourself to the user. Use '{client_id_storage['client_id']}' as the user ID during function calls.",
+                })
+                await task_ref["task"].queue_frames([LLMRunFrame()])
+
+        @pipecat_transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(transport, client):
+            logger.info("Pipecat Client disconnected")
+            if task_ref["task"]:
+                await task_ref["task"].cancel()
+
+        # Create and run pipeline task
+        task = PipelineTask(pipeline)
+        task_ref["task"] = task
+        runner = PipelineRunner(handle_sigint=False)
+
+        logger.info("Starting pipeline runner...")
+        await runner.run(task)
+
+    except Exception as e:
+        logger.error(f"Error in bot pipeline: {e}", exc_info=True)
+

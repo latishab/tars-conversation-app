@@ -11,6 +11,8 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const localVideoRef = useRef<HTMLVideoElement>(null)
+  const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
@@ -48,7 +50,7 @@ export default function Home() {
     })
   }
 
-  const createSmallWebRTCConnection = async (audioTrack: MediaStreamTrack) => {
+  const createSmallWebRTCConnection = async (audioTrack: MediaStreamTrack, videoTrack: MediaStreamTrack | null) => {
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -61,7 +63,7 @@ export default function Home() {
     pc.pendingIceCandidates = []
     pc.canSendIceCandidates = false
 
-    // Handle incoming audio tracks (TTS audio from server)
+    // Handle incoming audio and video tracks from server
     pc.ontrack = (event) => {
       console.log('Received remote track:', event.track.kind)
       if (event.track.kind === 'audio') {
@@ -70,12 +72,23 @@ export default function Home() {
           audioElement.srcObject = event.streams[0]
           audioElement.play().catch(console.error)
         }
+      } else if (event.track.kind === 'video') {
+        const videoElement = remoteVideoRef.current
+        if (videoElement) {
+          videoElement.srcObject = event.streams[0]
+          videoElement.play().catch(console.error)
+        }
       }
     }
 
     // SmallWebRTCTransport expects to receive both transceivers
     pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
-    pc.addTransceiver('video', { direction: 'sendrecv' })
+    if (videoTrack) {
+      pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
+    } else {
+      // Add video transceiver even if no video track yet (server expects it)
+      pc.addTransceiver('video', { direction: 'sendrecv' })
+    }
 
     // Create data channel for receiving transcription messages from server
     // This must be created BEFORE creating the offer
@@ -206,12 +219,30 @@ export default function Home() {
       setIsConnected(false)
       setIsListening(false)
 
-      // Get user media (audio only)
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = audioStream
+      // Get user media (audio and video)
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true,
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        }
+      })
+      streamRef.current = mediaStream
+
+      // Display local video stream
+      const localVideoElement = localVideoRef.current
+      if (localVideoElement) {
+        localVideoElement.srcObject = mediaStream
+        localVideoElement.play().catch(console.error)
+      }
+
+      // Get audio and video tracks
+      const audioTrack = mediaStream.getAudioTracks()[0]
+      const videoTrack = mediaStream.getVideoTracks()[0] || null
 
       // Create SmallWebRTC connection
-      const pc = await createSmallWebRTCConnection(audioStream.getAudioTracks()[0])
+      const pc = await createSmallWebRTCConnection(audioTrack, videoTrack)
       pcRef.current = pc
 
       console.log('WebRTC connection established')
@@ -234,6 +265,12 @@ export default function Home() {
     }
     if (audioRef.current) {
       audioRef.current.srcObject = null
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null
     }
     setIsConnected(false)
     setIsListening(false)
@@ -309,9 +346,33 @@ export default function Home() {
           )}
         </div>
         
+        {isConnected && (
+          <div className={styles.videoContainer}>
+            <div className={styles.videoWrapper}>
+              <video 
+                ref={localVideoRef} 
+                className={styles.localVideo} 
+                autoPlay 
+                playsInline 
+                muted
+              />
+              <div className={styles.videoLabel}>You</div>
+            </div>
+            <div className={styles.videoWrapper}>
+              <video 
+                ref={remoteVideoRef} 
+                className={styles.remoteVideo} 
+                autoPlay 
+                playsInline
+              />
+              <div className={styles.videoLabel}>Remote</div>
+            </div>
+          </div>
+        )}
+        
         <audio ref={audioRef} className={styles.audio} controls autoPlay />
         <p className={styles.info}>
-          Audio from your microphone is sent to the server via WebRTC.
+          Audio and video from your camera are sent to the server via WebRTC.
           TTS audio responses will play automatically above.
         </p>
       </div>
