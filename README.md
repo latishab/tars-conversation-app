@@ -1,12 +1,13 @@
 # TARS Omni - Real-time Voice AI
 
-A Next.js application that provides real-time voice transcription using Speechmatics and text-to-speech using ElevenLabs, integrated with pipecat.ai for real-time audio processing.
+A Next.js application that provides real-time voice transcription using Speechmatics and text-to-speech using ElevenLabs, integrated with pipecat.ai and SmallWebRTC for peer-to-peer real-time audio processing.
 
 ## Features
 
 - 🎤 **Real-time Transcription**: Live audio transcription using Speechmatics
 - 🔊 **Text-to-Speech**: Natural voice synthesis using ElevenLabs
-- ⚡ **WebSocket Communication**: Low-latency real-time audio streaming
+- 🌐 **WebRTC Communication**: Direct peer-to-peer WebRTC audio streaming (no WebSocket proxy needed)
+- 📱 **Live Transcription Display**: Real-time transcription updates on the frontend
 - 🎨 **Modern UI**: Beautiful, responsive user interface
 
 ## Prerequisites
@@ -27,14 +28,14 @@ npm install
 2. Install Python dependencies:
 
 ```bash
-pip install "pipecat-ai[speechmatics,elevenlabs]"
-pip install python-dotenv websockets
+pip install -r requirements.txt
 ```
 
-Or use the requirements file:
+Or manually install:
 
 ```bash
-pip install -r requirements.txt
+pip install "pipecat-ai[speechmatics,elevenlabs,webrtc]>=0.0.48"
+pip install fastapi uvicorn[standard] loguru python-dotenv certifi
 ```
 
 3. Create a `.env.local` file in the root directory:
@@ -49,19 +50,26 @@ cp env.example .env.local
 SPEECHMATICS_API_KEY=your_speechmatics_api_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 ELEVENLABS_VOICE_ID=ry8mpwRw6nugb2qjP0tu  # Optional, defaults to custom voice
+
+# Pipecat FastAPI service configuration
+PIPECAT_HOST=localhost
+PIPECAT_PORT=7860
+
+# Frontend configuration
+NEXT_PUBLIC_PIPECAT_URL=http://localhost:7860
 ```
 
 ## Running the Application
 
 You need to run TWO servers:
 
-1. **Start the Pipecat Python service** (in one terminal):
+1. **Start the Pipecat FastAPI service** (in one terminal):
 
 ```bash
-python pipecat_service.py
+python3 pipecat_service.py
 ```
 
-This will start the Pipecat service on `ws://localhost:8765`
+This will start the FastAPI service on `http://localhost:7860`
 
 2. **Start the Next.js server** (in another terminal):
 
@@ -76,47 +84,77 @@ The application will be available at `http://localhost:3000`
 ### Production
 
 ```bash
+# Build Next.js app
 npm run build
+
+# Start Next.js server
 npm start
+
+# Start Pipecat service (in another terminal)
+python3 pipecat_service.py --host 0.0.0.0 --port 7860
 ```
 
 ## How It Works
 
-1. **Audio Input**: The browser captures audio from the user's microphone using the MediaRecorder API
-2. **WebSocket Streaming**: Audio chunks are sent to the server via WebSocket
-3. **Transcription**: Speechmatics processes the audio in real-time and returns transcriptions
-4. **Text-to-Speech**: When text is received, ElevenLabs converts it to speech
-5. **Audio Output**: The synthesized speech is streamed back to the browser and played
+1. **Audio Input**: The browser captures audio from the user's microphone
+2. **WebRTC Connection**: Browser establishes a peer-to-peer WebRTC connection directly with the FastAPI server
+3. **Audio Streaming**: Audio is streamed bidirectionally via WebRTC (no WebSocket proxy needed)
+4. **Transcription**: Speechmatics processes the audio in real-time and returns transcriptions
+5. **Transcription Display**: Transcriptions are sent to the frontend via WebRTC data channel and displayed live
+6. **Text-to-Speech**: ElevenLabs converts transcriptions to speech
+7. **Audio Output**: The synthesized speech is streamed back to the browser via WebRTC and played automatically
 
 ## Architecture
 
 ```
-┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│   Browser   │◄───────►│  Next.js     │◄───────►│ Speechmatics│
-│  (WebSocket)│         │   Server     │         │  API        │
-└─────────────┘         └──────────────┘         └─────────────┘
+┌─────────────┐         ┌─────────────────┐         ┌─────────────┐
+│   Browser   │◄───────►│  FastAPI Server │◄───────►│ Speechmatics│
+│   (WebRTC)  │         │   (Port 7860)   │         │  API        │
+└─────────────┘         └─────────────────┘         └─────────────┘
+                               │
+                               │ (Pipecat Pipeline)
                                │
                                ▼
                         ┌─────────────┐
                         │ ElevenLabs  │
                         │     API     │
                         └─────────────┘
+
+┌─────────────┐         ┌──────────────┐
+│   Browser   │         │  Next.js     │
+│   (WebRTC)  │         │  (Port 3000) │
+│             │         │              │
+│ Displays    │◄────────│  Serves UI   │
+│Transcriptions         │              │
+└─────────────┘         └──────────────┘
 ```
+
+### Key Differences from WebSocket Architecture
+
+- **Direct Connection**: Browser connects directly to FastAPI server via WebRTC (no Node.js WebSocket proxy)
+- **Lower Latency**: Peer-to-peer WebRTC connection reduces latency compared to WebSocket relay
+- **Built-in Transport**: SmallWebRTC transport handles audio I/O directly in the pipeline
+- **Data Channel**: Transcriptions sent via WebRTC data channel for real-time UI updates
 
 ## Project Structure
 
 ```
 ├── app/
-│   ├── api/voice/      # API route for WebSocket
-│   ├── page.tsx        # Main React component
-│   └── layout.tsx      # Root layout
+│   ├── api/
+│   │   ├── status/route.ts    # Health check endpoint
+│   │   └── voice/route.ts     # Legacy endpoint (info only)
+│   ├── globals.css            # Global styles
+│   ├── page.tsx               # Main React component with WebRTC
+│   ├── page.module.css        # Component styles
+│   └── layout.tsx             # Root layout
 ├── lib/
-│   ├── services/
-│   │   ├── speechmatics.js  # Speechmatics integration
-│   │   └── elevenlabs.js    # ElevenLabs integration
-│   └── voice-server.js      # WebSocket server logic
-├── server.js           # Custom Next.js server with WebSocket support
-└── package.json
+│   └── voice-server.ts        # (Legacy - not used in WebRTC setup)
+├── pipecat_service.py         # FastAPI server with SmallWebRTC transport
+├── server.js                  # Next.js custom server (no WebSocket proxy)
+├── requirements.txt           # Python dependencies
+├── package.json               # Node.js dependencies
+├── env.example                # Environment variables template
+└── README.md                  # This file
 ```
 
 ## API Keys Setup
@@ -136,88 +174,110 @@ npm start
 4. Copy the key to your `.env.local` file
 5. (Optional) Choose a voice ID from the [Voices page](https://elevenlabs.io/app/voices)
 
+## API Endpoints
+
+### FastAPI Server (Port 7860)
+
+- `POST /api/offer` - Handle WebRTC offer requests
+- `PATCH /api/offer` - Handle ICE candidate updates
+- `GET /api/status` - Health check endpoint
+
+### Next.js Server (Port 3000)
+
+- `/` - Main application UI
+- `GET /api/status` - Service status info
+- `GET /api/voice` - Legacy endpoint info
+
 ## Troubleshooting
 
-### WebSocket Connection Issues
+### WebRTC Connection Issues
 
-- Ensure the server is running on port 3000
-- Check that `NEXT_PUBLIC_WS_URL` matches your server URL
-- Verify firewall settings allow WebSocket connections
+- Ensure the FastAPI service is running on port 7860
+- Check that `NEXT_PUBLIC_PIPECAT_URL` in `.env.local` matches `http://localhost:7860`
+- Check browser console for WebRTC connection errors
+- Verify firewall settings allow WebRTC connections
+- For production, configure STUN/TURN servers in `app/page.tsx`
 
 ### Audio Issues
 
 - Grant microphone permissions in your browser
 - Check browser console for errors
 - Ensure your microphone is working in other applications
+- Check that audio tracks are being sent/received (browser console logs)
+
+### Transcription Not Appearing
+
+- Check Python server logs for transcription messages (should see `🎤 Transcription:`)
+- Check browser console for data channel messages
+- Verify WebRTC connection is established (check connection state in console)
+- Ensure data channel is opened (check console for "Data channel opened")
 
 ### API Errors
 
-- Verify your API keys are correct
+- Verify your API keys are correct in `.env.local`
 - Check your API quota/credits
-- Review the server logs for detailed error messages
+- Review the Python server logs for detailed error messages
+- Check FastAPI logs for initialization errors
 
 ## Monitoring
-
-### Quick Status Check
-
-Run the monitoring script:
-```bash
-./monitor.sh
-```
-
-This shows:
-- Service status (running/stopped)
-- Process IDs
-- Environment variable status
-- Active connections
 
 ### Check Status via API
 
 ```bash
+# Check FastAPI service status
+curl http://localhost:7860/api/status
+
+# Check Next.js service status
 curl http://localhost:3000/api/status
 ```
 
 ### View Logs
 
-**Pipecat Service:**
-- If running in background: Check system logs or restart in foreground to see output
-- Logs show: Client connections, transcription events, errors
+**Pipecat/FastAPI Service:**
+- Logs appear in the terminal where `python3 pipecat_service.py` is running
+- Shows: Client connections, transcription events, pipeline status, errors
+- Look for: `🎤 Transcription:` and `🎤 Partial:` messages
 
 **Next.js Server:**
-- Logs appear in the terminal where `npm run dev` was started
-- Shows: WebSocket connections, client activity, errors
+- Logs appear in the terminal where `npm run dev` is running
+- Shows: HTTP requests, compilation status
 
-### Browser Console
-
-Open browser DevTools (F12) and check the Console tab for:
-- WebSocket connection status
-- Transcription messages
+**Browser Console:**
+- Open browser DevTools (F12) and check the Console tab
+- WebRTC connection status and events
+- Data channel messages
+- Transcription updates
 - Any client-side errors
 
-### Troubleshooting WebSocket Code 1006
+## Development
 
-If you see "WebSocket closed: 1006", this means the connection closed abnormally. To debug:
+### Running in Verbose Mode
 
-1. **Check Pipecat service logs:**
-   ```bash
-   # Stop background service
-   pkill -f pipecat_service.py
-   
-   # Run in foreground to see logs
-   python3 pipecat_service.py
-   ```
+To see detailed logs from the Python service:
 
-2. **Test service initialization:**
-   ```bash
-   python3 test_pipecat.py
-   ```
+```bash
+python3 pipecat_service.py --verbose
+```
 
-3. **Check Next.js server logs** in the terminal where `npm run dev` is running
+### Testing the Pipeline
 
-4. **Common causes:**
-   - Missing or invalid API keys
-   - Pipeline initialization error
-   - Network/port conflicts
+```bash
+python3 test_pipecat.py
+```
+
+## Environment Variables
+
+See `env.example` for all available environment variables.
+
+Required:
+- `SPEECHMATICS_API_KEY` - Your Speechmatics API key
+- `ELEVENLABS_API_KEY` - Your ElevenLabs API key
+
+Optional:
+- `ELEVENLABS_VOICE_ID` - ElevenLabs voice ID (default: `ry8mpwRw6nugb2qjP0tu`)
+- `PIPECAT_HOST` - FastAPI server host (default: `localhost`)
+- `PIPECAT_PORT` - FastAPI server port (default: `7860`)
+- `NEXT_PUBLIC_PIPECAT_URL` - Frontend WebRTC endpoint URL (default: `http://localhost:7860`)
 
 ## License
 
@@ -226,4 +286,3 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
