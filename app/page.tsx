@@ -249,7 +249,7 @@ export default function Home() {
     <main className={styles.main}>
       <div className={styles.container}>
         <h1 className={styles.title}>TARS Omni</h1>
-        <p className={styles.subtitle}>Real-time Voice AI with Speechmatics & ElevenLabs (WebRTC)</p>
+        <p className={styles.subtitle}>Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
         
         {error && (
           <div className={styles.error}>
@@ -263,14 +263,14 @@ export default function Home() {
               onClick={startConnection} 
               className={styles.button}
             >
-              Start Voice Session
+              <span>🎙️ Start Voice Session</span>
             </button>
           ) : (
             <button 
               onClick={stopConnection} 
               className={`${styles.button} ${styles.stopButton}`}
             >
-              Stop Session
+              <span>⏹️ Stop Session</span>
             </button>
           )}
         </div>
@@ -278,7 +278,7 @@ export default function Home() {
         {isListening && (
           <div className={styles.status}>
             <div className={styles.pulse}></div>
-            <span>Listening...</span>
+            <span>✨ Listening and Processing...</span>
           </div>
         )}
         
@@ -291,12 +291,12 @@ export default function Home() {
           )}
           {transcription && (
             <div className={styles.finalTranscript}>
-              <strong>Final:</strong> {transcription}
+              {transcription}
             </div>
           )}
           {partialTranscription && (
             <div className={styles.partialTranscript}>
-              <em>Listening: {partialTranscription}</em>
+              {partialTranscription}
             </div>
           )}
           {transcriptionHistory.length > 0 && (

@@ -17,6 +17,7 @@ except ImportError:
     pass  # certifi not available, will use system certs
 
 import asyncio
+import json
 import ssl
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -64,8 +65,11 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.qwen.llm import QwenLLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -81,7 +85,9 @@ standard_logger = logging.getLogger(__name__)
 websockets_logger = logging.getLogger('websockets')
 websockets_logger.setLevel(logging.WARNING)
 
-load_dotenv()
+# Load environment variables from .env.local first, then .env
+load_dotenv('.env.local')
+load_dotenv()  # Also load from .env if .env.local doesn't exist
 
 # Log SSL certificate configuration
 try:
@@ -95,6 +101,8 @@ except:
 SPEECHMATICS_API_KEY = os.getenv("SPEECHMATICS_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ry8mpwRw6nugb2qjP0tu")
+QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-flash")
 PIPECAT_PORT = int(os.getenv("PIPECAT_PORT", "7860"))
 PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 
@@ -102,10 +110,10 @@ PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 async def lifespan(app: FastAPI):
     """Handle app lifespan events."""
     logger.info(f"Starting Pipecat service on http://{PIPECAT_HOST}:{PIPECAT_PORT}...")
-    logger.info("Make sure SPEECHMATICS_API_KEY and ELEVENLABS_API_KEY are set")
+    logger.info("Make sure SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and QWEN_API_KEY are set")
     
-    if not SPEECHMATICS_API_KEY or not ELEVENLABS_API_KEY:
-        logger.error("ERROR: API keys not found! Please set SPEECHMATICS_API_KEY and ELEVENLABS_API_KEY")
+    if not SPEECHMATICS_API_KEY or not ELEVENLABS_API_KEY or not QWEN_API_KEY:
+        logger.error("ERROR: API keys not found! Please set SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and QWEN_API_KEY")
         sys.exit(1)
     
     yield  # Run app
@@ -217,22 +225,69 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
             return
         
-        if not stt or not tts:
+        # Initialize Qwen LLM service
+        logger.info("Initializing Qwen LLM...")
+        if not QWEN_API_KEY or len(QWEN_API_KEY) < 10:
+            logger.error(f"QWEN_API_KEY appears invalid (length: {len(QWEN_API_KEY) if QWEN_API_KEY else 0}). Please check your .env.local file.")
+            return
+        logger.info(f"Using Qwen API key starting with: {QWEN_API_KEY[:8]}... (model: {QWEN_MODEL})")
+        llm = None
+        try:
+            llm = QwenLLMService(
+                api_key=QWEN_API_KEY,
+                model=QWEN_MODEL
+            )
+            logger.info(f"✓ Qwen LLM initialized with model: {QWEN_MODEL}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Qwen LLM: {e}", exc_info=True)
+            logger.error("This might be due to an invalid API key. Please check your QWEN_API_KEY in .env.local")
+            return
+        
+        if not stt or not tts or not llm:
             logger.error("Failed to initialize services. Cannot start bot.")
             return
+        
+        # Create LLM context and aggregator pair
+        logger.info("Creating LLM context aggregator pair...")
+        
+        # Load system prompt from character.json
+        character_file = os.path.join(os.path.dirname(__file__), "character.json")
+        try:
+            with open(character_file, "r", encoding="utf-8") as f:
+                system_prompt = json.load(f)
+            logger.info(f"✓ Loaded character prompt from {character_file}")
+        except FileNotFoundError:
+            logger.warning(f"character.json not found at {character_file}, using default prompt")
+            system_prompt = {
+                "role": "system",
+                "content": "You are a helpful AI assistant. Respond naturally and conversationally to user queries."
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing character.json: {e}, using default prompt")
+            system_prompt = {
+                "role": "system",
+                "content": "You are a helpful AI assistant. Respond naturally and conversationally to user queries."
+            }
+        
+        messages = [system_prompt]
+        context = LLMContext(messages)
+        context_aggregator = LLMContextAggregatorPair(context)
         
         # Create simple transcription logger with WebRTC connection for sending messages
         transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
         
         # Create pipeline with SmallWebRTC transport
-        # Pipeline flow: transport.input() -> STT -> logger -> TTS -> transport.output()
+        # Pipeline flow: transport.input() -> STT -> logger -> context_aggregator.user() -> LLM -> TTS -> transport.output() -> context_aggregator.assistant()
         logger.info("Creating pipeline...")
         pipeline = Pipeline([
-            pipecat_transport.input(),  # Audio input from WebRTC
-            stt,                        # Speech to text
-            transcription_logger,       # Log transcriptions
-            tts,                        # Text to speech
-            pipecat_transport.output(), # Audio output to WebRTC
+            pipecat_transport.input(),      # Audio input from WebRTC
+            stt,                            # Speech to text
+            transcription_logger,           # Log transcriptions
+            context_aggregator.user(),      # Process user input into context
+            llm,                            # Qwen LLM service
+            tts,                            # Text to speech
+            pipecat_transport.output(),     # Audio output to WebRTC
+            context_aggregator.assistant(), # Process assistant response into context
         ])
         
         # Set up event handlers before creating task
@@ -306,6 +361,8 @@ async def status():
         "status": "ok",
         "speechmatics_configured": bool(SPEECHMATICS_API_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
+        "qwen_configured": bool(QWEN_API_KEY),
+        "qwen_model": QWEN_MODEL if QWEN_API_KEY else None,
     }
 
 
