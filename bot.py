@@ -74,17 +74,19 @@ async def run_bot(webrtc_connection):
             ),
         )
 
-        # Initialize Speechmatics STT
-        logger.info("Initializing Speechmatics STT...")
+        # Initialize Speechmatics STT with speaker diarization
+        logger.info("Initializing Speechmatics STT with speaker diarization (max 2 speakers)...")
         stt = None
         try:
             stt = SpeechmaticsSTTService(
                 api_key=SPEECHMATICS_API_KEY,
                 params=SpeechmaticsSTTService.InputParams(
                     language=Language.EN,
+                    enable_diarization=True,
+                    max_speakers=2,
                 ),
             )
-            logger.info("✓ Speechmatics STT initialized")
+            logger.info("✓ Speechmatics STT initialized with speaker diarization (max 2 speakers)")
         except Exception as e:
             logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return

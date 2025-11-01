@@ -3,11 +3,16 @@
 import { useState, useRef, useEffect } from 'react'
 import styles from './page.module.css'
 
+interface TranscriptionEntry {
+  text: string
+  speakerId?: string | null
+}
+
 export default function Home() {
   const [isConnected, setIsConnected] = useState(false)
-  const [transcription, setTranscription] = useState('')
-  const [partialTranscription, setPartialTranscription] = useState('')
-  const [transcriptionHistory, setTranscriptionHistory] = useState<string[]>([])
+  const [transcription, setTranscription] = useState<TranscriptionEntry | null>(null)
+  const [partialTranscription, setPartialTranscription] = useState<TranscriptionEntry | null>(null)
+  const [transcriptionHistory, setTranscriptionHistory] = useState<TranscriptionEntry[]>([])
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -22,6 +27,20 @@ export default function Home() {
     pc_id?: string
     pendingIceCandidates: RTCIceCandidate[]
     canSendIceCandidates: boolean
+  }
+
+  // Helper function to get speaker label class based on speaker ID
+  const getSpeakerLabelClass = (speakerId: string | null | undefined): string => {
+    if (!speakerId) return styles.speakerLabel
+    const normalizedId = speakerId.toString().toUpperCase()
+    // Check if speaker ID contains '1' (for S1) or '2' (for S2)
+    if (normalizedId.includes('1') || normalizedId === 'S1') {
+      return `${styles.speakerLabel} ${styles.speakerLabelS1}`
+    } else if (normalizedId.includes('2') || normalizedId === 'S2') {
+      return `${styles.speakerLabel} ${styles.speakerLabelS2}`
+    }
+    // Default to S1 style if unknown
+    return `${styles.speakerLabel} ${styles.speakerLabelS1}`
   }
 
   useEffect(() => {
@@ -103,13 +122,21 @@ export default function Home() {
         const data = JSON.parse(event.data)
         console.log('Received data channel message:', data)
         if (data.type === 'transcription') {
-          setTranscription(data.text)
-          setPartialTranscription('')
+          const entry: TranscriptionEntry = {
+            text: data.text,
+            speakerId: data.speaker_id || null
+          }
+          setTranscription(entry)
+          setPartialTranscription(null)
           if (data.text) {
-            setTranscriptionHistory(prev => [...prev, data.text])
+            setTranscriptionHistory(prev => [...prev, entry])
           }
         } else if (data.type === 'partial') {
-          setPartialTranscription(data.text)
+          const entry: TranscriptionEntry = {
+            text: data.text,
+            speakerId: data.speaker_id || null
+          }
+          setPartialTranscription(entry)
         }
       } catch (e) {
         console.error('Error parsing data channel message:', e)
@@ -130,13 +157,21 @@ export default function Home() {
           const data = JSON.parse(event.data)
           console.log('Received from server channel:', data)
           if (data.type === 'transcription') {
-            setTranscription(data.text)
-            setPartialTranscription('')
+            const entry: TranscriptionEntry = {
+              text: data.text,
+              speakerId: data.speaker_id || null
+            }
+            setTranscription(entry)
+            setPartialTranscription(null)
             if (data.text) {
-              setTranscriptionHistory(prev => [...prev, data.text])
+              setTranscriptionHistory(prev => [...prev, entry])
             }
           } else if (data.type === 'partial') {
-            setPartialTranscription(data.text)
+            const entry: TranscriptionEntry = {
+              text: data.text,
+              speakerId: data.speaker_id || null
+            }
+            setPartialTranscription(entry)
           }
         } catch (e) {
           console.error('Error parsing server channel message:', e)
@@ -287,8 +322,8 @@ export default function Home() {
     }
     setIsConnected(false)
     setIsListening(false)
-    setTranscription('')
-    setPartialTranscription('')
+    setTranscription(null)
+    setPartialTranscription(null)
   }
 
   // Note: Transcription and TTS are handled by the pipeline on the server side
@@ -362,21 +397,36 @@ export default function Home() {
                   </p>
                 )}
                 
-                {transcriptionHistory.map((text, idx) => (
+                {transcriptionHistory.map((entry, idx) => (
                   <div key={idx} className={styles.finalTranscript}>
-                    {text}
+                    {entry.speakerId && (
+                      <span className={getSpeakerLabelClass(entry.speakerId)}>
+                        Speaker {entry.speakerId}: 
+                      </span>
+                    )}
+                    {entry.text}
                   </div>
                 ))}
                 
-                {transcription && !transcriptionHistory.includes(transcription) && (
+                {transcription && !transcriptionHistory.some(e => e.text === transcription.text && e.speakerId === transcription.speakerId) && (
                   <div className={styles.finalTranscript}>
-                    {transcription}
+                    {transcription.speakerId && (
+                      <span className={getSpeakerLabelClass(transcription.speakerId)}>
+                        Speaker {transcription.speakerId}: 
+                      </span>
+                    )}
+                    {transcription.text}
                   </div>
                 )}
                 
                 {partialTranscription && (
                   <div className={styles.partialTranscript}>
-                    {partialTranscription}
+                    {partialTranscription.speakerId && (
+                      <span className={getSpeakerLabelClass(partialTranscription.speakerId)}>
+                        Speaker {partialTranscription.speakerId}: 
+                      </span>
+                    )}
+                    {partialTranscription.text}
                   </div>
                 )}
               </div>

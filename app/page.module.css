@@ -380,6 +380,28 @@
   opacity: 0.5;
 }
 
+.speakerLabel {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  margin-right: 0.5rem;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  vertical-align: baseline;
+}
+
+.speakerLabelS1 {
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.15);
+}
+
+.speakerLabelS2 {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+}
+
 
 .videoWrapper {
   position: relative;

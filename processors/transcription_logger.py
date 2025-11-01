@@ -16,31 +16,45 @@ class SimpleTranscriptionLogger(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptionFrame):
-            logger.info(f"🎤 Transcription: {frame.text}")
+            # Extract speaker ID if available (from speaker diarization)
+            speaker_id = getattr(frame, 'user_id', None)
+            if speaker_id:
+                logger.info(f"🎤 Transcription [{speaker_id}]: {frame.text}")
+            else:
+                logger.info(f"🎤 Transcription: {frame.text}")
+            
             # Send transcription to frontend via WebRTC data channel
             if self.webrtc_connection:
                 try:
                     if self.webrtc_connection.is_connected():
                         self.webrtc_connection.send_app_message({
                             "type": "transcription",
-                            "text": frame.text
+                            "text": frame.text,
+                            "speaker_id": speaker_id  # Include speaker ID if available
                         })
-                        logger.debug(f"Sent transcription to frontend: {frame.text}")
+                        logger.debug(f"Sent transcription to frontend: {frame.text} (speaker: {speaker_id})")
                     else:
                         logger.warning("WebRTC connection not ready, skipping transcription send")
                 except Exception as e:
                     logger.error(f"Error sending transcription: {e}", exc_info=True)
         elif isinstance(frame, InterimTranscriptionFrame):
-            logger.info(f"🎤 Partial: {frame.text}")
+            # Extract speaker ID if available (from speaker diarization)
+            speaker_id = getattr(frame, 'user_id', None)
+            if speaker_id:
+                logger.info(f"🎤 Partial [{speaker_id}]: {frame.text}")
+            else:
+                logger.info(f"🎤 Partial: {frame.text}")
+            
             # Send partial transcription to frontend
             if self.webrtc_connection:
                 try:
                     if self.webrtc_connection.is_connected():
                         self.webrtc_connection.send_app_message({
                             "type": "partial",
-                            "text": frame.text
+                            "text": frame.text,
+                            "speaker_id": speaker_id  # Include speaker ID if available
                         })
-                        logger.debug(f"Sent partial transcription to frontend: {frame.text}")
+                        logger.debug(f"Sent partial transcription to frontend: {frame.text} (speaker: {speaker_id})")
                     else:
                         logger.warning("WebRTC connection not ready, skipping partial transcription send")
                 except Exception as e:
