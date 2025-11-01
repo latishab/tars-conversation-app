@@ -32,7 +32,7 @@ from config import (
     QWEN_API_KEY,
     QWEN_MODEL,
 )
-from processors import SimpleTranscriptionLogger, VideoPassThrough
+from processors import SimpleTranscriptionLogger
 
 
 async def fetch_user_image(params: FunctionCallParams):
@@ -184,23 +184,15 @@ async def run_bot(webrtc_connection):
         # Create simple transcription logger with WebRTC connection for sending messages
         transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
 
-        # Create the video pass-through processor
-        # We'll use it in two places: right after input to handle video early,
-        # and before output as a fallback
-        video_passthrough_early = VideoPassThrough()
-        video_passthrough_late = VideoPassThrough()
-
         # Create pipeline with ParallelPipeline for Qwen + Moondream
         # Pipeline flow:
-        #   transport.input() -> video_passthrough_early (converts InputImageRawFrame to OutputImageRawFrame) ->
-        #   STT -> logger -> context_aggregator.user() ->
-        #   ParallelPipeline([llm], [moondream]) -> TTS -> video_passthrough_late (fallback) ->
+        #   transport.input() -> STT -> logger -> context_aggregator.user() ->
+        #   ParallelPipeline([llm], [moondream]) -> TTS ->
         #   transport.output() -> context_aggregator.assistant()
         #
         # Qwen LLM and Moondream process in parallel:
         # - Qwen handles text responses and can call fetch_user_image function
         # - Moondream processes UserImageRawFrame requests from Qwen
-        # - Video frames are passed through early for display, and also passed through late as fallback
         logger.info("Creating audio/video pipeline with Qwen + Moondream...")
 
         # Build parallel pipeline branches
@@ -210,14 +202,12 @@ async def run_bot(webrtc_connection):
 
         pipeline = Pipeline([
             pipecat_transport.input(),      # Receives all frames (audio and video)
-            video_passthrough_early,        # Convert InputImageRawFrame to OutputImageRawFrame early
             stt,                            # Speech to text
             transcription_logger,           # Log transcriptions
             context_aggregator.user(),      # Process user input into context
             ParallelPipeline(parallel_branches),  # Parallel processing: Qwen + Moondream
             tts,                            # Text to speech
-            video_passthrough_late,         # Fallback: handle any video frames that made it here
-            pipecat_transport.output(),     # Sends both TTS audio and video to transport
+            pipecat_transport.output(),     # Sends TTS audio to transport
             context_aggregator.assistant(), # Process assistant response into context
         ])
 

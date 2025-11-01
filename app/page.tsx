@@ -219,15 +219,17 @@ export default function Home() {
       setIsConnected(false)
       setIsListening(false)
 
-      // Get user media (audio and video)
+      // Get user media (audio and video) with fixed resolution to prevent mid-stream changes
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
         audio: true,
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1280, min: 1280 },
+          height: { ideal: 720, min: 720 },
+          frameRate: { ideal: 30, max: 30 },
           facingMode: 'user'
         }
       })
+      
       streamRef.current = mediaStream
 
       // Display local video stream directly
@@ -240,6 +242,17 @@ export default function Home() {
       // Get audio and video tracks
       const audioTrack = mediaStream.getAudioTracks()[0]
       const videoTrack = mediaStream.getVideoTracks()[0] || null
+      
+      // Lock the video track settings to prevent resolution changes mid-stream
+      if (videoTrack) {
+        videoTrack.applyConstraints({
+          width: 1280,
+          height: 720,
+          frameRate: 30
+        }).catch(err => {
+          console.warn('Could not apply video constraints:', err)
+        })
+      }
 
       // Create SmallWebRTC connection
       const pc = await createSmallWebRTCConnection(audioTrack, videoTrack)
