@@ -230,7 +230,7 @@ export default function Home() {
       })
       streamRef.current = mediaStream
 
-      // Display local video stream
+      // Display local video stream directly
       const localVideoElement = localVideoRef.current
       if (localVideoElement) {
         localVideoElement.srcObject = mediaStream
@@ -285,69 +285,47 @@ export default function Home() {
   return (
     <main className={styles.main}>
       <div className={styles.container}>
-        <h1 className={styles.title}>TARS Omni</h1>
-        <p className={styles.subtitle}>Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
-        
-        {error && (
-          <div className={styles.error}>
-            Error: {error}
-          </div>
-        )}
-        
-        <div className={styles.controls}>
-          {!isConnected ? (
-            <button 
-              onClick={startConnection} 
-              className={styles.button}
-            >
-              <span>🎙️ Start Voice Session</span>
-            </button>
-          ) : (
-            <button 
-              onClick={stopConnection} 
-              className={`${styles.button} ${styles.stopButton}`}
-            >
-              <span>⏹️ Stop Session</span>
-            </button>
-          )}
-        </div>
-        
-        {isListening && (
-          <div className={styles.status}>
-            <div className={styles.pulse}></div>
-            <span>✨ Listening and Processing...</span>
-          </div>
-        )}
-        
-        <div className={styles.transcription}>
-          <h2>Live Transcription</h2>
-          {!transcription && !partialTranscription && (
-            <p className={styles.placeholder}>
-              Transcription will appear here as you speak...
-            </p>
-          )}
-          {transcription && (
-            <div className={styles.finalTranscript}>
-              {transcription}
+        <div className={styles.header}>
+          <h1 className={styles.title}>TARS Omni</h1>
+          <p className={styles.subtitle}>Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
+          
+          <div className={styles.headerControls}>
+            <div className={styles.controls}>
+              {!isConnected ? (
+                <button 
+                  onClick={startConnection} 
+                  className={styles.button}
+                >
+                  <span>🎙️ Start Voice Session</span>
+                </button>
+              ) : (
+                <button 
+                  onClick={stopConnection} 
+                  className={`${styles.button} ${styles.stopButton}`}
+                >
+                  <span>⏹️ Stop Session</span>
+                </button>
+              )}
             </div>
-          )}
-          {partialTranscription && (
-            <div className={styles.partialTranscript}>
-              {partialTranscription}
-            </div>
-          )}
-          {transcriptionHistory.length > 0 && (
-            <div className={styles.history}>
-              <h3>History:</h3>
-              {transcriptionHistory.slice(-5).reverse().map((text, idx) => (
-                <div key={idx} className={styles.historyItem}>{text}</div>
-              ))}
+            
+            {isListening && (
+              <div className={styles.status}>
+                <div className={styles.pulse}></div>
+                <span>✨ Listening and Processing...</span>
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className={styles.error}>
+              Error: {error}
             </div>
           )}
         </div>
-        
-        {isConnected && (
-          <div className={styles.videoContainer}>
+
+        <div className={styles.contentGrid}>
+          {/* Left Column - Video */}
+          <div className={styles.videoColumn}>
             <div className={styles.videoWrapper}>
               <video 
                 ref={localVideoRef} 
@@ -356,25 +334,48 @@ export default function Home() {
                 playsInline 
                 muted
               />
-              <div className={styles.videoLabel}>You</div>
-            </div>
-            <div className={styles.videoWrapper}>
-              <video 
-                ref={remoteVideoRef} 
-                className={styles.remoteVideo} 
-                autoPlay 
-                playsInline
-              />
-              <div className={styles.videoLabel}>Remote</div>
+              <div className={styles.videoLabel}>Camera Feed</div>
             </div>
           </div>
-        )}
-        
-        <audio ref={audioRef} className={styles.audio} controls autoPlay />
-        <p className={styles.info}>
-          Audio and video from your camera are sent to the server via WebRTC.
-          TTS audio responses will play automatically above.
-        </p>
+
+          {/* Right Column - Chatbox */}
+          <div className={styles.chatColumn}>
+            <div className={styles.transcription}>
+              <h2>Conversation</h2>
+              <div className={styles.chatMessages}>
+                {transcriptionHistory.length === 0 && !transcription && !partialTranscription && (
+                  <p className={styles.placeholder}>
+                    Transcription will appear here as you speak...
+                  </p>
+                )}
+                
+                {transcriptionHistory.map((text, idx) => (
+                  <div key={idx} className={styles.finalTranscript}>
+                    {text}
+                  </div>
+                ))}
+                
+                {transcription && !transcriptionHistory.includes(transcription) && (
+                  <div className={styles.finalTranscript}>
+                    {transcription}
+                  </div>
+                )}
+                
+                {partialTranscription && (
+                  <div className={styles.partialTranscript}>
+                    {partialTranscription}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <audio ref={audioRef} className={styles.audio} controls autoPlay />
+            <p className={styles.info}>
+              Audio and video from your camera are sent to the server via WebRTC.
+              TTS audio responses will play automatically.
+            </p>
+          </div>
+        </div>
       </div>
     </main>
   )
