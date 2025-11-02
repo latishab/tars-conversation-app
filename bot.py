@@ -62,29 +62,74 @@ async def run_bot(webrtc_connection):
     logger.info("Starting bot pipeline for WebRTC connection...")
 
     try:
+        # Initialize VAD and Smart Turn Detection (lazy import to handle missing dependencies)
+        logger.info("Initializing VAD and Smart Turn Detection...")
+        vad_analyzer = None
+        turn_analyzer = None
+        try:
+            from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
+            from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+            from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+            
+            vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
+            turn_analyzer = LocalSmartTurnAnalyzerV3(
+                params=SmartTurnParams(
+                    stop_secs=3.0,
+                    pre_speech_ms=0.0,
+                    max_duration_secs=8.0
+                )
+            )
+            logger.info("✓ VAD and Smart Turn Detection initialized")
+        except ImportError as e:
+            logger.warning(f"Smart Turn dependencies not installed: {e}")
+            logger.warning("Install with: pip install 'pipecat-ai[local-smart-turn-v3,silero]'")
+            logger.warning("Falling back to transport without Smart Turn Detection")
+        except Exception as e:
+            logger.error(f"Failed to initialize VAD/Smart Turn: {e}", exc_info=True)
+            logger.warning("Falling back to transport without Smart Turn Detection")
+
         # Create SmallWebRTC transport from the connection
+        transport_params = TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            video_in_enabled=True,
+            video_out_enabled=True,
+            video_out_is_live=True,
+        )
+        
+        # Add VAD and Smart Turn if available
+        if vad_analyzer:
+            transport_params.vad_analyzer = vad_analyzer
+        if turn_analyzer:
+            transport_params.turn_analyzer = turn_analyzer
+            logger.info("✓ Smart Turn Detection enabled - will prevent interruptions")
+        else:
+            logger.warning("⚠ Smart Turn Detection NOT enabled - bot may interrupt users")
+
         pipecat_transport = SmallWebRTCTransport(
             webrtc_connection=webrtc_connection,
-            params=TransportParams(
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                video_in_enabled=True,
-                video_out_enabled=True,
-                video_out_is_live=True,
-            ),
+            params=transport_params,
         )
 
         # Initialize Speechmatics STT with speaker diarization
         logger.info("Initializing Speechmatics STT with speaker diarization (max 2 speakers)...")
         stt = None
         try:
+            # Disable Speechmatics VAD when Smart Turn is enabled to avoid conflicts
+            # Smart Turn handles turn detection, so we don't need Speechmatics' VAD
+            stt_params = SpeechmaticsSTTService.InputParams(
+                language=Language.EN,
+                enable_diarization=True,
+                max_speakers=2,
+            )
+            # If Smart Turn is enabled, disable Speechmatics' internal VAD
+            if turn_analyzer:
+                stt_params.enable_vad = False
+                logger.info("Disabled Speechmatics VAD (using Smart Turn instead)")
+            
             stt = SpeechmaticsSTTService(
                 api_key=SPEECHMATICS_API_KEY,
-                params=SpeechmaticsSTTService.InputParams(
-                    language=Language.EN,
-                    enable_diarization=True,
-                    max_speakers=2,
-                ),
+                params=stt_params,
             )
             logger.info("✓ Speechmatics STT initialized with speaker diarization (max 2 speakers)")
         except Exception as e:
