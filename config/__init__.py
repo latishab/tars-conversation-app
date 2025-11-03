@@ -16,3 +16,6 @@ QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-flash")
 PIPECAT_PORT = int(os.getenv("PIPECAT_PORT", "7860"))
 PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 
+# Mem0 (optional)
+MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
+

@@ -33,6 +33,13 @@ from config import (
     QWEN_MODEL,
 )
 from processors import SimpleTranscriptionLogger
+from config import MEM0_API_KEY
+from memory import Mem0Wrapper  # required
+
+if not MEM0_API_KEY:
+    raise RuntimeError("MEM0_API_KEY is required but not set.")
+
+_mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
 async def fetch_user_image(params: FunctionCallParams):
@@ -276,6 +283,24 @@ async def run_bot(webrtc_connection):
             # Get client ID for function calls
             # For SmallWebRTC, we'll use a simple identifier
             client_id_storage["client_id"] = "user_1"
+
+            # Augment context with recalled memories for this user
+            try:
+                if _mem0 and _mem0.enabled:
+                    recalled = _mem0.recall(user_id=client_id_storage["client_id"], limit=8)
+                    if recalled:
+                        memory_text = "\n".join(f"- {m}" for m in recalled)
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "The following are previously stored facts about the user. "
+                                "Use them to personalize responses when helpful, but do not repeat them verbatim unless asked.\n"
+                                f"{memory_text}"
+                            ),
+                        })
+                        logger.info(f"✓ Injected {len(recalled)} recalled memories into context")
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Skipping memory recall injection due to error: {e}")
 
             # Test if we can send a message
             try:

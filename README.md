@@ -12,6 +12,7 @@ A Next.js application that provides real-time voice AI with transcription, visio
 - 🌐 **WebRTC Communication**: Direct peer-to-peer WebRTC audio/video streaming (no WebSocket proxy needed)
 - 📱 **Live Transcription Display**: Real-time transcription updates on the frontend
 - 🎨 **Modern UI**: Beautiful, responsive user interface
+ - 🧠 **Long-term Memory (optional)**: Persistent user memory via Mem0
 
 ## Prerequisites
 
@@ -20,6 +21,7 @@ A Next.js application that provides real-time voice AI with transcription, visio
 - Speechmatics API key ([Get one here](https://portal.speechmatics.com/))
 - ElevenLabs API key ([Get one here](https://elevenlabs.io/app/settings/api-keys))
 - Qwen API key ([Get one here](https://dashscope.aliyun.com/))
+- Mem0 API key ([Docs](https://docs.mem0.ai/))
 
 ## Installation
 
@@ -61,6 +63,9 @@ PIPECAT_PORT=7860
 
 # Frontend configuration
 NEXT_PUBLIC_PIPECAT_URL=http://localhost:7860
+
+# Enable long-term memory with Mem0 (required)
+MEM0_API_KEY=your_mem0_api_key_here
 ```
 
 ## Running the Application
@@ -152,6 +157,18 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
 - **Smart Turn Detection**: Prevents the bot from interrupting users mid-sentence using VAD and Smart Turn Detection
 - **Vision Integration**: LLM can request and analyze camera images for contextual understanding
 - **Parallel Processing**: Qwen LLM and Moondream vision service process in parallel for efficient responses
+- **Mem0 Integration**: Stores final user transcriptions and injects recalled memories into the system context on connect
+
+## Mem0 (Persistent Memory)
+
+With `MEM0_API_KEY` set and `mem0ai` installed (included in `requirements.txt`), the app will:
+
+- Save each finalized user transcription to Mem0 (best-effort, non-blocking)
+- On client connect, recall up to 8 relevant memories and inject them as an additional `system` message to personalize responses
+
+Notes:
+- User identity defaults to `user_1` for SmallWebRTC; adapt as needed for multi-user scenarios.
+- Mem0 is required; the service will fail fast if the key or SDK is missing.
 
 ## Project Structure
 
@@ -217,48 +234,6 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
 - `/` - Main application UI
 - `GET /api/status` - Service status info
 - `GET /api/voice` - Legacy endpoint info
-
-## Troubleshooting
-
-### WebRTC Connection Issues
-
-- Ensure the FastAPI service is running on port 7860
-- Check that `NEXT_PUBLIC_PIPECAT_URL` in `.env.local` matches `http://localhost:7860`
-- Check browser console for WebRTC connection errors
-- Verify firewall settings allow WebRTC connections
-- For production, configure STUN/TURN servers in `app/page.tsx`
-
-### Audio Issues
-
-- Grant microphone permissions in your browser
-- Check browser console for errors
-- Ensure your microphone is working in other applications
-- Check that audio tracks are being sent/received (browser console logs)
-- Verify Smart Turn Detection is initialized (check Python logs for "✓ VAD and Smart Turn Detection initialized")
-
-### Transcription Not Appearing
-
-- Check Python server logs for transcription messages (should see `🎤 Transcription:` or `🎤 Partial:`)
-- Check browser console for data channel messages
-- Verify WebRTC connection is established (check connection state in console)
-- Ensure data channel is opened (check console for "Data channel opened")
-- Check for speaker diarization messages (should show speaker IDs in logs)
-
-### LLM/Vision Issues
-
-- Verify `QWEN_API_KEY` is set correctly in `.env.local`
-- Check Python logs for Qwen initialization messages
-- Verify Moondream is installed (should see "✓ Moondream vision service initialized" in logs)
-- Check that camera permissions are granted in the browser
-- Review Python logs for LLM or vision processing errors
-
-### API Errors
-
-- Verify all API keys are correct in `.env.local` (Speechmatics, ElevenLabs, Qwen)
-- Check your API quota/credits for each service
-- Review the Python server logs for detailed error messages
-- Check FastAPI logs for initialization errors
-- Verify `character.json` exists and is valid JSON
 
 ## Monitoring
 
