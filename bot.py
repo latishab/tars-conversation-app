@@ -33,7 +33,7 @@ from config import (
     QWEN_API_KEY,
     QWEN_MODEL,
 )
-from processors import SimpleTranscriptionLogger
+from processors import SimpleTranscriptionLogger, SilenceFilter
 from config import MEM0_API_KEY
 from memory import Mem0Wrapper  # required
 
@@ -271,6 +271,7 @@ async def run_bot(webrtc_connection):
             transcription_logger,           # Log transcriptions
             context_aggregator.user(),      # Process user input into context
             ParallelPipeline(parallel_branches),  # Parallel processing: Qwen + Moondream
+            SilenceFilter(),                # Filter out silence commands
             tts,                            # Text to speech
             pipecat_transport.output(),     # Sends TTS audio to transport
             context_aggregator.assistant(), # Process assistant response into context
