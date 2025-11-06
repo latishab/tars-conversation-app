@@ -43,13 +43,15 @@ class Mem0Wrapper:
         if not self._client:
             return
         try:
-            # Generic call; adapt if your SDK exposes a different method name
-            # Common semantics: add textual memory scoped to a user
-            # Examples in the wild: `add`, `add_memory`, or `create`
+            # Mem0 API requires messages as a list of dicts with 'role' and 'content'
+            messages = [{"role": "user", "content": text}]
+            
+            # Try different methods in order of preference
             if hasattr(self._client, "add_memory"):
                 self._client.add_memory(user_id=user_id, text=text)  # type: ignore[attr-defined]
             elif hasattr(self._client, "add"):
-                self._client.add(user_id=user_id, text=text)  # type: ignore[attr-defined]
+                # add() requires messages as first positional arg, user_id in kwargs
+                self._client.add(messages, user_id=user_id)  # type: ignore[attr-defined]
             elif hasattr(self._client, "create"):
                 self._client.create(user_id=user_id, text=text)  # type: ignore[attr-defined]
             else:
@@ -61,12 +63,19 @@ class Mem0Wrapper:
         if not self._client:
             return []
         try:
-            # Generic retrieval; adapt to actual SDK as needed
-            # Likely shapes: search(query, user_id=...), get(user_id=...)
+            results = []
+            
+            # Use search() if query provided, otherwise use get_all() with user_id filter
             if query and hasattr(self._client, "search"):
-                results = self._client.search(user_id=user_id, query=query, k=limit)  # type: ignore[attr-defined]
-            elif hasattr(self._client, "get"):
-                results = self._client.get(user_id=user_id, limit=limit)  # type: ignore[attr-defined]
+                # search() takes query as first arg, user_id in kwargs
+                results = self._client.search(query, user_id=user_id, limit=limit)  # type: ignore[attr-defined]
+            elif hasattr(self._client, "get_all"):
+                # get_all() can filter by user_id in kwargs
+                all_results = self._client.get_all(user_id=user_id)  # type: ignore[attr-defined]
+                results = all_results[:limit] if isinstance(all_results, list) else []
+            elif hasattr(self._client, "search"):
+                # Fallback: search with empty query to get all memories for user
+                results = self._client.search("", user_id=user_id, limit=limit)  # type: ignore[attr-defined]
             else:
                 return []
 
@@ -77,7 +86,14 @@ class Mem0Wrapper:
                     if isinstance(item, str):
                         texts.append(item)
                     elif isinstance(item, dict):
-                        text = item.get("text") or item.get("content") or item.get("memory")
+                        # Try different possible keys for the memory content
+                        text = (
+                            item.get("text") 
+                            or item.get("content") 
+                            or item.get("memory")
+                            or item.get("message")
+                            or (item.get("messages", [{}])[0].get("content") if isinstance(item.get("messages"), list) else None)
+                        )
                         if isinstance(text, str):
                             texts.append(text)
             return texts[:limit]

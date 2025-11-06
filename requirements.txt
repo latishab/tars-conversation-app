@@ -1,10 +1,7 @@
-pipecat-ai[speechmatics,elevenlabs,webrtc,qwen,moondream,local-smart-turn-v3,silero]>=0.0.48
+pipecat-ai[speechmatics,elevenlabs,webrtc,qwen,moondream,local-smart-turn-v3,silero,mem0]>=0.0.48
 python-dotenv>=1.0.0
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 loguru>=0.7.0
 certifi>=2024.0.0
-
-# Persistent memory via Mem0
-mem0ai>=0.1.0
 

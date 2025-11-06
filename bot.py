@@ -1,5 +1,6 @@
 """Bot pipeline setup and execution."""
 
+import asyncio
 import json
 import os
 import logging
@@ -140,7 +141,14 @@ async def run_bot(webrtc_connection):
             )
             logger.info("✓ Speechmatics STT initialized with speaker diarization (max 2 speakers)")
         except Exception as e:
-            logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
+            error_msg = str(e).lower()
+            if "quota" in error_msg or "4005" in error_msg or "quota_exceeded" in error_msg:
+                logger.error("❌ Speechmatics API quota exceeded!")
+                logger.error("   Your Speechmatics API quota has been exceeded.")
+                logger.error("   Please check your quota at: https://portal.speechmatics.com/")
+                logger.error("   You may need to wait for your quota to reset or upgrade your plan.")
+            else:
+                logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
 
         # Initialize ElevenLabs TTS with Flash model
@@ -180,7 +188,10 @@ async def run_bot(webrtc_connection):
         # Initialize Moondream vision service
         logger.info("Initializing Moondream vision service...")
         try:
-            moondream = MoondreamService()
+            moondream = MoondreamService(
+                model="vikhyatk/moondream2",
+                device="mps"
+            )
             logger.info("✓ Moondream vision service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize Moondream: {e}", exc_info=True)
@@ -330,14 +341,89 @@ async def run_bot(webrtc_connection):
             if task_ref["task"]:
                 await task_ref["task"].cancel()
 
+        # Helper function to detect and handle Speechmatics retryable errors
+        def handle_speechmatics_error(error: Exception) -> bool:
+            """Handle Speechmatics errors and return True if retryable, False otherwise."""
+            error_str = str(error).lower()
+            error_code = None
+            
+            # Extract error code from error message
+            if "4005" in error_str or "quota_exceeded" in error_str or "concurrent quota exceeded" in error_str:
+                error_code = 4005
+            elif "4013" in error_str or "job_error" in error_str:
+                error_code = 4013
+            elif "1011" in error_str or "internal_error" in error_str:
+                error_code = 1011
+            
+            # Check if this is a retryable error
+            retryable_errors = [4005, 4013, 1011]
+            if error_code in retryable_errors:
+                logger.warning(f"⚠️ Speechmatics retryable error ({error_code}) detected: {error}")
+                logger.info("   Per Speechmatics docs, client should retry after 5-10 seconds...")
+                logger.info("   Note: The service will need to be restarted after quota issues are resolved.")
+                
+                # Send error message to frontend
+                try:
+                    if webrtc_connection.is_connected():
+                        if error_code == 4005:
+                            webrtc_connection.send_app_message({
+                                "type": "error",
+                                "message": "Speechmatics quota exceeded. Please check your API quota and wait 5-10 seconds before retrying."
+                            })
+                        else:
+                            webrtc_connection.send_app_message({
+                                "type": "error",
+                                "message": f"Speechmatics error ({error_code}). Will retry after delay."
+                            })
+                except:
+                    pass
+                
+                return True
+            elif "quota" in error_str or "4005" in error_str:
+                logger.error("❌ Speechmatics quota exceeded!")
+                logger.error("   Your Speechmatics API quota has been exceeded.")
+                logger.error("   Please check your quota at: https://portal.speechmatics.com/")
+                logger.error("   Wait 5-10 seconds before retrying the connection.")
+                try:
+                    if webrtc_connection.is_connected():
+                        webrtc_connection.send_app_message({
+                            "type": "error",
+                            "message": "Speechmatics quota exceeded. Please check your API quota."
+                        })
+                except:
+                    pass
+            
+            return False
+
         # Create and run pipeline task
         task = PipelineTask(pipeline)
         task_ref["task"] = task
         runner = PipelineRunner(handle_sigint=False)
 
         logger.info("Starting pipeline runner...")
-        await runner.run(task)
+        
+        # Run the pipeline with error handling for Speechmatics quota issues
+        try:
+            await runner.run(task)
+        except Exception as pipeline_error:
+            # Check if this is a Speechmatics quota error
+            if handle_speechmatics_error(pipeline_error):
+                logger.info("   Pipeline stopped due to retryable Speechmatics error.")
+                logger.info("   Please wait 5-10 seconds and try reconnecting.")
+            else:
+                # Re-raise if it's not a handled error
+                raise
 
     except Exception as e:
-        logger.error(f"Error in bot pipeline: {e}", exc_info=True)
+        # Handle initialization errors
+        if handle_speechmatics_error(e):
+            logger.info("   Bot initialization stopped due to retryable Speechmatics error.")
+        else:
+            error_str = str(e).lower()
+            if "quota" in error_str or "4005" in error_str or "quota_exceeded" in error_str:
+                logger.error("❌ Speechmatics quota exceeded!")
+                logger.error("   Your Speechmatics API quota has been exceeded.")
+                logger.error("   Please check your quota at: https://portal.speechmatics.com/")
+            else:
+                logger.error(f"Error in bot pipeline: {e}", exc_info=True)
 

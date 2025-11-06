@@ -137,6 +137,12 @@ export default function Home() {
             speakerId: data.speaker_id || null
           }
           setPartialTranscription(entry)
+        } else if (data.type === 'error') {
+          setError(data.message || 'An error occurred')
+          setIsConnected(false)
+          setIsListening(false)
+        } else if (data.type === 'system') {
+          console.log('System message:', data.message)
         }
       } catch (e) {
         console.error('Error parsing data channel message:', e)
@@ -172,6 +178,12 @@ export default function Home() {
               speakerId: data.speaker_id || null
             }
             setPartialTranscription(entry)
+          } else if (data.type === 'error') {
+            setError(data.message || 'An error occurred')
+            setIsConnected(false)
+            setIsListening(false)
+          } else if (data.type === 'system') {
+            console.log('System message:', data.message)
           }
         } catch (e) {
           console.error('Error parsing server channel message:', e)
@@ -209,9 +221,13 @@ export default function Home() {
       if (pc.connectionState === 'connected') {
         setIsConnected(true)
         setIsListening(true)
+        setError(null) // Clear any previous errors
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
         setIsConnected(false)
         setIsListening(false)
+        if (pc.connectionState === 'failed' && !error) {
+          setError('Connection failed. Please check your network and try again.')
+        }
       }
     }
 
