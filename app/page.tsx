@@ -103,7 +103,30 @@ export default function Home() {
     // SmallWebRTCTransport expects to receive both transceivers
     pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
     if (videoTrack) {
-      pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
+      const videoTransceiver = pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
+      
+      // Configure codec preferences to prefer VP9 or H.264 over VP8 for better decoder support
+      // This helps avoid VP8 decoder errors on macOS
+      if ('setCodecPreferences' in videoTransceiver.sender) {
+        try {
+          const codecs = RTCRtpSender.getCapabilities('video')?.codecs || []
+          // Prefer VP9, then H.264, then VP8
+          const preferredCodecs = [
+            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp9')),
+            ...codecs.filter(c => c.mimeType.toLowerCase().includes('h264')),
+            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp8')),
+          ]
+          if (preferredCodecs.length > 0) {
+            const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void }
+            if (sender.setCodecPreferences) {
+              sender.setCodecPreferences(preferredCodecs)
+              console.log('Video codec preferences set:', preferredCodecs.map(c => c.mimeType))
+            }
+          }
+        } catch (err) {
+          console.warn('Could not set codec preferences:', err)
+        }
+      }
     } else {
       // Add video transceiver even if no video track yet (server expects it)
       pc.addTransceiver('video', { direction: 'sendrecv' })
