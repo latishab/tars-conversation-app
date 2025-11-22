@@ -307,6 +307,21 @@ See `env.example` for all available environment variables.
 
 All environment variables are loaded from `.env.local` (or `.env` as fallback) by the `config` module.
 
+## Raspberry Pi Client
+
+You can connect a Raspberry Pi to the Pipecat server as a WebRTC client. See [RASPBERRY_PI_CLIENT.md](RASPBERRY_PI_CLIENT.md) for detailed instructions.
+
+Quick start:
+```bash
+# On Raspberry Pi
+pip3 install aiortc aiohttp av opencv-python-headless
+python3 raspberry_pi_client.py --server http://your-server-ip:7860
+```
+
+Two client implementations are provided:
+- `raspberry_pi_client.py` - Full-featured client with OpenCV camera support
+- `raspberry_pi_client_simple.py` - Simplified client using MediaPlayer (easier setup)
+
 ## License
 
 MIT

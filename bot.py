@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import logging
+import configparser
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
@@ -41,6 +42,110 @@ if not MEM0_API_KEY:
     raise RuntimeError("MEM0_API_KEY is required but not set.")
 
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
+
+
+def load_persona_ini(persona_file_path: str) -> dict:
+    """Load persona parameters from persona.ini file."""
+    persona_params = {}
+    try:
+        config = configparser.ConfigParser()
+        config.read(persona_file_path)
+        if 'PERSONA' in config:
+            persona_params = dict(config['PERSONA'])
+            # Convert string values to integers
+            for key, value in persona_params.items():
+                try:
+                    persona_params[key] = int(value.strip())
+                except ValueError:
+                    persona_params[key] = value.strip()
+        logger.info(f"✓ Loaded persona parameters from {persona_file_path}")
+    except FileNotFoundError:
+        logger.warning(f"persona.ini not found at {persona_file_path}")
+    except Exception as e:
+        logger.error(f"Error loading persona.ini: {e}")
+    return persona_params
+
+
+def load_tars_json(tars_file_path: str) -> dict:
+    """Load TARS character data from TARS.json file."""
+    tars_data = {}
+    try:
+        with open(tars_file_path, "r", encoding="utf-8") as f:
+            tars_data = json.load(f)
+        logger.info(f"✓ Loaded TARS character data from {tars_file_path}")
+    except FileNotFoundError:
+        logger.warning(f"TARS.json not found at {tars_file_path}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing TARS.json: {e}")
+    return tars_data
+
+
+def build_tars_system_prompt(persona_params: dict, tars_data: dict) -> dict:
+    """Build comprehensive system prompt from persona and TARS character data."""
+    # Start with base character information
+    prompt_parts = []
+    
+    # Add character name and description
+    if tars_data.get("char_name"):
+        prompt_parts.append(f"You are {tars_data['char_name']}.")
+    
+    if tars_data.get("char_persona"):
+        prompt_parts.append(tars_data["char_persona"])
+    
+    if tars_data.get("description"):
+        prompt_parts.append(f"Description: {tars_data['description']}")
+    
+    if tars_data.get("personality"):
+        prompt_parts.append(f"Personality: {tars_data['personality']}")
+    
+    if tars_data.get("world_scenario") or tars_data.get("scenario"):
+        scenario = tars_data.get("world_scenario") or tars_data.get("scenario")
+        prompt_parts.append(f"Scenario: {scenario}")
+    
+    # Add persona parameters
+    if persona_params:
+        prompt_parts.append("\n## Personality Parameters ##")
+        param_lines = []
+        for key, value in sorted(persona_params.items()):
+            if isinstance(value, int):
+                param_lines.append(f"- {key}: {value}%")
+            else:
+                param_lines.append(f"- {key}: {value}")
+        prompt_parts.append("\n".join(param_lines))
+    
+    # Add example dialogue for context
+    if tars_data.get("example_dialogue"):
+        prompt_parts.append("\n## Example Interactions ##")
+        prompt_parts.append(tars_data["example_dialogue"])
+    
+    # Add original rules of engagement
+    prompt_parts.append("\n## Your Rules of Engagement ##")
+    prompt_parts.append("""
+1.  **Analyze Context:** First, silently analyze the latest user message in the context of the conversation and diarization (e.g., [S1], [S2]).
+2.  **Classify Intent:** Determine the intent:
+    * **Direct:** Is this a direct question or comment to you (e.g., 'Hey TARS', 'What do you see?', 'Why are you so dry?')?
+    * **Group:** Is this a conversation between other users that does not involve you?
+3.  **Check Group State (if Group):** If the intent is 'Group', classify the group's state: 'Indecision', 'Conflict', 'Idle', 'DecisionMade', etc.
+4.  **Decide to Speak:**
+    * **ALWAYS Respond** if the intent is 'Direct'. Answer the question or acknowledge the comment.
+    * **INTERVENE** if the intent is 'Group' AND the state is a trigger (e.g., 'Indecision', 'Conflict'). Formulate a helpful, proactive intervention.
+    * **STAY SILENT** in all other cases (e.g., 'Group' chatter is 'Idle').
+5.  **Formulate Response:**
+    * If you decide to speak, provide your natural, conversational response (do not include special characters).
+    * If you decide to **STAY SILENT**, you MUST respond with ONLY the following exact JSON: {"action": "silence"}
+""")
+    
+    # Add vision capabilities note
+    prompt_parts.append("\n## Additional Capabilities ##")
+    prompt_parts.append("You have vision capabilities and can describe images from the user's camera. Your output will be converted to audio so don't include special characters in your answers.")
+    
+    # Combine all parts
+    full_prompt = "\n\n".join(prompt_parts)
+    
+    return {
+        "role": "system",
+        "content": full_prompt
+    }
 
 
 async def fetch_user_image(params: FunctionCallParams):
@@ -97,12 +202,13 @@ async def run_bot(webrtc_connection):
             logger.warning("Falling back to transport without Smart Turn Detection")
 
         # Create SmallWebRTC transport from the connection
+        # Video disabled for now - audio only mode
         transport_params = TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            video_in_enabled=True,
-            video_out_enabled=True,
-            video_out_is_live=True,
+            video_in_enabled=False,  # Disabled - no camera needed
+            video_out_enabled=False,  # Disabled - no video output needed
+            video_out_is_live=False,
         )
         
         # Add VAD and Smart Turn if available
@@ -155,14 +261,26 @@ async def run_bot(webrtc_connection):
         logger.info("Initializing ElevenLabs TTS...")
         tts = None
         try:
+            # Validate API key before creating service
+            if not ELEVENLABS_API_KEY or len(ELEVENLABS_API_KEY) < 10:
+                logger.error(f"ELEVENLABS_API_KEY appears invalid (length: {len(ELEVENLABS_API_KEY) if ELEVENLABS_API_KEY else 0}). Please check your .env.local file.")
+                return
+            
+            logger.info(f"Using ElevenLabs API key starting with: {ELEVENLABS_API_KEY[:8]}...")
+            logger.info(f"Using voice ID: {ELEVENLABS_VOICE_ID}")
+            
             tts = ElevenLabsTTSService(
                 api_key=ELEVENLABS_API_KEY,
                 voice_id=ELEVENLABS_VOICE_ID,
-                model="eleven_flash_v2_5"
+                model="eleven_flash_v2_5",
+                enable_word_timestamps=False  # Disable to avoid _words_queue initialization bug
             )
-            logger.info("✓ ElevenLabs TTS initialized")
+            logger.info("✓ ElevenLabs TTS service created (word timestamps disabled)")
+            
         except Exception as e:
             logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
+            logger.error("This might be due to an invalid API key or network issue.")
+            logger.error("Please check your ELEVENLABS_API_KEY in .env.local")
             return
 
         # Initialize Qwen LLM service
@@ -205,24 +323,38 @@ async def run_bot(webrtc_connection):
         # Create LLM context and aggregator pair
         logger.info("Creating LLM context aggregator pair...")
 
-        # Load system prompt from character.json
-        character_file = os.path.join(os.path.dirname(__file__), "character.json")
-        try:
-            with open(character_file, "r", encoding="utf-8") as f:
-                system_prompt = json.load(f)
-            logger.info(f"✓ Loaded character prompt from {character_file}")
-        except FileNotFoundError:
-            logger.warning(f"character.json not found at {character_file}, using default prompt")
-            system_prompt = {
-                "role": "system",
-                "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
-            }
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing character.json: {e}, using default prompt")
-            system_prompt = {
-                "role": "system",
-                "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
-            }
+        # Load character files from character directory
+        character_dir = os.path.join(os.path.dirname(__file__), "character")
+        persona_file = os.path.join(character_dir, "persona.ini")
+        tars_file = os.path.join(character_dir, "TARS.json")
+        
+        # Load persona parameters and TARS character data
+        persona_params = load_persona_ini(persona_file)
+        tars_data = load_tars_json(tars_file)
+        
+        # Build system prompt from character data
+        if persona_params or tars_data:
+            system_prompt = build_tars_system_prompt(persona_params, tars_data)
+            logger.info("✓ Built system prompt from character files")
+        else:
+            # Fallback to character.json if character files not found
+            character_file = os.path.join(os.path.dirname(__file__), "character.json")
+            try:
+                with open(character_file, "r", encoding="utf-8") as f:
+                    system_prompt = json.load(f)
+                logger.info(f"✓ Loaded character prompt from {character_file}")
+            except FileNotFoundError:
+                logger.warning(f"Character files not found, using default prompt")
+                system_prompt = {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
+                }
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing character.json: {e}, using default prompt")
+                system_prompt = {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
+                }
 
         # Create function schema for image fetching
         fetch_image_function = FunctionSchema(
@@ -285,12 +417,12 @@ async def run_bot(webrtc_connection):
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
-            # Capture camera video stream
-            try:
-                await pipecat_transport.capture_participant_video("camera")
-                logger.info("Camera video capture started")
-            except Exception as e:
-                logger.error(f"Error capturing camera video: {e}", exc_info=True)
+            # Video disabled - skip camera capture
+            # try:
+            #     await pipecat_transport.capture_participant_video("camera")
+            #     logger.info("Camera video capture started")
+            # except Exception as e:
+            #     logger.error(f"Error capturing camera video: {e}", exc_info=True)
 
             # Get client ID for function calls
             # For SmallWebRTC, we'll use a simple identifier
