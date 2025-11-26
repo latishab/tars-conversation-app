@@ -15,7 +15,6 @@ import json
 import aiohttp
 import logging
 import subprocess
-import queue 
 
 # === Custom Modules ===
 from modules.module_config import load_config
@@ -31,6 +30,7 @@ try:
     import sounddevice as sd
     import numpy as np
     from av import AudioFrame
+    from av.audio.resampler import AudioResampler
     import fractions
     WEBRTC_AVAILABLE = True
 except ImportError as e:
@@ -106,55 +106,81 @@ class SpeakerStream:
         self.volume = max(0.0, min(1.0, volume))
         self.stream = None
         self.running = True
-        self.audio_queue = queue.Queue() 
-        self.current_sample_rate = 24000 
+        self.target_sample_rate = 48000  # WM8960 prefers 48 kHz playback
+        self._buffer = bytearray()
+        self._buffer_lock = threading.Lock()
+        self.resampler = AudioResampler(
+            format="s16",
+            layout="mono",
+            rate=self.target_sample_rate,
+        )
 
     def _callback(self, outdata, frames, time, status):
         if status:
             logger.warning(f"Audio Status: {status}")
-        try:
-            data = self.audio_queue.get_nowait()
-            if len(data) < len(outdata):
-                outdata[:len(data)] = data
-                outdata[len(data):] = b'\x00' * (len(outdata) - len(data))
-            else:
-                outdata[:] = data[:len(outdata)]
-        except queue.Empty:
-            outdata[:] = b'\x00' * len(outdata)
+
+        required = len(outdata)
+        written = 0
+
+        with self._buffer_lock:
+            available = len(self._buffer)
+            if available >= required:
+                outdata[:] = self._buffer[:required]
+                del self._buffer[:required]
+                written = required
+            elif available > 0:
+                outdata[:available] = self._buffer
+                del self._buffer[:available]
+                written = available
+
+        if written < required:
+            outdata[written:] = b'\x00' * (required - written)
 
     async def play_track(self, track):
         logger.info("🔊 Speaker loop started (Buffered)")
         try:
+            # Create a single playback stream locked to the target sample rate
+            if self.stream is None:
+                logger.info(f"🔊 Output Stream: {self.target_sample_rate}Hz")
+                self.stream = sd.RawOutputStream(
+                    samplerate=self.target_sample_rate,
+                    channels=1,
+                    dtype="int16",
+                    device=None,
+                    blocksize=960,
+                    callback=self._callback,
+                )
+                self.stream.start()
+
             while self.running:
                 try:
                     frame = await track.recv()
                 except Exception:
                     break
-                
-                if self.stream is None or self.current_sample_rate != frame.sample_rate:
-                    if self.stream: self.stream.stop()
-                    self.current_sample_rate = frame.sample_rate
-                    logger.info(f"🔊 Output Stream: {self.current_sample_rate}Hz")
-                    
-                    # FIX: Use device=None (Default) to avoid locking the hardware
-                    # This allows PulseAudio to mix the Mic input and Speaker output safely
-                    self.stream = sd.RawOutputStream(
-                        samplerate=self.current_sample_rate,
-                        channels=1,
-                        dtype='int16',
-                        device=None,  # <--- CHANGED FROM 0 TO NONE
-                        blocksize=960, 
-                        callback=self._callback
-                    )
-                    self.stream.start()
+
+                # Normalize every frame to signed 16-bit mono at 48 kHz
+                try:
+                    # Reuse resampler to avoid clicks when the remote side switches rates
+                    resampled = self.resampler.resample(frame)
+                    if not resampled:
+                        continue
+                    frame = resampled[0]
+                except Exception as err:
+                    logger.error(f"Resample error: {err}")
+                    continue
 
                 data = frame.to_ndarray()
                 if frame.layout.name == 'stereo':
                     data = data[0] if len(data.shape) > 1 else data.reshape(2, -1)[0]
                 if len(data.shape) > 1:
                     data = data.reshape(-1)
-                
-                self.audio_queue.put(data.tobytes())
+
+                pcm_bytes = data.tobytes()
+
+                # Preserve leftover samples between callbacks so the stream stays smooth
+                with self._buffer_lock:
+                    self._buffer.extend(pcm_bytes)
+
         except Exception as e:
             logger.error(f"Speaker error: {e}")
         finally:
@@ -168,9 +194,8 @@ class SpeakerStream:
                 self.stream.close()
             except: pass
             self.stream = None
-        while not self.audio_queue.empty():
-            try: self.audio_queue.get_nowait()
-            except: break
+        with self._buffer_lock:
+            self._buffer.clear()
 
 # === Constants and Configuration ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
