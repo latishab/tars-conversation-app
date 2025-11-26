@@ -1,14 +1,36 @@
-from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.frames.frames import LLMFullResponseEndFrame, LLMTextFrame, LLMFullResponseStartFrame, Frame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.frames.frames import (
+    LLMFullResponseEndFrame, 
+    LLMTextFrame, 
+    LLMFullResponseStartFrame, 
+    Frame, 
+    InputAudioRawFrame, 
+    StartFrame, 
+    EndFrame,
+    CancelFrame
+)
 from loguru import logger
 import json
 
+
+class InputAudioFilter(FrameProcessor):
+    """
+    Dedicated filter to block InputAudioRawFrame from reaching TTS service.
+    These frames should only go upstream (to STT), never downstream (to TTS).
+    """
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+        
+        # 1. The Logic: Block Audio going Downstream
+        if isinstance(frame, InputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
+            return
+        
+        # 2. THE FIX: We MUST push every other frame (StartFrame, Text, etc.)
+        await self.push_frame(frame, direction)
+
 class SilenceFilter(FrameProcessor):
     """
-    This processor intercepts LLM responses and checks if the full text
-    is the exact JSON string {"action": "silence"}. If so, it drops
-    the response frames, preventing them from going to TTS.
-    Otherwise, it passes all frames through.
+    Intercepts LLM responses. If response is {"action": "silence"}, drops it.
     """
     def __init__(self):
         super().__init__()
@@ -16,47 +38,48 @@ class SilenceFilter(FrameProcessor):
         self.is_collecting = False
     
     async def process_frame(self, frame: Frame, direction):
-        # Always call super().process_frame first to let base class handle StartFrame
-        # This ensures the processor is properly initialized
         await super().process_frame(frame, direction)
         
-        # Initialize state when pipeline starts
-        from pipecat.frames.frames import StartFrame
-        if isinstance(frame, StartFrame):
+        # THE FIX: Explicitly handle StartFrame/EndFrame/CancelFrame 
+        # so they don't get trapped here.
+        if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
             self.current_response_text = ""
             self.is_collecting = False
-            return  # StartFrame already pushed by super()
+            await self.push_frame(frame, direction)
+            return
         
-        # Start collecting text when we see a response start
+        # --- Normal Logic Below ---
+        
+        # Start collecting text
         if isinstance(frame, LLMFullResponseStartFrame):
             self.current_response_text = ""
             self.is_collecting = True
-            await self.push_frame(frame)
-        # Accumulate text from LLMTextFrame
+            await self.push_frame(frame, direction)
+            
+        # Accumulate text
         elif isinstance(frame, LLMTextFrame) and self.is_collecting:
             self.current_response_text += frame.text
-            await self.push_frame(frame)
-        # Check the full response when we see the end frame
+            await self.push_frame(frame, direction)
+            
+        # Check the full response
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self.is_collecting:
                 text = self.current_response_text.strip()
                 try:
-                    # Check if the entire response is the silence JSON
-                    data = json.loads(text)
-                    if data.get("action") == "silence":
-                        logger.info("SilenceFilter: Suppressing silent response.")
-                        # Drop the end frame by not pushing it
-                        self.is_collecting = False
-                        self.current_response_text = ""
-                        return
-                except (json.JSONDecodeError, TypeError):
-                    # It's not the silence JSON, so it's a real message.
+                    # Check for silence JSON
+                    if "action" in text and "silence" in text:
+                        clean_json = text.replace("```json", "").replace("```", "").strip()
+                        data = json.loads(clean_json)
+                        if data.get("action") == "silence":
+                            logger.info("SilenceFilter: Suppressing silent response.")
+                            self.is_collecting = False
+                            return # Drop the EndFrame (silence the turn)
+                except:
                     pass
                 self.is_collecting = False
-                self.current_response_text = ""
-            await self.push_frame(frame)
+            await self.push_frame(frame, direction)
+            
+        # Pass everything else (like Audio or System messages)
         else:
-            # Pass all other frames through (StartFrame, SpeechControlParamsFrame, etc.)
-            # Note: StartFrame is already handled above, but other control frames pass through
-            await self.push_frame(frame)
+            await self.push_frame(frame, direction)
 

@@ -34,7 +34,7 @@ from config import (
     QWEN_API_KEY,
     QWEN_MODEL,
 )
-from processors import SimpleTranscriptionLogger, SilenceFilter
+from processors import SimpleTranscriptionLogger, SilenceFilter, InputAudioFilter
 from config import MEM0_API_KEY
 from memory import Mem0Wrapper  # required
 
@@ -170,9 +170,47 @@ async def fetch_user_image(params: FunctionCallParams):
     await params.result_callback(None)
 
 
+async def _cleanup_services(service_refs: dict):
+    """Helper function to cleanup STT and TTS services to prevent connection leaks"""
+    # Cleanup STT service to close Speechmatics connection
+    if service_refs.get("stt"):
+        try:
+            stt_service = service_refs["stt"]
+            # Try multiple cleanup methods
+            if hasattr(stt_service, 'cleanup'):
+                await stt_service.cleanup()
+            elif hasattr(stt_service, 'close'):
+                await stt_service.close()
+            elif hasattr(stt_service, '_client') and stt_service._client:
+                # Close the underlying WebSocket client if it exists
+                client = stt_service._client
+                if hasattr(client, 'close'):
+                    await client.close()
+                elif hasattr(client, 'websocket') and client.websocket:
+                    await client.websocket.close()
+            logger.info("✓ STT service cleaned up")
+        except Exception as e:
+            logger.debug(f"Error cleaning up STT service: {e}")
+    
+    # Cleanup TTS service if needed
+    if service_refs.get("tts"):
+        try:
+            tts_service = service_refs["tts"]
+            if hasattr(tts_service, 'cleanup'):
+                await tts_service.cleanup()
+            elif hasattr(tts_service, 'close'):
+                await tts_service.close()
+            logger.info("✓ TTS service cleaned up")
+        except Exception as e:
+            logger.debug(f"Error cleaning up TTS service: {e}")
+
+
 async def run_bot(webrtc_connection):
     """Run the bot pipeline with the given WebRTC connection"""
     logger.info("Starting bot pipeline for WebRTC connection...")
+    
+    # Initialize service references early for cleanup
+    service_refs = {"stt": None, "tts": None}
 
     try:
         # Initialize VAD and Smart Turn Detection (lazy import to handle missing dependencies)
@@ -245,6 +283,7 @@ async def run_bot(webrtc_connection):
                 api_key=SPEECHMATICS_API_KEY,
                 params=stt_params,
             )
+            service_refs["stt"] = stt  # Store for cleanup
             logger.info("✓ Speechmatics STT initialized with speaker diarization (max 2 speakers)")
         except Exception as e:
             error_msg = str(e).lower()
@@ -257,7 +296,7 @@ async def run_bot(webrtc_connection):
                 logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
 
-        # Initialize ElevenLabs TTS with Flash model
+        # Initialize ElevenLabs TTS
         logger.info("Initializing ElevenLabs TTS...")
         tts = None
         try:
@@ -273,8 +312,10 @@ async def run_bot(webrtc_connection):
                 api_key=ELEVENLABS_API_KEY,
                 voice_id=ELEVENLABS_VOICE_ID,
                 model="eleven_flash_v2_5",
+                output_format="pcm_24000",  # Lower bandwidth, easier for Pi (reduces load by 45%)
                 enable_word_timestamps=False  # Disable to avoid _words_queue initialization bug
             )
+            service_refs["tts"] = tts  # Store for cleanup
             logger.info("✓ ElevenLabs TTS service created (word timestamps disabled)")
             
         except Exception as e:
@@ -404,6 +445,7 @@ async def run_bot(webrtc_connection):
             context_aggregator.user(),      # Process user input into context
             ParallelPipeline(parallel_branches),  # Parallel processing: Qwen + Moondream
             SilenceFilter(),                # Filter out silence commands
+            InputAudioFilter(),             # Block InputAudioRawFrame from reaching TTS
             tts,                            # Text to speech
             pipecat_transport.output(),     # Sends TTS audio to transport
             context_aggregator.assistant(), # Process assistant response into context
@@ -412,6 +454,9 @@ async def run_bot(webrtc_connection):
         # Store client_id and task reference for event handlers
         client_id_storage = {"client_id": None}
         task_ref = {"task": None}
+        # Update service references (already initialized above)
+        service_refs["stt"] = stt
+        service_refs["tts"] = tts
 
         # Set up event handlers before creating task
         @pipecat_transport.event_handler("on_client_connected")
@@ -471,8 +516,12 @@ async def run_bot(webrtc_connection):
         @pipecat_transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
             logger.info("Pipecat Client disconnected")
+            # Cancel the pipeline task first
             if task_ref["task"]:
                 await task_ref["task"].cancel()
+            
+            # Cleanup services to prevent connection leaks
+            await _cleanup_services(service_refs)
 
         # Helper function to detect and handle Speechmatics retryable errors
         def handle_speechmatics_error(error: Exception) -> bool:
@@ -546,6 +595,9 @@ async def run_bot(webrtc_connection):
             else:
                 # Re-raise if it's not a handled error
                 raise
+        finally:
+            # Ensure cleanup happens even if pipeline errors
+            await _cleanup_services(service_refs)
 
     except Exception as e:
         # Handle initialization errors
@@ -559,4 +611,7 @@ async def run_bot(webrtc_connection):
                 logger.error("   Please check your quota at: https://portal.speechmatics.com/")
             else:
                 logger.error(f"Error in bot pipeline: {e}", exc_info=True)
+    finally:
+        # Final cleanup in case of initialization errors
+        await _cleanup_services(service_refs)
 
