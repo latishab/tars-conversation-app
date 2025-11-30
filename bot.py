@@ -35,6 +35,7 @@ from processors import (
     AssistantResponseLogger,
     TTSSpeechStateBroadcaster,
     VisionLogger,
+    LatencyLogger,
     SilenceFilter,
     InputAudioFilter,
 )
@@ -49,9 +50,12 @@ from character.prompts import (
 from modules.module_tools import (
     fetch_user_image,
     set_speaking_rate,
+    adjust_persona_parameter,
     create_fetch_image_schema,
     create_speaking_rate_schema,
+    create_adjust_persona_schema,
     get_tts_speed_storage,
+    get_persona_storage,
 )
 
 if not MEM0_API_KEY:
@@ -236,6 +240,7 @@ async def run_bot(webrtc_connection):
             )
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("set_speaking_rate", set_speaking_rate)
+            llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
             logger.info(f"✓ Qwen LLM initialized with model: {QWEN_MODEL}")
         except Exception as e:
             logger.error(f"Failed to initialize Qwen LLM: {e}", exc_info=True)
@@ -303,18 +308,31 @@ async def run_bot(webrtc_connection):
         # Create function schemas
         fetch_image_function = create_fetch_image_schema()
         rate_function = create_speaking_rate_schema()
+        persona_function = create_adjust_persona_schema()
         
-        tools = ToolsSchema(standard_tools=[fetch_image_function, rate_function])
+        tools = ToolsSchema(standard_tools=[fetch_image_function, rate_function, persona_function])
 
         messages = [system_prompt]
         context = LLMContext(messages, tools)
         context_aggregator = LLMContextAggregatorPair(context)
+        
+        # Initialize persona storage with current parameters and context
+        persona_storage = get_persona_storage()
+        persona_storage["persona_params"] = persona_params.copy() if persona_params else {}
+        persona_storage["tars_data"] = tars_data.copy() if tars_data else {}
+        persona_storage["context_aggregator"] = context_aggregator
+        persona_storage["character_dir"] = character_dir
 
         # Create loggers with WebRTC connection for sending messages
         transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
+        # Create three latency loggers to capture frames at different points in the pipeline
+        # They share state via class-level _shared_state dictionary
+        latency_logger_upstream = LatencyLogger()  # Captures UPSTREAM TranscriptionFrame
+        latency_logger_llm = LatencyLogger()  # Captures DOWNSTREAM LLMTextFrame
+        latency_logger_tts = LatencyLogger()  # Captures DOWNSTREAM TTSStartedFrame
 
         # Create pipeline: Qwen + Moondream process in parallel
         logger.info("Creating audio/video pipeline with Qwen + Moondream...")
@@ -327,14 +345,17 @@ async def run_bot(webrtc_connection):
             pipecat_transport.input(),
             stt,
             transcription_logger,
+            latency_logger_upstream,  # Track latency: captures TranscriptionFrame (tries both directions)
             vision_logger,  # Log all vision-related frames (requests and responses)
             context_aggregator.user(),
             ParallelPipeline(parallel_branches),
             assistant_logger,
+            latency_logger_llm,  # Track latency: captures DOWNSTREAM LLMTextFrame
             SilenceFilter(),
             InputAudioFilter(),
             tts,
             tts_state_broadcaster,
+            latency_logger_tts,  # Track latency: captures DOWNSTREAM TTSStartedFrame (must be after TTS)
             pipecat_transport.output(),
             context_aggregator.assistant(),
         ])

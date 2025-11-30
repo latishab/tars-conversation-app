@@ -49,36 +49,20 @@ class VisionLogger(FrameProcessor):
                 except Exception as e:
                     logger.debug(f"Error sending vision status: {e}")
 
-        # Log ALL frames that might be vision-related - be very broad
         elif 'video' in frame_type.lower() or 'image' in frame_type.lower() or 'vision' in frame_type.lower():
-            logger.info(f"📷 Vision-related frame [{direction_str}]: {frame_type}")
-            # Try to get any useful info
-            for attr in ['image', 'user_id', 'text', 'question', 'response']:
-                if hasattr(frame, attr):
-                    value = getattr(frame, attr)
-                    if attr == 'image' and value is not None:
-                        try:
-                            if hasattr(value, 'size'):
-                                logger.debug(f"   Image size: {value.size}")
-                            elif hasattr(value, 'shape'):
-                                logger.debug(f"   Image shape: {value.shape}")
-                        except:
-                            pass
-                    elif value:
-                        logger.debug(f"   {attr}: {str(value)[:100]}")
+            # Only log at info level if we're actively processing a vision request
+            is_vision_active = hasattr(self, '_last_vision_request_time') and self._last_vision_request_time is not None
+            if is_vision_active:
+                time_since_request = current_time - self._last_vision_request_time
+                if time_since_request < 5:  # Only log during active vision processing (5 seconds)
+                    logger.debug(f"📷 Vision-related frame [{direction_str}]: {frame_type}")
+            else:
+                # Otherwise, only log at debug level (won't show unless debug logging is enabled)
+                logger.debug(f"📷 Vision-related frame [{direction_str}]: {frame_type}")
 
-        # Log frames with image attribute
+        # Log frames with image attribute only at debug level
         elif hasattr(frame, 'image'):
-            logger.info(f"📷 Frame with image attribute [{direction_str}]: {frame_type}")
-            try:
-                img = getattr(frame, 'image')
-                if img is not None:
-                    if hasattr(img, 'size'):
-                        logger.debug(f"   Image size: {img.size}")
-                    elif hasattr(img, 'shape'):
-                        logger.debug(f"   Image shape: {img.shape}")
-            except Exception as e:
-                logger.debug(f"   Could not inspect image: {e}")
+            logger.debug(f"📷 Frame with image attribute [{direction_str}]: {frame_type}")
 
         # Log any frame that might be a vision response by checking attributes
         elif hasattr(frame, 'user_id') and hasattr(frame, 'text'):
@@ -147,38 +131,20 @@ class VisionLogger(FrameProcessor):
         if is_video_frame:
             self._video_frame_count += 1
             self._last_video_frame_time = current_time
-            # Only log every 30 frames to reduce spam, or log important frames
-            if self._video_frame_count % 30 == 0 or 'VideoRawFrame' in frame_type:
-                logger.info(f"🎥 VIDEO FRAME DETECTED [{direction_str}]: {frame_type} (count: {self._video_frame_count})")
-            # Log frame details for actual video frames
-            try:
-                frame_dict = frame.__dict__ if hasattr(frame, '__dict__') else {}
-                for key in ['image', 'video', 'frame', 'data', 'timestamp']:
-                    if key in frame_dict:
-                        value = frame_dict[key]
-                        if value is not None:
-                            logger.debug(f"   {key}: {type(value).__name__}")
-            except:
-                pass
+            # Only log every 100 frames to reduce spam significantly
+            if self._video_frame_count % 100 == 0:
+                logger.debug(f"🎥 Video frames streaming [{direction_str}]: {self._video_frame_count} frames received")
         
-        # Log frame count summary every 10 seconds
+        # Log frame count summary every 30 seconds (less frequent)
         if not hasattr(self, '_last_summary_time'):
             self._last_summary_time = current_time
-        elif current_time - self._last_summary_time >= 10:
+        elif current_time - self._last_summary_time >= 30:
             if self._video_frame_count > 0:
-                logger.info(f"📊 Video frame summary: {self._video_frame_count} frames received in last 10 seconds")
+                logger.debug(f"📊 Video stream: {self._video_frame_count} frames in last 30 seconds")
             else:
-                logger.warning(f"⚠️ No video frames detected in last 10 seconds!")
+                logger.warning(f"⚠️ No video frames detected in last 30 seconds!")
             self._video_frame_count = 0
             self._last_summary_time = current_time
-
-        # Log frames after vision request to debug processing flow
-        if hasattr(self, '_last_vision_request_time'):
-            time_since_request = current_time - self._last_vision_request_time
-            if time_since_request < 15:  # Log for 15 seconds after vision request
-                # Only log important frames, not every audio frame
-                if 'Video' in frame_type or 'Image' in frame_type or 'Moondream' in frame_type or 'LLM' in frame_type:
-                    logger.debug(f"🔍 Frame after vision request [{direction_str}] ({time_since_request:.1f}s): {frame_type}")
 
         await self.push_frame(frame, direction)
 
