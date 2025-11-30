@@ -16,20 +16,26 @@ class VisionLogger(FrameProcessor):
     def __init__(self, webrtc_connection=None):
         super().__init__()
         self.webrtc_connection = webrtc_connection
+        self._video_frame_count = 0
+        self._last_video_frame_time = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        import time
+        current_time = time.time()
+        
         frame_type = type(frame).__name__
         direction_str = "UPSTREAM" if direction == FrameDirection.UPSTREAM else "DOWNSTREAM"
         
         # Log vision request frames
         if isinstance(frame, UserImageRequestFrame):
-            import time
             user_id = getattr(frame, 'user_id', 'unknown')
             question = getattr(frame, 'text', 'unknown')
             logger.info(f"👁️ Vision request received [{direction_str}]: user_id={user_id}, question={question}")
-            self._last_vision_request_time = time.time()  # Track when vision was requested
+            self._last_vision_request_time = current_time  # Track when vision was requested
+            self._vision_request_count = getattr(self, '_vision_request_count', 0) + 1
+            logger.info(f"📊 Vision request #{self._vision_request_count} - waiting for video frames and Moondream response...")
             
             # Send status to frontend
             if self.webrtc_connection:
@@ -86,8 +92,17 @@ class VisionLogger(FrameProcessor):
         # Moondream responses come through as LLMTextFrame with vision context
         elif isinstance(frame, LLMTextFrame):
             text = getattr(frame, 'text', '')
-            vision_keywords = ['see', 'visible', 'camera', 'image', 'showing', 'appears', 'looks like', 'dimly lit', 'desk', 'monitor', 'room', 'window', 'mug', 'laptop', 'coffee']
-            if text and any(keyword in text.lower() for keyword in vision_keywords):
+            vision_keywords = ['see', 'visible', 'camera', 'image', 'showing', 'appears', 'looks like', 'dimly lit', 'desk', 'monitor', 'room', 'window', 'mug', 'laptop', 'coffee', 'analyzing', 'processing']
+            
+            # Check if this is a vision response (either from keywords or if we recently requested vision)
+            is_vision_response = False
+            if hasattr(self, '_last_vision_request_time'):
+                time_since_request = current_time - self._last_vision_request_time
+                if time_since_request < 10:  # Within 10 seconds of vision request
+                    is_vision_response = True
+                    logger.info(f"✅ Vision response received [{direction_str}] (within {time_since_request:.1f}s of request): {text[:200]}..." if len(text) > 200 else f"✅ Vision response: {text}")
+            
+            if text and any(keyword in text.lower() for keyword in vision_keywords) and not is_vision_response:
                 logger.info(f"✅ Possible vision response in LLM text [{direction_str}]: {text[:200]}..." if len(text) > 200 else f"✅ Possible vision response: {text}")
 
         # Log errors
@@ -108,13 +123,62 @@ class VisionLogger(FrameProcessor):
                     except Exception as e:
                         logger.debug(f"Error sending vision error: {e}")
 
-        # TEMPORARY: Log all frame types to debug what's happening
-        # This will help us see what frames are flowing through after a vision request
-        # Remove this after we identify the issue
+        # Check for actual video frames (exclude audio frames)
+        # Check for video frames - be specific to avoid false positives
+        is_video_frame = False
+        
+        # Explicitly exclude audio frames
+        if 'audio' in frame_type.lower():
+            is_video_frame = False
+        # Check for actual video frame types
+        elif 'VideoRawFrame' in frame_type or 'InputVideoRawFrame' in frame_type:
+            is_video_frame = True
+        elif 'video' in frame_type.lower() and 'audio' not in frame_type.lower():
+            # Only if it's a video frame and not an audio frame
+            is_video_frame = True
+        elif hasattr(frame, 'video') and not hasattr(frame, 'audio'):
+            # Has video attribute but not audio
+            is_video_frame = True
+        elif hasattr(frame, 'image') and hasattr(frame, 'user_id'):
+            # User image request/response frames
+            is_video_frame = True
+        
+        # Only log actual video frames, not audio frames
+        if is_video_frame:
+            self._video_frame_count += 1
+            self._last_video_frame_time = current_time
+            # Only log every 30 frames to reduce spam, or log important frames
+            if self._video_frame_count % 30 == 0 or 'VideoRawFrame' in frame_type:
+                logger.info(f"🎥 VIDEO FRAME DETECTED [{direction_str}]: {frame_type} (count: {self._video_frame_count})")
+            # Log frame details for actual video frames
+            try:
+                frame_dict = frame.__dict__ if hasattr(frame, '__dict__') else {}
+                for key in ['image', 'video', 'frame', 'data', 'timestamp']:
+                    if key in frame_dict:
+                        value = frame_dict[key]
+                        if value is not None:
+                            logger.debug(f"   {key}: {type(value).__name__}")
+            except:
+                pass
+        
+        # Log frame count summary every 10 seconds
+        if not hasattr(self, '_last_summary_time'):
+            self._last_summary_time = current_time
+        elif current_time - self._last_summary_time >= 10:
+            if self._video_frame_count > 0:
+                logger.info(f"📊 Video frame summary: {self._video_frame_count} frames received in last 10 seconds")
+            else:
+                logger.warning(f"⚠️ No video frames detected in last 10 seconds!")
+            self._video_frame_count = 0
+            self._last_summary_time = current_time
+
+        # Log frames after vision request to debug processing flow
         if hasattr(self, '_last_vision_request_time'):
-            import time
-            if time.time() - self._last_vision_request_time < 30:  # Log for 30 seconds after vision request
-                logger.debug(f"🔍 Frame after vision request [{direction_str}]: {frame_type}")
+            time_since_request = current_time - self._last_vision_request_time
+            if time_since_request < 15:  # Log for 15 seconds after vision request
+                # Only log important frames, not every audio frame
+                if 'Video' in frame_type or 'Image' in frame_type or 'Moondream' in frame_type or 'LLM' in frame_type:
+                    logger.debug(f"🔍 Frame after vision request [{direction_str}] ({time_since_request:.1f}s): {frame_type}")
 
         await self.push_frame(frame, direction)
 
