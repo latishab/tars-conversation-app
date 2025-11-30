@@ -4,19 +4,15 @@ import asyncio
 import json
 import os
 import logging
-import configparser
 
-from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMRunFrame, UserImageRequestFrame
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
-from pipecat.processors.frame_processor import FrameDirection
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -34,9 +30,29 @@ from config import (
     QWEN_API_KEY,
     QWEN_MODEL,
 )
-from processors import SimpleTranscriptionLogger, SilenceFilter, InputAudioFilter
+from processors import (
+    SimpleTranscriptionLogger,
+    AssistantResponseLogger,
+    TTSSpeechStateBroadcaster,
+    VisionLogger,
+    SilenceFilter,
+    InputAudioFilter,
+)
 from config import MEM0_API_KEY
 from memory import Mem0Wrapper  # required
+from character.prompts import (
+    load_persona_ini,
+    load_tars_json,
+    build_tars_system_prompt,
+    get_introduction_instruction,
+)
+from modules.module_tools import (
+    fetch_user_image,
+    set_speaking_rate,
+    create_fetch_image_schema,
+    create_speaking_rate_schema,
+    get_tts_speed_storage,
+)
 
 if not MEM0_API_KEY:
     raise RuntimeError("MEM0_API_KEY is required but not set.")
@@ -44,145 +60,16 @@ if not MEM0_API_KEY:
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
-def load_persona_ini(persona_file_path: str) -> dict:
-    """Load persona parameters from persona.ini file."""
-    persona_params = {}
-    try:
-        config = configparser.ConfigParser()
-        config.read(persona_file_path)
-        if 'PERSONA' in config:
-            persona_params = dict(config['PERSONA'])
-            # Convert string values to integers
-            for key, value in persona_params.items():
-                try:
-                    persona_params[key] = int(value.strip())
-                except ValueError:
-                    persona_params[key] = value.strip()
-        logger.info(f"✓ Loaded persona parameters from {persona_file_path}")
-    except FileNotFoundError:
-        logger.warning(f"persona.ini not found at {persona_file_path}")
-    except Exception as e:
-        logger.error(f"Error loading persona.ini: {e}")
-    return persona_params
-
-
-def load_tars_json(tars_file_path: str) -> dict:
-    """Load TARS character data from TARS.json file."""
-    tars_data = {}
-    try:
-        with open(tars_file_path, "r", encoding="utf-8") as f:
-            tars_data = json.load(f)
-        logger.info(f"✓ Loaded TARS character data from {tars_file_path}")
-    except FileNotFoundError:
-        logger.warning(f"TARS.json not found at {tars_file_path}")
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing TARS.json: {e}")
-    return tars_data
-
-
-def build_tars_system_prompt(persona_params: dict, tars_data: dict) -> dict:
-    """Build comprehensive system prompt from persona and TARS character data."""
-    # Start with base character information
-    prompt_parts = []
-    
-    # Add character name and description
-    if tars_data.get("char_name"):
-        prompt_parts.append(f"You are {tars_data['char_name']}.")
-    
-    if tars_data.get("char_persona"):
-        prompt_parts.append(tars_data["char_persona"])
-    
-    if tars_data.get("description"):
-        prompt_parts.append(f"Description: {tars_data['description']}")
-    
-    if tars_data.get("personality"):
-        prompt_parts.append(f"Personality: {tars_data['personality']}")
-    
-    if tars_data.get("world_scenario") or tars_data.get("scenario"):
-        scenario = tars_data.get("world_scenario") or tars_data.get("scenario")
-        prompt_parts.append(f"Scenario: {scenario}")
-    
-    # Add persona parameters
-    if persona_params:
-        prompt_parts.append("\n## Personality Parameters ##")
-        param_lines = []
-        for key, value in sorted(persona_params.items()):
-            if isinstance(value, int):
-                param_lines.append(f"- {key}: {value}%")
-            else:
-                param_lines.append(f"- {key}: {value}")
-        prompt_parts.append("\n".join(param_lines))
-    
-    # Add example dialogue for context
-    if tars_data.get("example_dialogue"):
-        prompt_parts.append("\n## Example Interactions ##")
-        prompt_parts.append(tars_data["example_dialogue"])
-    
-    # Add original rules of engagement
-    prompt_parts.append("\n## Your Rules of Engagement ##")
-    prompt_parts.append("""
-1.  **Analyze Context:** First, silently analyze the latest user message in the context of the conversation and diarization (e.g., [S1], [S2]).
-2.  **Classify Intent:** Determine the intent:
-    * **Direct:** Is this a direct question or comment to you (e.g., 'Hey TARS', 'What do you see?', 'Why are you so dry?')?
-    * **Group:** Is this a conversation between other users that does not involve you?
-3.  **Check Group State (if Group):** If the intent is 'Group', classify the group's state: 'Indecision', 'Conflict', 'Idle', 'DecisionMade', etc.
-4.  **Decide to Speak:**
-    * **ALWAYS Respond** if the intent is 'Direct'. Answer the question or acknowledge the comment.
-    * **INTERVENE** if the intent is 'Group' AND the state is a trigger (e.g., 'Indecision', 'Conflict'). Formulate a helpful, proactive intervention.
-    * **STAY SILENT** in all other cases (e.g., 'Group' chatter is 'Idle').
-5.  **Formulate Response:**
-    * If you decide to speak, provide your natural, conversational response (do not include special characters).
-    * If you decide to **STAY SILENT**, you MUST respond with ONLY the following exact JSON: {"action": "silence"}
-""")
-    
-    # Add vision capabilities note
-    prompt_parts.append("\n## Additional Capabilities ##")
-    prompt_parts.append("You have vision capabilities and can describe images from the user's camera. Your output will be converted to audio so don't include special characters in your answers.")
-    
-    # Combine all parts
-    full_prompt = "\n\n".join(prompt_parts)
-    
-    return {
-        "role": "system",
-        "content": full_prompt
-    }
-
-
-async def fetch_user_image(params: FunctionCallParams):
-    """Fetch the user image for vision analysis.
-
-    When called, this function pushes a UserImageRequestFrame upstream to the
-    transport. As a result, the transport will request the user image and push a
-    UserImageRawFrame downstream to Moondream for processing.
-    """
-    user_id = params.arguments["user_id"]
-    question = params.arguments["question"]
-    logger.info(f"📸 Requesting image with user_id={user_id}, question={question}")
-
-    # Request a user image frame. We don't want the requested
-    # image to be added to the context because we will process it with
-    # Moondream.
-    await params.llm.push_frame(
-        UserImageRequestFrame(user_id=user_id, text=question, append_to_context=False),
-        FrameDirection.UPSTREAM,
-    )
-
-    await params.result_callback(None)
-
-
 async def _cleanup_services(service_refs: dict):
-    """Helper function to cleanup STT and TTS services to prevent connection leaks"""
-    # Cleanup STT service to close Speechmatics connection
+    """Cleanup STT and TTS services to prevent connection leaks."""
     if service_refs.get("stt"):
         try:
             stt_service = service_refs["stt"]
-            # Try multiple cleanup methods
             if hasattr(stt_service, 'cleanup'):
                 await stt_service.cleanup()
             elif hasattr(stt_service, 'close'):
                 await stt_service.close()
             elif hasattr(stt_service, '_client') and stt_service._client:
-                # Close the underlying WebSocket client if it exists
                 client = stt_service._client
                 if hasattr(client, 'close'):
                     await client.close()
@@ -192,7 +79,6 @@ async def _cleanup_services(service_refs: dict):
         except Exception as e:
             logger.debug(f"Error cleaning up STT service: {e}")
     
-    # Cleanup TTS service if needed
     if service_refs.get("tts"):
         try:
             tts_service = service_refs["tts"]
@@ -213,7 +99,7 @@ async def run_bot(webrtc_connection):
     service_refs = {"stt": None, "tts": None}
 
     try:
-        # Initialize VAD and Smart Turn Detection (lazy import to handle missing dependencies)
+        # Initialize VAD and Smart Turn Detection
         logger.info("Initializing VAD and Smart Turn Detection...")
         vad_analyzer = None
         turn_analyzer = None
@@ -222,12 +108,16 @@ async def run_bot(webrtc_connection):
             from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
             from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
             
-            vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.2))
+            vad_analyzer = SileroVADAnalyzer(params=VADParams(
+                stop_secs=0.8,  # Natural pauses
+                start_secs=0.2,
+                confidence=0.5
+            ))
             turn_analyzer = LocalSmartTurnAnalyzerV3(
                 params=SmartTurnParams(
-                    stop_secs=3.0,
-                    pre_speech_ms=0.0,
-                    max_duration_secs=8.0
+                    stop_secs=1.0,
+                    pre_speech_ms=200.0,
+                    max_duration_secs=15.0
                 )
             )
             logger.info("✓ VAD and Smart Turn Detection initialized")
@@ -239,13 +129,12 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize VAD/Smart Turn: {e}", exc_info=True)
             logger.warning("Falling back to transport without Smart Turn Detection")
 
-        # Create SmallWebRTC transport from the connection
-        # Video disabled for now - audio only mode
+        # Create SmallWebRTC transport (audio + video)
         transport_params = TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            video_in_enabled=False,  # Disabled - no camera needed
-            video_out_enabled=False,  # Disabled - no video output needed
+            video_in_enabled=True,  # Enable video input for camera feed
+            video_out_enabled=False,
             video_out_is_live=False,
         )
         
@@ -257,6 +146,8 @@ async def run_bot(webrtc_connection):
             logger.info("✓ Smart Turn Detection enabled - will prevent interruptions")
         else:
             logger.warning("⚠ Smart Turn Detection NOT enabled - bot may interrupt users")
+        
+        logger.info("✓ Video input enabled - camera feed will be available for vision analysis")
 
         pipecat_transport = SmallWebRTCTransport(
             webrtc_connection=webrtc_connection,
@@ -267,14 +158,12 @@ async def run_bot(webrtc_connection):
         logger.info("Initializing Speechmatics STT with speaker diarization (max 2 speakers)...")
         stt = None
         try:
-            # Disable Speechmatics VAD when Smart Turn is enabled to avoid conflicts
-            # Smart Turn handles turn detection, so we don't need Speechmatics' VAD
             stt_params = SpeechmaticsSTTService.InputParams(
                 language=Language.EN,
                 enable_diarization=True,
                 max_speakers=2,
             )
-            # If Smart Turn is enabled, disable Speechmatics' internal VAD
+            # Disable Speechmatics VAD when Smart Turn is enabled
             if turn_analyzer:
                 stt_params.enable_vad = False
                 logger.info("Disabled Speechmatics VAD (using Smart Turn instead)")
@@ -312,11 +201,20 @@ async def run_bot(webrtc_connection):
                 api_key=ELEVENLABS_API_KEY,
                 voice_id=ELEVENLABS_VOICE_ID,
                 model="eleven_flash_v2_5",
-                output_format="pcm_24000",  # Lower bandwidth, easier for Pi (reduces load by 45%)
-                enable_word_timestamps=False  # Disable to avoid _words_queue initialization bug
+                output_format="pcm_24000",
+                enable_word_timestamps=False
             )
-            service_refs["tts"] = tts  # Store for cleanup
-            logger.info("✓ ElevenLabs TTS service created (word timestamps disabled)")
+            service_refs["tts"] = tts
+            tts_speed_storage = get_tts_speed_storage()
+            tts_speed_storage["tts_service"] = tts
+            try:
+                if hasattr(tts, 'speed'):
+                    tts.speed = tts_speed_storage["speed"]
+                    logger.info(f"✓ ElevenLabs TTS service created (speed: {tts_speed_storage['speed']}x)")
+                else:
+                    logger.info("✓ ElevenLabs TTS service created")
+            except Exception:
+                logger.info("✓ ElevenLabs TTS service created")
             
         except Exception as e:
             logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
@@ -336,8 +234,8 @@ async def run_bot(webrtc_connection):
                 api_key=QWEN_API_KEY,
                 model=QWEN_MODEL
             )
-            # Register function for image requests
             llm.register_function("fetch_user_image", fetch_user_image)
+            llm.register_function("set_speaking_rate", set_speaking_rate)
             logger.info(f"✓ Qwen LLM initialized with model: {QWEN_MODEL}")
         except Exception as e:
             logger.error(f"Failed to initialize Qwen LLM: {e}", exc_info=True)
@@ -371,7 +269,12 @@ async def run_bot(webrtc_connection):
         
         # Load persona parameters and TARS character data
         persona_params = load_persona_ini(persona_file)
+        if persona_params:
+            logger.info(f"✓ Loaded persona parameters from {persona_file}")
+        
         tars_data = load_tars_json(tars_file)
+        if tars_data:
+            logger.info(f"✓ Loaded TARS character data from {tars_file}")
         
         # Build system prompt from character data
         if persona_params or tars_data:
@@ -397,83 +300,55 @@ async def run_bot(webrtc_connection):
                     "content": "You are a helpful AI assistant with vision capabilities. You can describe images from the user's camera. Respond naturally and conversationally to user queries. Your output will be converted to audio so don't include special characters in your answers."
                 }
 
-        # Create function schema for image fetching
-        fetch_image_function = FunctionSchema(
-            name="fetch_user_image",
-            description="Called when the user requests a description of their camera feed or wants to know what they're showing on camera",
-            properties={
-                "user_id": {
-                    "type": "string",
-                    "description": "The ID of the user to grab the image from",
-                },
-                "question": {
-                    "type": "string",
-                    "description": "The question that the user is asking about the image",
-                },
-            },
-            required=["user_id", "question"],
-        )
-        tools = ToolsSchema(standard_tools=[fetch_image_function])
+        # Create function schemas
+        fetch_image_function = create_fetch_image_schema()
+        rate_function = create_speaking_rate_schema()
+        
+        tools = ToolsSchema(standard_tools=[fetch_image_function, rate_function])
 
         messages = [system_prompt]
         context = LLMContext(messages, tools)
         context_aggregator = LLMContextAggregatorPair(context)
 
-        # Create simple transcription logger with WebRTC connection for sending messages
+        # Create loggers with WebRTC connection for sending messages
         transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
+        assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
+        tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
+        vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
 
-        # Create pipeline with ParallelPipeline for Qwen + Moondream
-        # Pipeline flow:
-        #   transport.input() -> STT -> logger -> context_aggregator.user() ->
-        #   ParallelPipeline([llm], [moondream]) -> TTS ->
-        #   transport.output() -> context_aggregator.assistant()
-        #
-        # Qwen LLM and Moondream process in parallel:
-        # - Qwen handles text responses and can call fetch_user_image function
-        # - Moondream processes UserImageRawFrame requests from Qwen
+        # Create pipeline: Qwen + Moondream process in parallel
         logger.info("Creating audio/video pipeline with Qwen + Moondream...")
 
-        # Build parallel pipeline branches
-        parallel_branches = [llm]  # Qwen LLM branch
+        parallel_branches = [llm]
         if moondream:
-            parallel_branches.append(moondream)  # Moondream vision branch
+            parallel_branches.append(moondream)
 
         pipeline = Pipeline([
-            pipecat_transport.input(),      # Receives all frames (audio and video)
-            stt,                            # Speech to text
-            transcription_logger,           # Log transcriptions
-            context_aggregator.user(),      # Process user input into context
-            ParallelPipeline(parallel_branches),  # Parallel processing: Qwen + Moondream
-            SilenceFilter(),                # Filter out silence commands
-            InputAudioFilter(),             # Block InputAudioRawFrame from reaching TTS
-            tts,                            # Text to speech
-            pipecat_transport.output(),     # Sends TTS audio to transport
-            context_aggregator.assistant(), # Process assistant response into context
+            pipecat_transport.input(),
+            stt,
+            transcription_logger,
+            vision_logger,  # Log all vision-related frames (requests and responses)
+            context_aggregator.user(),
+            ParallelPipeline(parallel_branches),
+            assistant_logger,
+            SilenceFilter(),
+            InputAudioFilter(),
+            tts,
+            tts_state_broadcaster,
+            pipecat_transport.output(),
+            context_aggregator.assistant(),
         ])
 
-        # Store client_id and task reference for event handlers
         client_id_storage = {"client_id": None}
         task_ref = {"task": None}
-        # Update service references (already initialized above)
         service_refs["stt"] = stt
         service_refs["tts"] = tts
-
-        # Set up event handlers before creating task
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
-            # Video disabled - skip camera capture
-            # try:
-            #     await pipecat_transport.capture_participant_video("camera")
-            #     logger.info("Camera video capture started")
-            # except Exception as e:
-            #     logger.error(f"Error capturing camera video: {e}", exc_info=True)
-
-            # Get client ID for function calls
-            # For SmallWebRTC, we'll use a simple identifier
             client_id_storage["client_id"] = "user_1"
 
-            # Augment context with recalled memories for this user
+            # Inject recalled memories
             try:
                 if _mem0 and _mem0.enabled:
                     recalled = _mem0.recall(user_id=client_id_storage["client_id"], limit=8)
@@ -491,11 +366,10 @@ async def run_bot(webrtc_connection):
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Skipping memory recall injection due to error: {e}")
 
-            # Test if we can send a message
+            # Test connection
             try:
                 if webrtc_connection.is_connected():
                     logger.info("WebRTC connection is ready for sending messages")
-                    # Test message
                     webrtc_connection.send_app_message({
                         "type": "system",
                         "message": "Connection established"
@@ -505,31 +379,33 @@ async def run_bot(webrtc_connection):
             except Exception as e:
                 logger.error(f"Error sending test message: {e}", exc_info=True)
 
-            # Kick off the conversation with introduction
+            # Send introduction
             if task_ref["task"]:
-                messages.append({
-                    "role": "system",
-                    "content": f"Please introduce yourself to the user. Use '{client_id_storage['client_id']}' as the user ID during function calls.",
-                })
+                verbosity_level = persona_params.get("verbosity", 10) if persona_params else 10
+                if isinstance(verbosity_level, str):
+                    try:
+                        verbosity_level = int(verbosity_level)
+                    except ValueError:
+                        verbosity_level = 10
+                
+                intro_instruction = get_introduction_instruction(
+                    client_id_storage['client_id'],
+                    verbosity_level
+                )
+                messages.append(intro_instruction)
                 await task_ref["task"].queue_frames([LLMRunFrame()])
 
         @pipecat_transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
             logger.info("Pipecat Client disconnected")
-            # Cancel the pipeline task first
             if task_ref["task"]:
                 await task_ref["task"].cancel()
-            
-            # Cleanup services to prevent connection leaks
             await _cleanup_services(service_refs)
 
-        # Helper function to detect and handle Speechmatics retryable errors
         def handle_speechmatics_error(error: Exception) -> bool:
-            """Handle Speechmatics errors and return True if retryable, False otherwise."""
+            """Handle Speechmatics errors. Returns True if retryable."""
             error_str = str(error).lower()
             error_code = None
-            
-            # Extract error code from error message
             if "4005" in error_str or "quota_exceeded" in error_str or "concurrent quota exceeded" in error_str:
                 error_code = 4005
             elif "4013" in error_str or "job_error" in error_str:
@@ -537,14 +413,10 @@ async def run_bot(webrtc_connection):
             elif "1011" in error_str or "internal_error" in error_str:
                 error_code = 1011
             
-            # Check if this is a retryable error
             retryable_errors = [4005, 4013, 1011]
             if error_code in retryable_errors:
                 logger.warning(f"⚠️ Speechmatics retryable error ({error_code}) detected: {error}")
-                logger.info("   Per Speechmatics docs, client should retry after 5-10 seconds...")
-                logger.info("   Note: The service will need to be restarted after quota issues are resolved.")
-                
-                # Send error message to frontend
+                logger.info("   Retry after 5-10 seconds...")
                 try:
                     if webrtc_connection.is_connected():
                         if error_code == 4005:
@@ -577,41 +449,32 @@ async def run_bot(webrtc_connection):
             
             return False
 
-        # Create and run pipeline task
         task = PipelineTask(pipeline)
         task_ref["task"] = task
         runner = PipelineRunner(handle_sigint=False)
 
         logger.info("Starting pipeline runner...")
         
-        # Run the pipeline with error handling for Speechmatics quota issues
         try:
             await runner.run(task)
         except Exception as pipeline_error:
-            # Check if this is a Speechmatics quota error
             if handle_speechmatics_error(pipeline_error):
                 logger.info("   Pipeline stopped due to retryable Speechmatics error.")
-                logger.info("   Please wait 5-10 seconds and try reconnecting.")
             else:
-                # Re-raise if it's not a handled error
                 raise
         finally:
-            # Ensure cleanup happens even if pipeline errors
             await _cleanup_services(service_refs)
 
     except Exception as e:
-        # Handle initialization errors
         if handle_speechmatics_error(e):
             logger.info("   Bot initialization stopped due to retryable Speechmatics error.")
         else:
             error_str = str(e).lower()
             if "quota" in error_str or "4005" in error_str or "quota_exceeded" in error_str:
                 logger.error("❌ Speechmatics quota exceeded!")
-                logger.error("   Your Speechmatics API quota has been exceeded.")
                 logger.error("   Please check your quota at: https://portal.speechmatics.com/")
             else:
                 logger.error(f"Error in bot pipeline: {e}", exc_info=True)
     finally:
-        # Final cleanup in case of initialization errors
         await _cleanup_services(service_refs)
 

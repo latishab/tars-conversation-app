@@ -7,36 +7,25 @@ Main entry point for the TARS-AI Robot Body application.
 # === Standard Libraries ===
 import os
 import sys
-import threading
-import time
 import signal
 import asyncio
 import json
 import aiohttp
 import logging
-import subprocess
 
 # === Custom Modules ===
 from modules.module_config import load_config
 from modules.module_messageQue import queue_message
+from modules.module_audio import MicrophoneStream, SpeakerStream, audio_activity_monitor
 
 # === WebRTC and Audio ===
 try:
-    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-    from pipecat.transports.base_transport import TransportParams
     from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
-    from aiortc.contrib.media import MediaPlayer, MediaRelay
-    from aiortc.mediastreams import MediaStreamTrack
-    import sounddevice as sd
-    import numpy as np
-    from av import AudioFrame
-    from av.audio.resampler import AudioResampler
-    import fractions
     WEBRTC_AVAILABLE = True
 except ImportError as e:
     WEBRTC_AVAILABLE = False
     queue_message(f"ERROR: Required packages not available: {e}")
-    queue_message("Install with: pip install aiortc aiohttp sounddevice numpy")
+    queue_message("Install with: pip install aiortc aiohttp")
 
 from modules.module_battery import BatteryModule
 
@@ -62,141 +51,6 @@ logger.add(
     level="INFO"
 )
 
-# === MicrophoneStream Class ===
-class MicrophoneStream(MediaStreamTrack):
-    kind = "audio"
-
-    def __init__(self):
-        super().__init__()
-        self.rate = 48000
-        self.channels = 1
-        
-        # We keep device=0 here to ensure we grab the WM8960 Mic
-        self.stream = sd.InputStream(
-            samplerate=self.rate,
-            channels=self.channels,
-            dtype="int16",
-            blocksize=960, 
-            device=0 
-        )
-        self.stream.start()
-        self.start_time = time.time()
-        logger.info(f"MicrophoneStream initialized: {self.rate}Hz")
-
-    async def recv(self):
-        loop = asyncio.get_running_loop()
-        data, overflow = await loop.run_in_executor(None, lambda: self.stream.read(960))
-        if overflow:
-            logger.warning("⚠️ Audio Overflow")
-
-        frame = AudioFrame.from_ndarray(data.T.reshape(1, -1), format='s16', layout='mono')
-        frame.sample_rate = self.rate
-        frame.pts = int((time.time() - self.start_time) * self.rate)
-        frame.time_base = fractions.Fraction(1, self.rate)
-        return frame
-
-    def stop(self):
-        if hasattr(self, 'stream') and self.stream:
-            self.stream.stop()
-            self.stream.close()
-
-# === SpeakerStream Class (Jitter Buffer) ===
-class SpeakerStream:
-    def __init__(self, volume=1.0):
-        self.volume = max(0.0, min(1.0, volume))
-        self.stream = None
-        self.running = True
-        self.target_sample_rate = 48000  # WM8960 prefers 48 kHz playback
-        self._buffer = bytearray()
-        self._buffer_lock = threading.Lock()
-        self.resampler = AudioResampler(
-            format="s16",
-            layout="mono",
-            rate=self.target_sample_rate,
-        )
-
-    def _callback(self, outdata, frames, time, status):
-        if status:
-            logger.warning(f"Audio Status: {status}")
-
-        required = len(outdata)
-        written = 0
-
-        with self._buffer_lock:
-            available = len(self._buffer)
-            if available >= required:
-                outdata[:] = self._buffer[:required]
-                del self._buffer[:required]
-                written = required
-            elif available > 0:
-                outdata[:available] = self._buffer
-                del self._buffer[:available]
-                written = available
-
-        if written < required:
-            outdata[written:] = b'\x00' * (required - written)
-
-    async def play_track(self, track):
-        logger.info("🔊 Speaker loop started (Buffered)")
-        try:
-            # Create a single playback stream locked to the target sample rate
-            if self.stream is None:
-                logger.info(f"🔊 Output Stream: {self.target_sample_rate}Hz")
-                self.stream = sd.RawOutputStream(
-                    samplerate=self.target_sample_rate,
-                    channels=1,
-                    dtype="int16",
-                    device=None,
-                    blocksize=960,
-                    callback=self._callback,
-                )
-                self.stream.start()
-
-            while self.running:
-                try:
-                    frame = await track.recv()
-                except Exception:
-                    break
-
-                # Normalize every frame to signed 16-bit mono at 48 kHz
-                try:
-                    # Reuse resampler to avoid clicks when the remote side switches rates
-                    resampled = self.resampler.resample(frame)
-                    if not resampled:
-                        continue
-                    frame = resampled[0]
-                except Exception as err:
-                    logger.error(f"Resample error: {err}")
-                    continue
-
-                data = frame.to_ndarray()
-                if frame.layout.name == 'stereo':
-                    data = data[0] if len(data.shape) > 1 else data.reshape(2, -1)[0]
-                if len(data.shape) > 1:
-                    data = data.reshape(-1)
-
-                pcm_bytes = data.tobytes()
-
-                # Preserve leftover samples between callbacks so the stream stays smooth
-                with self._buffer_lock:
-                    self._buffer.extend(pcm_bytes)
-
-        except Exception as e:
-            logger.error(f"Speaker error: {e}")
-        finally:
-            self.stop()
-
-    def stop(self):
-        self.running = False
-        if self.stream:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            except: pass
-            self.stream = None
-        with self._buffer_lock:
-            self._buffer.clear()
-
 # === Constants and Configuration ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
@@ -204,7 +58,7 @@ sys.path.insert(0, BASE_DIR)
 CONFIG = load_config()
 VERSION = "4.0"
 
-SERVER_IP = os.getenv("SERVER_IP", "172.28.242.124")
+SERVER_IP = os.getenv("SERVER_IP", "10.10.101.109")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "7860"))
 SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
 
@@ -275,11 +129,28 @@ async def main():
                 elif msg_type == "partial":
                     text = data.get("text", "")
                     if text: queue_message(f"🎙️ Listening... {text}")
+                elif msg_type == "tts_state":
+                    state = data.get("state")
+                    logger.debug(f"Received TTS state: {state}")
+                    audio_activity_monitor.set_forced_state(state == "started")
+                    if state == "started":
+                        queue_message("🔇 Muting mic while TARS speaks")
+                    elif state == "stopped":
+                        queue_message("🎙️ Mic re-enabled")
+                    else:
+                        logger.warning(f"Unknown TTS state: {state}")
+                elif msg_type == "assistant":
+                    text = data.get("text", "")
+                    if text: queue_message(f"🤖 TARS: {text}")
                 elif msg_type == "system":
                     queue_message(f"ℹ️ {data.get('message')}")
                 elif msg_type == "error":
                     queue_message(f"❌ Error: {data.get('message')}")
-            except: pass
+                else:
+                    logger.debug(f"Received unknown message type: {msg_type}")
+            except Exception as e:
+                logger.error(f"Error processing data channel message: {e}")
+                logger.debug(f"Message content: {msg}")
 
         await pc.setLocalDescription(await pc.createOffer())
         async with aiohttp.ClientSession() as session:

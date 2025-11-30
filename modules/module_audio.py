@@ -1,164 +1,292 @@
-"""
-app.py 
+"""Audio capture and playback utilities for the TARS Robot Body."""
 
-Main entry point for the TARS-AI Robot Body application.
-"""
+from __future__ import annotations
 
-# === Standard Libraries ===
-import os
-import sys
-import signal
 import asyncio
-import json
-import aiohttp
-import logging
+import fractions
+import os
+import threading
+import time
+from typing import Optional
 
-# === Custom Modules ===
-from modules.module_config import load_config
-from modules.module_messageQue import queue_message
-
-# === WebRTC and Audio ===
-try:
-    from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
-    from modules.module_audio import MicrophoneStream, SpeakerStream
-except ImportError as e:
-    queue_message(f"ERROR: Required packages not available: {e}")
-    queue_message("Install with: pip install aiortc aiohttp sounddevice numpy")
-    sys.exit(1)
-
-from modules.module_battery import BatteryModule
-
-# Import servo control functions
-CONFIG = load_config()
-if (CONFIG["SERVO"]["MOVEMENT_VERSION"] == "V2"):
-    from modules.module_servoctl_v2 import *
-else:
-    from modules.module_servoctl import *
-
+import numpy as np
 from loguru import logger
 
-# === LOGGING CONFIGURATION ===
-logging.getLogger("aiortc").setLevel(logging.WARNING)
-logging.getLogger("aioice").setLevel(logging.WARNING)
-logging.getLogger("websockets").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
+try:
+    import sounddevice as sd
+    from aiortc.mediastreams import MediaStreamTrack
+    from av import AudioFrame
+    from av.audio.resampler import AudioResampler
+except ImportError as exc:  # pragma: no cover - surfaced during startup
+    raise ImportError(
+        "Audio dependencies missing. Install with `pip install aiortc sounddevice av`."
+    ) from exc
 
-logger.remove() 
-logger.add(
-    sys.stderr, 
-    format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>", 
-    level="INFO"
+# === Configuration ===
+MIC_SAMPLE_RATE = int(os.getenv("MIC_SAMPLE_RATE", "48000"))
+MIC_CHANNELS = int(os.getenv("MIC_CHANNELS", "1"))
+MIC_BLOCKSIZE = int(os.getenv("MIC_BLOCKSIZE", "960"))
+MIC_DEVICE_INDEX = os.getenv("MIC_DEVICE_INDEX", "0")
+
+SPEAKER_SAMPLE_RATE = int(os.getenv("SPEAKER_SAMPLE_RATE", "48000"))
+SPEAKER_BLOCKSIZE = int(os.getenv("SPEAKER_BLOCKSIZE", "960"))
+SPEAKER_DEVICE_INDEX = os.getenv("SPEAKER_DEVICE_INDEX", None)
+
+SPEAKER_ECHO_HOLDOFF_SEC = float(os.getenv("SPEAKER_ECHO_HOLDOFF_MS", "80")) / 1000.0
+MIC_ECHO_SUPPRESS_GAIN = max(
+    0.0, min(1.0, float(os.getenv("MIC_ECHO_SUPPRESS_GAIN", "0.3")))
 )
 
-# === Constants and Configuration ===
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(BASE_DIR)
-sys.path.insert(0, BASE_DIR)
-CONFIG = load_config()
-VERSION = "4.0"
 
-SERVER_IP = os.getenv("SERVER_IP", "172.28.242.124")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "7860"))
-SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
+class AudioActivityMonitor:
+    """Tracks when the speaker is active to help suppress acoustic echo."""
 
-for arg in sys.argv[1:]: 
-    if "=" in arg:
-        key, value = arg.split("=", 1)
-        if key == "server_ip": SERVER_IP = value
-        elif key == "server_port": SERVER_PORT = int(value)
-SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._speaker_active_until = 0.0
+        self._force_active = False
 
-# === Main ===
-async def send_ice_candidate(session, pc_id, candidate):
-    try:
-        await session.patch(
-            f"{SERVER_URL}/api/offer",
-            json={
-                "pc_id": pc_id,
-                "candidates": [{"candidate": candidate.candidate, "sdp_mid": candidate.sdpMid, "sdp_mline_index": candidate.sdpMLineIndex}],
-            },
+    def mark_speaker_activity(self, duration_sec: float):
+        with self._lock:
+            hold = max(duration_sec, 0.0) + SPEAKER_ECHO_HOLDOFF_SEC
+            deadline = time.monotonic() + hold
+            if deadline > self._speaker_active_until:
+                self._speaker_active_until = deadline
+
+    def set_forced_state(self, active: bool):
+        with self._lock:
+            self._force_active = active
+            if not active:
+                self._speaker_active_until = time.monotonic()
+
+    def speaker_active(self) -> bool:
+        with self._lock:
+            return self._force_active or time.monotonic() < self._speaker_active_until
+    
+    def is_forced_active(self) -> bool:
+        """Check if speaker is forced active (TTS is speaking)."""
+        with self._lock:
+            return self._force_active
+
+
+audio_activity_monitor = AudioActivityMonitor()
+
+
+class MicrophoneStream(MediaStreamTrack):
+    """Audio source backed by sounddevice InputStream."""
+
+    kind = "audio"
+
+    def __init__(self):
+        super().__init__()
+        self.rate = MIC_SAMPLE_RATE
+        self.channels = MIC_CHANNELS
+        device_index = int(MIC_DEVICE_INDEX) if MIC_DEVICE_INDEX else None
+        self.stream = sd.InputStream(
+            samplerate=self.rate,
+            channels=self.channels,
+            dtype="int16",
+            blocksize=MIC_BLOCKSIZE,
+            device=device_index,
         )
-    except: pass
+        self.stream.start()
+        self.start_time = time.time()
+        logger.info(
+            f"MicrophoneStream initialized @ {self.rate}Hz (device={device_index})"
+        )
 
-async def main():
-    logger.info(f"🤖 Robot Body initializing... connecting to {SERVER_URL}")
-    battery = BatteryModule()
-    battery.start()
-
-    try:
-        pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[RTCIceServer(urls="stun:stun.l.google.com:19302")]))
-        
-        try:
-            logger.info("Initializing Microphone...")
-            audio_player = MicrophoneStream()
-            pc.addTransceiver(audio_player, direction="sendrecv")
-            logger.info("✓ Microphone initialized")
-        except Exception as e:
-            logger.error(f"Mic Error: {e}")
-            return
-
-        speaker = None
-        audio_task = None
-
-        @pc.on("track")
-        async def on_track(track):
-            nonlocal speaker, audio_task
-            logger.info(f"Received remote track: {track.kind}")
-            
-            if track.kind == "audio":
-                speaker = SpeakerStream(volume=1.0)
-                if audio_task and not audio_task.done():
-                    audio_task.cancel()
-                audio_task = asyncio.create_task(speaker.play_track(track))
-
-        # --- DATA CHANNEL & CONNECTION LOGIC ---
-        data_channel = pc.createDataChannel("messages", ordered=True)
-        
-        @data_channel.on("open")
-        def on_open(): queue_message("✅ Data channel connected")
-        
-        # RESTORED: Full message handler for logs
-        @data_channel.on("message")
-        def on_msg(msg):
-            try:
-                data = json.loads(msg)
-                msg_type = data.get("type")
-                if msg_type == "transcription":
-                    queue_message(f"🎤 YOU: {data.get('text')}")
-                elif msg_type == "partial":
-                    text = data.get("text", "")
-                    if text: queue_message(f"🎙️ Listening... {text}")
-                elif msg_type == "system":
-                    queue_message(f"ℹ️ {data.get('message')}")
-                elif msg_type == "error":
-                    queue_message(f"❌ Error: {data.get('message')}")
-            except: pass
-
-        await pc.setLocalDescription(await pc.createOffer())
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f"{SERVER_URL}/api/offer", json={"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}) as resp:
-                if resp.status != 200: 
-                    logger.error("Server connection failed")
-                    return
-                answer = await resp.json()
-                pc_id = answer["pc_id"]
-                await pc.setRemoteDescription(RTCSessionDescription(sdp=answer["sdp"], type=answer["type"]))
-        
-        queue_message("✅ WebRTC connection established!")
-        
-        stop_event = asyncio.Event()
-        def handler(): stop_event.set()
+    async def recv(self):
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM): loop.add_signal_handler(sig, handler)
-        await stop_event.wait()
+        data, overflow = await loop.run_in_executor(
+            None, lambda: self.stream.read(MIC_BLOCKSIZE)
+        )
+        if overflow:
+            logger.warning("⚠️ Audio Overflow on microphone input")
 
-    except Exception as e:
-        logger.error(f"Error: {e}")
-    finally:
-        if 'audio_player' in locals(): audio_player.stop()
-        if 'speaker' in locals() and speaker: speaker.stop()
-        if 'pc' in locals(): await pc.close()
-        battery.stop()
+        if audio_activity_monitor.speaker_active():
+            # When TTS is active, suppress echo more aggressively
+            # Use higher suppression when forced (TTS state), moderate when just speaker activity
+            if audio_activity_monitor.is_forced_active():
+                # TTS is actively speaking - suppress 95% to prevent echo
+                effective_suppression = 0.95
+            elif MIC_ECHO_SUPPRESS_GAIN > 0:
+                # Just speaker activity (echo holdoff) - use configured suppression
+                effective_suppression = min(MIC_ECHO_SUPPRESS_GAIN, 0.9)
+            else:
+                effective_suppression = 0.0
+            
+            if effective_suppression > 0:
+                # Never completely mute - always allow some audio through for STT
+                # Cap suppression at 0.95 (95% reduction) to ensure STT still receives audio
+                effective_suppression = min(effective_suppression, 0.95)
+                data = (data * (1.0 - effective_suppression)).astype("int16", copy=False)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        layout = "mono" if self.channels == 1 else "stereo"
+        frame = AudioFrame.from_ndarray(
+            data.T.reshape(self.channels, -1),
+            format="s16",
+            layout=layout,
+        )
+        frame.sample_rate = self.rate
+        frame.pts = int((time.time() - self.start_time) * self.rate)
+        frame.time_base = fractions.Fraction(1, self.rate)
+        return frame
+
+    def stop(self):
+        if hasattr(self, "stream") and self.stream:
+            self.stream.stop()
+            self.stream.close()
+
+
+class SpeakerStream:
+    """Buffered audio playback with resampling and jitter smoothing."""
+
+    def __init__(self, volume: float = 1.0):
+        self.volume = max(0.0, min(1.0, volume))
+        self.stream: Optional[sd.RawOutputStream] = None
+        self.running = True
+        self.target_sample_rate = SPEAKER_SAMPLE_RATE
+        self._buffer = bytearray()
+        self._buffer_lock = threading.Lock()
+        self._callback_count = 0
+        self.resampler = AudioResampler(
+            format="s16", layout="mono", rate=self.target_sample_rate
+        )
+
+    def _callback(self, outdata, frames, time_info, status):
+        if status:
+            logger.warning(f"SpeakerStream status: {status}")
+
+        # Track callback invocations for debugging
+        self._callback_count += 1
+        if self._callback_count <= 5 or self._callback_count % 100 == 0:
+            with self._buffer_lock:
+                buffer_size = len(self._buffer)
+            logger.debug(f"🔊 Callback #{self._callback_count}: frames={frames}, buffer={buffer_size} bytes")
+
+        # For RawOutputStream with dtype="int16", outdata is a memoryview of int16 values
+        # We need frames * 2 bytes (int16 = 2 bytes per sample, mono = 1 channel)
+        required_bytes = frames * 2
+        required_samples = frames
+
+        with self._buffer_lock:
+            available = len(self._buffer)
+            if available >= required_bytes:
+                # Get audio data and apply volume
+                audio_data = bytes(self._buffer[:required_bytes])
+                # Convert to numpy array to apply volume
+                audio_array = np.frombuffer(audio_data, dtype=np.int16).copy()
+                if self.volume != 1.0:
+                    audio_array = (audio_array * self.volume).astype(np.int16)
+                # Write int16 values directly to outdata (memoryview)
+                # outdata is a memoryview that can be assigned numpy array values
+                outdata[:] = audio_array
+                del self._buffer[:required_bytes]
+            elif available > 0:
+                # Get partial audio data and apply volume
+                audio_data = bytes(self._buffer[:available])
+                audio_array = np.frombuffer(audio_data, dtype=np.int16).copy()
+                if self.volume != 1.0:
+                    audio_array = (audio_array * self.volume).astype(np.int16)
+                # Write partial data
+                samples_written = len(audio_array)
+                outdata[:samples_written] = audio_array
+                # Fill rest with silence (zeros)
+                outdata[samples_written:] = 0
+                del self._buffer[:available]
+            else:
+                # No data available - fill with silence
+                outdata[:] = 0
+
+    async def play_track(self, track):
+        logger.info("🔊 Speaker loop started (Buffered)")
+        try:
+            if self.stream is None:
+                device_index = int(SPEAKER_DEVICE_INDEX) if SPEAKER_DEVICE_INDEX else None
+                logger.info(f"🔊 Output Stream: {self.target_sample_rate}Hz (device={device_index})")
+                try:
+                    self.stream = sd.RawOutputStream(
+                        samplerate=self.target_sample_rate,
+                        channels=1,
+                        dtype="int16",
+                        device=device_index,
+                        blocksize=SPEAKER_BLOCKSIZE,
+                        callback=self._callback,
+                    )
+                    self.stream.start()
+                    logger.info(f"✓ Speaker stream started @ {self.target_sample_rate}Hz, device={device_index}")
+                    # Log available audio devices for debugging
+                    try:
+                        devices = sd.query_devices()
+                        logger.debug(f"Available audio devices: {len(devices)}")
+                        if device_index is not None and device_index < len(devices):
+                            logger.debug(f"Using device: {devices[device_index]['name']}")
+                    except:
+                        pass
+                except Exception as e:
+                    logger.error(f"Failed to start speaker stream: {e}")
+                    raise
+
+            logger.info("Waiting for audio frames from track...")
+            frame_count = 0
+            while self.running:
+                try:
+                    frame = await track.recv()
+                except Exception as e:
+                    logger.warning(f"Track recv() error: {e} (track may have ended)")
+                    break
+
+                try:
+                    resampled = self.resampler.resample(frame)
+                    if not resampled:
+                        continue
+                    frame = resampled[0]
+                except Exception as err:
+                    logger.error(f"Resample error: {err}")
+                    continue
+
+                data = frame.to_ndarray()
+                if frame.layout.name == "stereo":
+                    data = data[0] if len(data.shape) > 1 else data.reshape(2, -1)[0]
+                if len(data.shape) > 1:
+                    data = data.reshape(-1)
+
+                pcm_bytes = data.tobytes()
+                with self._buffer_lock:
+                    self._buffer.extend(pcm_bytes)
+                    buffer_size = len(self._buffer)
+
+                frame_duration = (
+                    len(data) / self.target_sample_rate if self.target_sample_rate else 0.0
+                )
+                audio_activity_monitor.mark_speaker_activity(frame_duration)
+                
+                # Debug: log first few frames to confirm audio is flowing
+                frame_count += 1
+                if frame_count <= 3:
+                    logger.info(f"🔊 Speaker: received frame {frame_count}, buffer={buffer_size} bytes")
+
+        except Exception as exc:
+            logger.error(f"Speaker error: {exc}")
+        finally:
+            self.stop()
+
+    def stop(self):
+        self.running = False
+        if self.stream:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+        with self._buffer_lock:
+            self._buffer.clear()
+
+
+__all__ = [
+    "MicrophoneStream",
+    "SpeakerStream",
+    "audio_activity_monitor",
+    "AudioActivityMonitor",
+]
