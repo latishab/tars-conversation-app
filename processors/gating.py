@@ -12,13 +12,21 @@ from character.prompts import build_gating_system_prompt
 class InterventionGating(FrameProcessor):
     """
     Traffic Controller: Decides if TARS should reply based on Audio + Vision.
+    Uses OpenAI-compatible API (DeepInfra).
     """
-    def __init__(self, api_key: str, visual_observer=None, model: str = "Qwen/Qwen2.5-7B-Instruct"):
+    def __init__(
+        self, 
+        api_key: str, 
+        base_url: str = "https://api.deepinfra.com/v1/openai",
+        model: str = "meta-llama/Llama-3.2-3B-Instruct",
+        visual_observer=None
+    ):
         super().__init__()
         self.api_key = api_key
+        self.base_url = base_url
         self.model = model 
         self.visual_observer = visual_observer
-        self.api_url = "https://api.deepinfra.com/v1/openai/chat/completions"
+        self.api_url = f"{base_url}/chat/completions"
 
     async def _check_should_reply(self, messages: list) -> bool:
         """Asks the fast LLM if we should reply (Audio + Vision)."""
@@ -28,7 +36,6 @@ class InterventionGating(FrameProcessor):
         # Extract the last user message
         last_msg = messages[-1]
         if last_msg.get("role") != "user":
-            # If the last message wasn't from the user (e.g. system injection), let it pass.
             return True 
 
         # 1. READ VISUAL CONTEXT (0ms Latency)

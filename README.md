@@ -57,8 +57,11 @@ cp env.example .env.local
 SPEECHMATICS_API_KEY=your_speechmatics_api_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 ELEVENLABS_VOICE_ID=ry8mpwRw6nugb2qjP0tu  # Optional, defaults to custom voice
-QWEN_API_KEY=your_deepinfra_api_key_here  # DeepInfra API key for Qwen models
-QWEN_MODEL=Qwen/Qwen2.5-7B-Instruct  # Optional, defaults to Qwen2.5-7B-Instruct
+DEEPINFRA_API_KEY=your_deepinfra_api_key_here  # DeepInfra API key (OpenAI-compatible)
+
+# Optional: Override default models
+# DEEPINFRA_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507  # Main LLM (default)
+# DEEPINFRA_GATING_MODEL=meta-llama/Llama-3.2-3B-Instruct  # Gating Layer (default)
 
 # Pipecat FastAPI service configuration
 PIPECAT_HOST=localhost
@@ -235,7 +238,7 @@ The Gating Layer is an AI-powered traffic controller that sits between transcrip
 
 ### Configuration
 
-The gating layer is automatically initialized in `bot.py` and uses the same `QWEN_API_KEY` as the main LLM. No additional configuration needed.
+The gating layer is automatically initialized in `bot.py` and uses the same `DEEPINFRA_API_KEY` as the main LLM. No additional configuration needed.
 
 ### Fail-Safe Design
 
@@ -313,9 +316,8 @@ Notes:
 
 1. Sign up at [DeepInfra](https://deepinfra.com/)
 2. Navigate to the Dashboard and create a new API key
-3. Copy the key to your `.env.local` file as `QWEN_API_KEY`
-4. (Optional) Set `QWEN_MODEL` to a different Qwen model available on DeepInfra
-5. Available models: `Qwen/Qwen2.5-7B-Instruct`, `Qwen/QwQ-32B-Preview`, etc.
+3. Copy the key to your `.env.local` file as `DEEPINFRA_API_KEY`
+4. Available models: `Qwen/Qwen2.5-7B-Instruct`, `Qwen/QwQ-32B-Preview`, etc.
 
 The same API key is used for both the main LLM and the Gating Layer.
 

@@ -10,7 +10,6 @@ from pipecat.services.moondream.vision import MoondreamService
 
 class VisualObserver(FrameProcessor):
     """
-    The 'Visual Heartbeat'.
     Checks if the user is looking at the robot every 2 seconds.
     Running in the background ensures it NEVER blocks the audio conversation.
     """
@@ -29,10 +28,7 @@ class VisualObserver(FrameProcessor):
     async def _analyze_frame(self, frame: VideoFrame):
         """Background task: Asks Moondream if there is eye contact."""
         try:
-            # We create a temporary one-off query for Moondream
             prompt = "Is the person in the image looking directly at the camera? Answer YES or NO."
-            
-            # Run inference (This takes ~1.5s but runs in background)
             response = await self._moondream.run_image_query(frame.image, prompt)
             
             # Parse result
@@ -57,10 +53,8 @@ class VisualObserver(FrameProcessor):
 
         if isinstance(frame, VideoFrame) and direction == FrameDirection.DOWNSTREAM:
             now = time.time()
-            # If 2 seconds have passed since last check
             if now - self._last_check > self._interval:
                 self._last_check = now
-                # Fire and forget! (create_task ensures we don't wait/block)
                 asyncio.create_task(self._analyze_frame(frame))
         
         # PUSH IMMEDIATELY - Do not wait for analysis

@@ -16,7 +16,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.qwen.llm import QwenLLMService
+from pipecat.services.openai import OpenAILLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -27,8 +27,10 @@ from config import (
     SPEECHMATICS_API_KEY,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
-    QWEN_API_KEY,
-    QWEN_MODEL,
+    DEEPINFRA_API_KEY,
+    DEEPINFRA_BASE_URL,
+    DEEPINFRA_MODEL,
+    DEEPINFRA_GATING_MODEL,
 )
 from processors import (
     SimpleTranscriptionLogger,
@@ -234,25 +236,28 @@ async def run_bot(webrtc_connection):
             logger.error("Please check your ELEVENLABS_API_KEY in .env.local")
             return
 
-        # Initialize Qwen LLM service
-        logger.info("Initializing Qwen LLM...")
-        if not QWEN_API_KEY or len(QWEN_API_KEY) < 10:
-            logger.error(f"QWEN_API_KEY appears invalid (length: {len(QWEN_API_KEY) if QWEN_API_KEY else 0}). Please check your .env.local file.")
+        # Initialize LLM service via DeepInfra (OpenAI-compatible)
+        logger.info("Initializing LLM via DeepInfra (OpenAI-compatible)...")
+        if not DEEPINFRA_API_KEY or len(DEEPINFRA_API_KEY) < 10:
+            logger.error(f"DEEPINFRA_API_KEY appears invalid (length: {len(DEEPINFRA_API_KEY) if DEEPINFRA_API_KEY else 0}). Please check your .env.local file.")
             return
-        logger.info(f"Using Qwen API key starting with: {QWEN_API_KEY[:8]}... (model: {QWEN_MODEL})")
+        logger.info(f"Using DeepInfra API key starting with: {DEEPINFRA_API_KEY[:8]}...")
+        logger.info(f"Model: {DEEPINFRA_MODEL}")
+        logger.info(f"Base URL: {DEEPINFRA_BASE_URL}")
         llm = None
         try:
-            llm = QwenLLMService(
-                api_key=QWEN_API_KEY,
-                model=QWEN_MODEL
+            llm = OpenAILLMService(
+                api_key=DEEPINFRA_API_KEY,
+                base_url=DEEPINFRA_BASE_URL,
+                model=DEEPINFRA_MODEL
             )
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("set_speaking_rate", set_speaking_rate)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
-            logger.info(f"✓ Qwen LLM initialized with model: {QWEN_MODEL}")
+            logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
         except Exception as e:
-            logger.error(f"Failed to initialize Qwen LLM: {e}", exc_info=True)
-            logger.error("This might be due to an invalid API key. Please check your QWEN_API_KEY in .env.local")
+            logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
+            logger.error("This might be due to an invalid API key. Please check your DEEPINFRA_API_KEY in .env.local")
             return
 
         # Initialize Moondream vision service (needed for VisualObserver)
@@ -283,13 +288,15 @@ async def run_bot(webrtc_connection):
         # - Audio: Is the user addressing TARS directly or talking to others?
         # - Vision: Is the user looking at TARS (direct interaction)?
         # - Struggle Detection: Are users stuck and need help? ("What do we do?")
+        # Uses a smaller, faster model for quick gating decisions
         logger.info("Initializing Gating Layer with Multimodal Vision...")
         gating_layer = InterventionGating(
-            api_key=QWEN_API_KEY, 
-            model="Qwen/Qwen2.5-7B-Instruct",
+            api_key=DEEPINFRA_API_KEY,
+            base_url=DEEPINFRA_BASE_URL,
+            model=DEEPINFRA_GATING_MODEL,
             visual_observer=visual_observer  # Connect the Eyes to the Brain
         )
-        logger.info("✓ Gating Layer initialized with Multimodal Vision (DeepInfra)")
+        logger.info(f"✓ Gating Layer initialized with Multimodal Vision ({DEEPINFRA_GATING_MODEL})")
 
         if not stt or not tts or not llm:
             logger.error("Failed to initialize services. Cannot start bot.")
