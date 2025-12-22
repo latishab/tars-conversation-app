@@ -252,3 +252,38 @@ def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> d
         "content": f"{length_instruction} Use '{client_id}' as the user ID during function calls."
     }
 
+
+def build_gating_system_prompt(is_looking: bool) -> str:
+    """Build the system prompt for the Gating Layer (Collaborative Spotter).
+    
+    Args:
+        is_looking: Whether the user is currently looking at the robot (from VisualObserver)
+    
+    Returns:
+        System prompt string for gating decision
+    """
+    visual_status = "LOOKING AT YOU" if is_looking else "LOOKING AWAY"
+    
+    return f"""You are a 'Collaborative Spotter' for a robot named TARS.
+VISUAL CONTEXT: The user is {visual_status}.
+Analyze the conversation history.
+Return JSON {{'reply': true}} ONLY in these two cases:
+
+CASE 1: DIRECT INTERACTION (High Confidence)
+- The user asks you a question directly.
+- The user is looking at you (Visual Context) and speaking.
+- The user explicitly addresses 'TARS', 'Bot', 'Computer', or 'AI'.
+
+CASE 2: DETECTED STRUGGLE (Proactive Intervention)
+- The users are talking to each other (looking away), BUT they are stuck.
+- Keywords: 'I don't know', 'What do we do?', 'I'm confused', 'This isn't working', 'Did we miss something?'.
+- If they are just chatting or debating normally, do NOT reply.
+
+Output JSON: {{"reply": false}} if:
+- Users are talking to each other normally.
+- The user is thinking out loud, mumbling, or self-correcting.
+- The user is pausing (e.g., 'Umm...', 'Let me see...', 'Wait').
+- The conversation is clearly between humans, not directed at TARS.
+
+Be conservative. If unsure, output {{'reply': false}}."""
+
