@@ -39,6 +39,7 @@ from processors import (
     SilenceFilter,
     InputAudioFilter,
     InterventionGating,
+    VisualObserver,
 )
 from config import MEM0_API_KEY
 from memory import Mem0Wrapper  # required
@@ -254,20 +255,9 @@ async def run_bot(webrtc_connection):
             logger.error("This might be due to an invalid API key. Please check your QWEN_API_KEY in .env.local")
             return
 
-        # Initialize Gating Layer
-        # Filters out "false positives" from Smart Turn by analyzing if the user is:
-        # - Addressing TARS directly ("TARS, help me with this")
-        # - Talking to another person ("Speaker 2: Yes, I agree")
-        # - Just thinking out loud ("Umm, let me see...")
-        logger.info("Initializing Gating Layer...")
-        gating_layer = InterventionGating(
-            api_key=QWEN_API_KEY, 
-            model="Qwen/Qwen2.5-7B-Instruct" 
-        )
-        logger.info("✓ Gating Layer initialized with Qwen/Qwen2.5-7B-Instruct (DeepInfra)")
-
-        # Initialize Moondream vision service
+        # Initialize Moondream vision service (needed for VisualObserver)
         logger.info("Initializing Moondream vision service...")
+        moondream = None
         try:
             moondream = MoondreamService(
                 model="vikhyatk/moondream2",
@@ -278,6 +268,28 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize Moondream: {e}", exc_info=True)
             logger.error("Moondream initialization failed. Make sure pipecat-ai[moondream] is installed.")
             return
+
+        # Initialize Visual Observer (The Eyes - Visual Heartbeat)
+        # Runs in background every 2 seconds to check if user is looking at TARS
+        logger.info("Initializing Visual Heartbeat...")
+        visual_observer = VisualObserver(
+            moondream_service=moondream,
+            check_interval_sec=2.0
+        )
+        logger.info("✓ Visual Heartbeat initialized (checks eye contact every 2s)")
+
+        # Initialize Gating Layer (The Brain - Audio + Vision)
+        # Filters out "false positives" from Smart Turn by analyzing:
+        # - Audio: Is the user addressing TARS directly or talking to others?
+        # - Vision: Is the user looking at TARS (direct interaction)?
+        # - Struggle Detection: Are users stuck and need help? ("What do we do?")
+        logger.info("Initializing Gating Layer with Multimodal Vision...")
+        gating_layer = InterventionGating(
+            api_key=QWEN_API_KEY, 
+            model="Qwen/Qwen2.5-7B-Instruct",
+            visual_observer=visual_observer  # Connect the Eyes to the Brain
+        )
+        logger.info("✓ Gating Layer initialized with Multimodal Vision (DeepInfra)")
 
         if not stt or not tts or not llm:
             logger.error("Failed to initialize services. Cannot start bot.")
@@ -362,13 +374,14 @@ async def run_bot(webrtc_connection):
 
         pipeline = Pipeline([
             pipecat_transport.input(),
+            visual_observer,  # 1. The Eyes (Visual Heartbeat - must be first to see video)
             stt,
             transcription_logger,
             latency_logger_upstream,  # Track latency: captures TranscriptionFrame (tries both directions)
             vision_logger,  # Log all vision-related frames (requests and responses)
             context_aggregator.user(),  # This builds the message history
-            gating_layer,  # Traffic Controller sits here
-            ParallelPipeline(parallel_branches),  # Main LLM (Only runs if Gating allows)
+            gating_layer,  # 2. The Brain (Traffic Controller - Audio + Vision)
+            ParallelPipeline(parallel_branches),  # 3. Main LLM (Only runs if Gating allows)
             assistant_logger,
             latency_logger_llm,  # Track latency: captures DOWNSTREAM LLMTextFrame
             SilenceFilter(),
