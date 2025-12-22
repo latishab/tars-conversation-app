@@ -6,13 +6,15 @@ A Next.js application that provides real-time voice AI with transcription, visio
 
 - 🎤 **Real-time Transcription**: Live audio transcription using Speechmatics with speaker diarization
 - 🔊 **Text-to-Speech**: Natural voice synthesis using ElevenLabs Flash model
-- 🤖 **LLM Integration**: Conversational AI powered by Qwen Flash model
+- 🤖 **LLM Integration**: Conversational AI powered by Qwen models via DeepInfra
 - 👁️ **Vision Capabilities**: Image analysis using Moondream vision service
 - 🎯 **Smart Turn Detection**: Prevents interruptions with VAD and Smart Turn Detection
+- 🚦 **Intelligent Gating Layer**: AI-powered decision system that determines when TARS should respond
+- 👥 **Multi-Speaker Awareness**: Distinguishes between direct commands and inter-human conversations
 - 🌐 **WebRTC Communication**: Direct peer-to-peer WebRTC audio/video streaming (no WebSocket proxy needed)
 - 📱 **Live Transcription Display**: Real-time transcription updates on the frontend
 - 🎨 **Modern UI**: Beautiful, responsive user interface
- - 🧠 **Long-term Memory (optional)**: Persistent user memory via Mem0
+- 🧠 **Long-term Memory (optional)**: Persistent user memory via Mem0
 
 ## Prerequisites
 
@@ -20,7 +22,7 @@ A Next.js application that provides real-time voice AI with transcription, visio
 - Python 3.9+
 - Speechmatics API key ([Get one here](https://portal.speechmatics.com/))
 - ElevenLabs API key ([Get one here](https://elevenlabs.io/app/settings/api-keys))
-- Qwen API key ([Get one here](https://dashscope.aliyun.com/))
+- DeepInfra API key for Qwen models ([Get one here](https://deepinfra.com/))
 - Mem0 API key ([Docs](https://docs.mem0.ai/))
 
 ## Installation
@@ -39,6 +41,7 @@ pip install -r requirements.txt
 
 This will install all required packages including:
 - `pipecat-ai` with extensions: speechmatics, elevenlabs, webrtc, qwen, moondream, local-smart-turn-v3, silero
+- `aiohttp` for async HTTP requests (Gating Layer API calls)
 - FastAPI and Uvicorn for the web server
 - Additional dependencies for SSL certificate handling and logging
 
@@ -54,8 +57,8 @@ cp env.example .env.local
 SPEECHMATICS_API_KEY=your_speechmatics_api_key_here
 ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 ELEVENLABS_VOICE_ID=ry8mpwRw6nugb2qjP0tu  # Optional, defaults to custom voice
-QWEN_API_KEY=your_qwen_api_key_here
-QWEN_MODEL=qwen-flash  # Optional, defaults to qwen-flash
+QWEN_API_KEY=your_deepinfra_api_key_here  # DeepInfra API key for Qwen models
+QWEN_MODEL=Qwen/Qwen2.5-7B-Instruct  # Optional, defaults to Qwen2.5-7B-Instruct
 
 # Pipecat FastAPI service configuration
 PIPECAT_HOST=localhost
@@ -105,16 +108,45 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
 
 ## How It Works
 
-1. **Audio/Video Input**: The browser captures audio and video from the user's microphone and camera
-2. **WebRTC Connection**: Browser establishes a peer-to-peer WebRTC connection directly with the FastAPI server
-3. **Media Streaming**: Audio and video are streamed bidirectionally via WebRTC (no WebSocket proxy needed)
-4. **Voice Activity Detection**: VAD and Smart Turn Detection analyze audio to determine when the user is speaking
-5. **Transcription**: Speechmatics processes the audio in real-time with speaker diarization and returns transcriptions
-6. **LLM Processing**: Qwen LLM processes transcriptions and can request camera images for vision analysis
-7. **Vision Analysis**: Moondream analyzes camera images when requested by the LLM
-8. **Text-to-Speech**: ElevenLabs converts LLM responses to speech using the Flash model
-9. **Audio Output**: The synthesized speech is streamed back to the browser via WebRTC and played automatically
-10. **Transcription Display**: Transcriptions and partial results are sent to the frontend via WebRTC data channel and displayed live
+### Three-Layer Conversation Architecture
+
+TARS uses a sophisticated three-layer system to ensure natural, context-aware conversations:
+
+#### Layer 1: Smart Turn Detection (The Reflex ⚡)
+- Instantly detects when someone stops talking using Silero VAD
+- Low latency response (~1 second pause detection)
+- Prevents awkward interruptions during natural pauses
+
+#### Layer 2: Speechmatics STT (The Ears 👂)
+- Transcribes speech to text in real-time
+- **Speaker Diarization**: Identifies and labels different speakers (Speaker 1, Speaker 2, etc.)
+- Enables multi-party conversation awareness
+
+#### Layer 3: Gating Layer (The Brain 🧠)
+- AI-powered decision system using Qwen via DeepInfra
+- Analyzes transcribed text to determine: "Should TARS respond?"
+- **Responds when:**
+  - User directly addresses TARS ("TARS, help me with this")
+  - Clear questions or commands directed at the AI
+  - User asks for help or information
+- **Stays silent when:**
+  - Users are talking to each other ("Speaker 2: Yes, I agree")
+  - User is thinking out loud ("Umm, let me see...")
+  - Conversation is clearly inter-human, not directed at TARS
+
+### Processing Pipeline
+
+1. **Audio/Video Input**: Browser captures audio and video from microphone and camera
+2. **WebRTC Connection**: Peer-to-peer connection established directly with FastAPI server
+3. **Media Streaming**: Audio and video streamed bidirectionally via WebRTC (no WebSocket proxy)
+4. **Smart Turn Detection**: VAD analyzes audio to determine when user stops speaking
+5. **Transcription**: Speechmatics processes audio with speaker diarization and returns transcriptions
+6. **Gating Decision**: AI analyzes transcription to decide if TARS should respond
+7. **LLM Processing**: If gating passes, Qwen LLM processes transcription (can request camera images)
+8. **Vision Analysis**: Moondream analyzes camera images when requested by the LLM
+9. **Text-to-Speech**: ElevenLabs converts LLM responses to speech using Flash model
+10. **Audio Output**: Synthesized speech streamed back via WebRTC and played automatically
+11. **Transcription Display**: Transcriptions and partial results sent to frontend via WebRTC data channel
 
 ## Architecture
 
@@ -126,8 +158,16 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
 │             │         │      .py)       │         │ Diarization)│
 └─────────────┘         └─────────────────┘         └─────────────┘
                                │
-                               │ (Pipecat Pipeline)
-                               │ bot.py
+                               │ (Pipecat Pipeline - bot.py)
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │  Three-Layer System  │
+                    ├──────────────────────┤
+                    │ 1. Smart Turn (VAD)  │ ◄─── Detects pauses
+                    │ 2. Speechmatics STT  │ ◄─── Transcribes + Speaker ID
+                    │ 3. Gating Layer      │ ◄─── Decides: Reply or Ignore
+                    └──────────────────────┘
                                │
                 ┌──────────────┼──────────────┐
                 │              │              │
@@ -135,8 +175,15 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
         ┌─────────────┐ ┌──────────┐ ┌─────────────┐
         │ ElevenLabs  │ │  Qwen    │ │  Moondream  │
         │     API     │ │   LLM    │ │   Vision    │
-        │  (TTS Flash)│ │ (Flash)  │ │   Service   │
+        │  (TTS Flash)│ │(DeepInfra)│ │   Service   │
         └─────────────┘ └──────────┘ └─────────────┘
+                               ▲
+                               │
+                        ┌──────┴───────┐
+                        │ Gating Layer │
+                        │  (DeepInfra) │ ◄─── Fast Qwen model
+                        │ Qwen2.5-7B   │      for gating decisions
+                        └──────────────┘
 
 ┌─────────────┐         ┌──────────────┐
 │   Browser   │         │  Next.js     │
@@ -154,10 +201,53 @@ python3 pipecat_service.py --host 0.0.0.0 --port 7860
 - **Lower Latency**: Peer-to-peer WebRTC connection reduces latency compared to WebSocket relay
 - **Built-in Transport**: SmallWebRTC transport handles audio/video I/O directly in the pipeline
 - **Data Channel**: Transcriptions sent via WebRTC data channel for real-time UI updates
-- **Smart Turn Detection**: Prevents the bot from interrupting users mid-sentence using VAD and Smart Turn Detection
+- **Smart Turn Detection**: Prevents the bot from interrupting users mid-sentence using Silero VAD
+- **Gating Layer**: AI-powered traffic controller that filters false positives and multi-party conversations
+- **Speaker Diarization**: Speechmatics identifies multiple speakers (up to 2) for context awareness
 - **Vision Integration**: LLM can request and analyze camera images for contextual understanding
 - **Parallel Processing**: Qwen LLM and Moondream vision service process in parallel for efficient responses
 - **Mem0 Integration**: Stores final user transcriptions and injects recalled memories into the system context on connect
+- **Conservative Response**: TARS only responds when directly addressed or when questions clearly directed at it
+
+## Gating Layer (Conversation Intelligence)
+
+The Gating Layer is an AI-powered traffic controller that sits between transcription and LLM processing. It analyzes each transcribed message to determine if TARS should respond or stay silent.
+
+### How It Works
+
+1. **Fast Decision**: Uses a lightweight Qwen model (`Qwen/Qwen2.5-7B-Instruct`) on DeepInfra for quick analysis
+2. **Speaker-Aware**: Understands speaker labels from Speechmatics diarization (Speaker 1, Speaker 2)
+3. **Context Analysis**: Examines the message content and context to make intelligent decisions
+
+### Response Criteria
+
+**TARS will respond when:**
+- User explicitly addresses TARS ("TARS, help me with this")
+- Message contains clear questions or commands directed at the AI
+- User asks for help, information, or assistance
+- Context clearly implies AI interaction
+
+**TARS will stay silent when:**
+- Users are talking to each other ("Speaker 2: Yes, I agree")
+- User is thinking out loud or self-correcting
+- User is pausing ("Umm...", "Let me see...", "Wait...")
+- Conversation is clearly inter-human, not directed at TARS
+
+### Configuration
+
+The gating layer is automatically initialized in `bot.py` and uses the same `QWEN_API_KEY` as the main LLM. No additional configuration needed.
+
+### Fail-Safe Design
+
+- **Conservative by default**: When uncertain, TARS stays silent
+- **Fail-open**: If the gating check fails (API error), TARS responds (ensures reliability)
+- **Low latency**: Fast model ensures minimal delay in response time
+
+### Monitoring
+
+Watch for these log messages:
+- `🟢 Gating: PASSING through | Message: '...'` - TARS will respond
+- `🚦 Gating: BLOCKING response | Message: '...'` - TARS stays silent
 
 ## Mem0 (Persistent Memory)
 
@@ -185,7 +275,13 @@ Notes:
 │   └── __init__.py            # Environment variable loading and config
 ├── processors/                 # Custom Pipecat processors
 │   ├── __init__.py            # Processor exports
-│   └── transcription_logger.py # Transcription logging and frontend messaging
+│   ├── gating.py              # Gating Layer (AI decision system)
+│   ├── transcription_logger.py # Transcription logging and frontend messaging
+│   ├── assistant_logger.py    # Assistant response logging
+│   ├── tts_state_logger.py    # TTS state broadcasting
+│   ├── vision_logger.py       # Vision frame logging
+│   ├── latency_logger.py      # Pipeline latency tracking
+│   └── filters.py             # Audio filters (silence, input)
 ├── bot.py                      # Main bot pipeline setup and execution
 ├── pipecat_service.py          # FastAPI server with SmallWebRTC transport
 ├── character.json              # Character prompt/system message for LLM
@@ -213,13 +309,15 @@ Notes:
 4. Copy the key to your `.env.local` file
 5. (Optional) Choose a voice ID from the [Voices page](https://elevenlabs.io/app/voices)
 
-### Qwen (Alibaba Cloud)
+### DeepInfra (for Qwen Models)
 
-1. Sign up at [Alibaba Cloud DashScope](https://dashscope.aliyun.com/)
-2. Navigate to API Keys section
-3. Create a new API key
-4. Copy the key to your `.env.local` file
-5. (Optional) Set `QWEN_MODEL` to a different model (default: `qwen-flash`)
+1. Sign up at [DeepInfra](https://deepinfra.com/)
+2. Navigate to the Dashboard and create a new API key
+3. Copy the key to your `.env.local` file as `QWEN_API_KEY`
+4. (Optional) Set `QWEN_MODEL` to a different Qwen model available on DeepInfra
+5. Available models: `Qwen/Qwen2.5-7B-Instruct`, `Qwen/QwQ-32B-Preview`, etc.
+
+The same API key is used for both the main LLM and the Gating Layer.
 
 ## API Endpoints
 
@@ -251,8 +349,13 @@ curl http://localhost:3000/api/status
 
 **Pipecat/FastAPI Service:**
 - Logs appear in the terminal where `python3 pipecat_service.py` is running
-- Shows: Client connections, transcription events, pipeline status, LLM responses, vision analysis, errors
-- Look for: `🎤 Transcription:`, `🎤 Partial:`, initialization messages (✓ or ⚠), and error messages
+- Shows: Client connections, transcription events, gating decisions, pipeline status, LLM responses, vision analysis, errors
+- **Key log indicators:**
+  - `🎤 Transcription:` - Final transcription from Speechmatics
+  - `🎤 Partial:` - Interim transcription results
+  - `🟢 Gating: PASSING through` - TARS will respond to this message
+  - `🚦 Gating: BLOCKING response` - TARS is staying silent (thinking out loud or inter-human chat)
+  - `✓` or `⚠` - Initialization status messages
 - Speaker diarization will show speaker IDs in brackets: `🎤 Transcription [speaker_1]: ...`
 
 **Next.js Server:**
@@ -292,40 +395,3 @@ The default character is TARS from Interstellar, configured to be brief and dire
 ## Environment Variables
 
 See `env.example` for all available environment variables.
-
-**Required:**
-- `SPEECHMATICS_API_KEY` - Your Speechmatics API key
-- `ELEVENLABS_API_KEY` - Your ElevenLabs API key
-- `QWEN_API_KEY` - Your Qwen (Alibaba Cloud DashScope) API key
-
-**Optional:**
-- `ELEVENLABS_VOICE_ID` - ElevenLabs voice ID (default: `ry8mpwRw6nugb2qjP0tu`)
-- `QWEN_MODEL` - Qwen model to use (default: `qwen-flash`)
-- `PIPECAT_HOST` - FastAPI server host (default: `localhost`)
-- `PIPECAT_PORT` - FastAPI server port (default: `7860`)
-- `NEXT_PUBLIC_PIPECAT_URL` - Frontend WebRTC endpoint URL (default: `http://localhost:7860`)
-
-All environment variables are loaded from `.env.local` (or `.env` as fallback) by the `config` module.
-
-## Raspberry Pi Client
-
-You can connect a Raspberry Pi to the Pipecat server as a WebRTC client. See [RASPBERRY_PI_CLIENT.md](RASPBERRY_PI_CLIENT.md) for detailed instructions.
-
-Quick start:
-```bash
-# On Raspberry Pi
-pip3 install aiortc aiohttp av opencv-python-headless
-python3 raspberry_pi_client.py --server http://your-server-ip:7860
-```
-
-Two client implementations are provided:
-- `raspberry_pi_client.py` - Full-featured client with OpenCV camera support
-- `raspberry_pi_client_simple.py` - Simplified client using MediaPlayer (easier setup)
-
-## License
-
-MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

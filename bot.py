@@ -38,6 +38,7 @@ from processors import (
     LatencyLogger,
     SilenceFilter,
     InputAudioFilter,
+    InterventionGating,
 )
 from config import MEM0_API_KEY
 from memory import Mem0Wrapper  # required
@@ -104,6 +105,12 @@ async def run_bot(webrtc_connection):
 
     try:
         # Initialize VAD and Smart Turn Detection
+        # ==========================================
+        # Three-Layer Conversation Architecture:
+        # 1. Smart Turn (The Reflex): Instantly detects when someone stops talking (low latency)
+        # 2. Speechmatics (The Ears): Transcribes text + speaker diarization (identifies who spoke)
+        # 3. Gating Layer (The Brain): Analyzes if the message is directed at TARS or inter-human chat
+        # ==========================================
         logger.info("Initializing VAD and Smart Turn Detection...")
         vad_analyzer = None
         turn_analyzer = None
@@ -247,6 +254,18 @@ async def run_bot(webrtc_connection):
             logger.error("This might be due to an invalid API key. Please check your QWEN_API_KEY in .env.local")
             return
 
+        # Initialize Gating Layer
+        # Filters out "false positives" from Smart Turn by analyzing if the user is:
+        # - Addressing TARS directly ("TARS, help me with this")
+        # - Talking to another person ("Speaker 2: Yes, I agree")
+        # - Just thinking out loud ("Umm, let me see...")
+        logger.info("Initializing Gating Layer...")
+        gating_layer = InterventionGating(
+            api_key=QWEN_API_KEY, 
+            model="Qwen/Qwen2.5-7B-Instruct" 
+        )
+        logger.info("✓ Gating Layer initialized with Qwen/Qwen2.5-7B-Instruct (DeepInfra)")
+
         # Initialize Moondream vision service
         logger.info("Initializing Moondream vision service...")
         try:
@@ -347,8 +366,9 @@ async def run_bot(webrtc_connection):
             transcription_logger,
             latency_logger_upstream,  # Track latency: captures TranscriptionFrame (tries both directions)
             vision_logger,  # Log all vision-related frames (requests and responses)
-            context_aggregator.user(),
-            ParallelPipeline(parallel_branches),
+            context_aggregator.user(),  # This builds the message history
+            gating_layer,  # Traffic Controller sits here
+            ParallelPipeline(parallel_branches),  # Main LLM (Only runs if Gating allows)
             assistant_logger,
             latency_logger_llm,  # Track latency: captures DOWNSTREAM LLMTextFrame
             SilenceFilter(),
