@@ -4,7 +4,7 @@ import time
 import asyncio
 from loguru import logger
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, VideoFrame
+from pipecat.frames.frames import Frame, UserImageRawFrame
 from pipecat.services.moondream.vision import MoondreamService
 
 
@@ -25,7 +25,7 @@ class VisualObserver(FrameProcessor):
             "last_updated": 0
         }
 
-    async def _analyze_frame(self, frame: VideoFrame):
+    async def _analyze_frame(self, frame: UserImageRawFrame):
         """Background task: Asks Moondream if there is eye contact."""
         try:
             prompt = "Is the person in the image looking directly at the camera? Answer YES or NO."
@@ -51,7 +51,7 @@ class VisualObserver(FrameProcessor):
         """
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, VideoFrame) and direction == FrameDirection.DOWNSTREAM:
+        if isinstance(frame, UserImageRawFrame) and direction == FrameDirection.DOWNSTREAM:
             now = time.time()
             if now - self._last_check > self._interval:
                 self._last_check = now
