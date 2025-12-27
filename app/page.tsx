@@ -15,6 +15,7 @@ export default function Home() {
   const [transcriptionHistory, setTranscriptionHistory] = useState<TranscriptionEntry[]>([])
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isTarsSpeaking, setIsTarsSpeaking] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -22,6 +23,7 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null)
 
   const PIPECAT_URL = process.env.NEXT_PUBLIC_PIPECAT_URL || 'http://localhost:7860'
+  const spectrumBars = Array.from({ length: 8 }, (_, idx) => idx)
 
   interface ExtendedRTCPeerConnection extends RTCPeerConnection {
     pc_id?: string
@@ -105,23 +107,18 @@ export default function Home() {
     if (videoTrack) {
       const videoTransceiver = pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
       
-      // Configure codec preferences to prefer VP9 or H.264 over VP8 for better decoder support
-      // This helps avoid VP8 decoder errors on macOS
+      // Force H.264/VP9 to avoid VP8 decode errors on the server
       if ('setCodecPreferences' in videoTransceiver.sender) {
         try {
           const codecs = RTCRtpSender.getCapabilities('video')?.codecs || []
-          // Prefer VP9, then H.264, then VP8
           const preferredCodecs = [
-            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp9')),
             ...codecs.filter(c => c.mimeType.toLowerCase().includes('h264')),
-            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp8')),
+            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp9')),
           ]
-          if (preferredCodecs.length > 0) {
-            const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void }
-            if (sender.setCodecPreferences) {
-              sender.setCodecPreferences(preferredCodecs)
-              console.log('Video codec preferences set:', preferredCodecs.map(c => c.mimeType))
-            }
+          const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void }
+          if (sender.setCodecPreferences && preferredCodecs.length > 0) {
+            sender.setCodecPreferences(preferredCodecs)
+            console.log('Video codec preferences set:', preferredCodecs.map(c => c.mimeType))
           }
         } catch (err) {
           console.warn('Could not set codec preferences:', err)
@@ -164,6 +161,8 @@ export default function Home() {
           setError(data.message || 'An error occurred')
           setIsConnected(false)
           setIsListening(false)
+        } else if (data.type === 'tts_state') {
+          setIsTarsSpeaking(data.state === 'started')
         } else if (data.type === 'system') {
           console.log('System message:', data.message)
         }
@@ -205,6 +204,8 @@ export default function Home() {
             setError(data.message || 'An error occurred')
             setIsConnected(false)
             setIsListening(false)
+          } else if (data.type === 'tts_state') {
+            setIsTarsSpeaking(data.state === 'started')
           } else if (data.type === 'system') {
             console.log('System message:', data.message)
           }
@@ -363,6 +364,7 @@ export default function Home() {
     setIsListening(false)
     setTranscription(null)
     setPartialTranscription(null)
+    setIsTarsSpeaking(false)
   }
 
   // Note: Transcription and TTS are handled by the pipeline on the server side
@@ -422,6 +424,16 @@ export default function Home() {
                 muted
               />
               <div className={styles.videoLabel}>Camera Feed</div>
+            </div>
+            <div className={styles.voiceIndicator}>
+              <div className={`${styles.voiceSpectrum} ${isTarsSpeaking ? styles.voiceSpectrumActive : ''}`}>
+                {spectrumBars.map((bar) => (
+                  <span key={bar} style={{ animationDelay: `${bar * 0.08}s` }}></span>
+                ))}
+              </div>
+              <span className={styles.voiceStatusText}>
+                {isTarsSpeaking ? 'TARS is speaking...' : 'TARS is idle'}
+              </span>
             </div>
           </div>
 

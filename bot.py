@@ -16,7 +16,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.openai import OpenAILLMService
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport

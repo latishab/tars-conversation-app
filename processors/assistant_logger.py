@@ -11,7 +11,6 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 SENTENCE_REGEX = re.compile(r"(.+?[\.!\?\n])")
 
-
 class AssistantResponseLogger(FrameProcessor):
     """Logs TARS assistant responses and forwards them to the frontend."""
 

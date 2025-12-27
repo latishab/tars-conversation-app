@@ -460,6 +460,64 @@
   letter-spacing: 0.5px;
 }
 
+.voiceIndicator {
+  background: linear-gradient(120deg, rgba(102, 126, 234, 0.12), rgba(118, 75, 162, 0.12));
+  border: 1px solid rgba(102, 126, 234, 0.25);
+  border-radius: 16px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+  box-shadow: 0 6px 18px rgba(102, 126, 234, 0.15);
+}
+
+.voiceSpectrum {
+  width: 100%;
+  max-width: 320px;
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  justify-content: center;
+}
+
+.voiceSpectrum span {
+  width: 6px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #a5b4fc, #6366f1);
+  height: 8px;
+  opacity: 0.4;
+  animation: voiceBounce 1.2s ease-in-out infinite;
+  animation-play-state: paused;
+}
+
+.voiceSpectrumActive span {
+  animation-play-state: running;
+  opacity: 1;
+}
+
+@keyframes voiceBounce {
+  0% {
+    height: 8px;
+    transform: translateY(0);
+  }
+  50% {
+    height: 36px;
+    transform: translateY(-4px);
+  }
+  100% {
+    height: 8px;
+    transform: translateY(0);
+  }
+}
+
+.voiceStatusText {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #4c1d95;
+  letter-spacing: 0.3px;
+}
 
 .audio {
   width: 100%;

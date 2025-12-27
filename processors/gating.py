@@ -3,11 +3,11 @@
 import json
 import time
 import aiohttp
+import asyncio
 from loguru import logger
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import LLMMessagesFrame, Frame
 from character.prompts import build_gating_system_prompt
-
 
 class InterventionGating(FrameProcessor):
     """
@@ -49,11 +49,9 @@ class InterventionGating(FrameProcessor):
             if time.time() - last_update > 5.0:
                 is_looking = False 
 
-        # 2. ANALYZE CONTEXT (Use last 3 messages to detect struggle)
-        # We grab a bit more context to see if they are stuck
+        # 2. ANALYZE CONTEXT
         history_text = "\n".join([f"{m['role']}: {m['content']}" for m in messages[-3:]])
         
-        # Get the collaborative spotter system prompt from prompts.py
         system_prompt = build_gating_system_prompt(is_looking)
 
         payload = {
@@ -66,8 +64,11 @@ class InterventionGating(FrameProcessor):
             "max_tokens": 50
         }
 
+        # Set strict timeout so we don't silence the bot if API is slow
+        timeout = aiohttp.ClientTimeout(total=1.5)
+
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     self.api_url, 
                     headers={"Authorization": f"Bearer {self.api_key}"}, 
@@ -80,13 +81,14 @@ class InterventionGating(FrameProcessor):
                         data = json.loads(content_response)
                         should_reply = data.get("reply", False)
                         
-                        # Log the decision for debugging
                         logger.debug(f"Gating decision: {should_reply} (Looking: {is_looking})")
-                        
                         return should_reply
                     else:
                         logger.warning(f"Gating check failed: {resp.status}")
                         return True # Fail open (reply if check fails)
+        except asyncio.TimeoutError:
+            logger.warning("🚦 Gating: Timed out! Defaulting to REPLY.")
+            return True
         except Exception as e:
             logger.error(f"Gating error: {e}")
             return True
@@ -99,22 +101,13 @@ class InterventionGating(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, LLMMessagesFrame) and direction == FrameDirection.DOWNSTREAM:
-            # Extract last user message for logging
-            last_msg = ""
-            if frame.messages:
-                last_user_msg = frame.messages[-1]
-                if last_user_msg.get("role") == "user":
-                    last_msg = last_user_msg.get("content", "")[:60]
-            
             # Check if we should reply
             should_reply = await self._check_should_reply(frame.messages)
             
             if not should_reply:
-                logger.info(f"🚦 Gating: BLOCKING response | Message: '{last_msg}...'")
-                return # DROP THE FRAME. Pipeline stops here for this turn.
+                logger.info(f"🚦 Gating: BLOCKING response.")
+                return # DROP THE FRAME
             
-            logger.info(f"🟢 Gating: PASSING through | Message: '{last_msg}...'")
+            logger.info(f"🟢 Gating: PASSING through.")
         
-        # Push the frame if we didn't return above
         await self.push_frame(frame, direction)
-
