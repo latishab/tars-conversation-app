@@ -94,14 +94,11 @@ export default function Home() {
     analyserRef.current = null; setIsTarsSpeaking(false);
   }
 
-  // --- ROBUST SDP STRIPPER ---
-  // Removes VP8/VP9 completely and cleanly from the SDP
   const stripCodecs = (sdp: string, codecsToRemove: string[]) => {
     const lines = sdp.split('\r\n');
     const mLineIndex = lines.findIndex(l => l.startsWith('m=video'));
     if (mLineIndex === -1) return sdp;
 
-    // 1. Find Payload Types (PTs) to remove
     const badPts = new Set<string>();
     lines.forEach(l => {
       const match = l.match(/^a=rtpmap:(\d+) ([a-zA-Z0-9-]+)\/\d+/);
@@ -112,7 +109,6 @@ export default function Home() {
       }
     });
 
-    // 2. Find associated RTX PTs for the bad PTs
     lines.forEach(l => {
       const match = l.match(/^a=fmtp:(\d+) apt=(\d+)/);
       if (match && badPts.has(match[2])) badPts.add(match[1]);
@@ -120,7 +116,6 @@ export default function Home() {
 
     if (badPts.size === 0) return sdp;
 
-    // 3. Rewrite m=video line to exclude bad PTs
     const mLineParts = lines[mLineIndex].split(' ');
     const newMLine = [
       ...mLineParts.slice(0, 3), 
@@ -128,20 +123,13 @@ export default function Home() {
     ].join(' ');
     lines[mLineIndex] = newMLine;
 
-    // 4. Filter out any a= lines that reference the bad PTs
     const newLines = lines.filter(l => {
-      // Check a=rtpmap:<pt>...
       const rtpmapMatch = l.match(/^a=rtpmap:(\d+)/);
       if (rtpmapMatch && badPts.has(rtpmapMatch[1])) return false;
-
-      // Check a=fmtp:<pt>...
       const fmtpMatch = l.match(/^a=fmtp:(\d+)/);
       if (fmtpMatch && badPts.has(fmtpMatch[1])) return false;
-
-      // Check a=rtcp-fb:<pt>...
       const rtcpMatch = l.match(/^a=rtcp-fb:(\d+)/);
       if (rtcpMatch && badPts.has(rtcpMatch[1])) return false;
-
       return true;
     });
 
@@ -187,8 +175,52 @@ export default function Home() {
     }
 
     pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
-    if (videoTrack) pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
-    else pc.addTransceiver('video', { direction: 'sendrecv' })
+    
+    // --- VIDEO TRANSCEIVER CONFIGURATION (ENHANCED FOR STABILITY) ---
+    if (videoTrack) {
+        const videoTransceiver = pc.addTransceiver(videoTrack, { 
+            direction: 'sendrecv',
+            streams: [streamRef.current!] 
+        });
+
+        // 1. Set Parameters: Lower bitrate and framerate for stability
+        const parameters = videoTransceiver.sender.getParameters();
+        if (!parameters.encodings) parameters.encodings = [{}];
+        
+        parameters.encodings[0].maxBitrate = 1_000_000; // 1 Mbps
+        parameters.encodings[0].maxFramerate = 24;      // 24 FPS
+        parameters.encodings[0].keyFrameInterval = 2000; 
+        
+        videoTransceiver.sender.setParameters(parameters)
+            .catch(e => console.warn("setParameters failed:", e));
+
+        // 2. Set Codec Preferences: Prioritize Constrained Baseline (42e01f)
+        // This is the "Safety Profile" that almost all decoders support.
+        if ('setCodecPreferences' in videoTransceiver.sender) {
+            try {
+                const codecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
+                const h264Codecs = codecs.filter(c => c.mimeType.toLowerCase().includes('h264'));
+                
+                // Sort to put 42e01f (Constrained Baseline) first
+                h264Codecs.sort((a, b) => {
+                    const aIsSafe = (a.sdpFmtpLine || "").includes("42e01f") ? 2 : 0;
+                    const bIsSafe = (b.sdpFmtpLine || "").includes("42e01f") ? 2 : 0;
+                    // Secondary sort: standard baseline (42001f)
+                    const aIsBase = (a.sdpFmtpLine || "").includes("42001f") ? 1 : 0;
+                    const bIsBase = (b.sdpFmtpLine || "").includes("42001f") ? 1 : 0;
+                    return (bIsSafe + bIsBase) - (aIsSafe + aIsBase);
+                });
+
+                const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void };
+                if (sender.setCodecPreferences && h264Codecs.length > 0) {
+                    console.log("Setting H.264 preferences:", h264Codecs[0].sdpFmtpLine);
+                    sender.setCodecPreferences(h264Codecs);
+                }
+            } catch (e) { console.warn("setCodecPreferences failed:", e); }
+        }
+    } else {
+        pc.addTransceiver('video', { direction: 'sendrecv' });
+    }
 
     const dataChannel = pc.createDataChannel('messages', { ordered: true })
     const handleMessage = (event: MessageEvent) => {
@@ -226,7 +258,7 @@ export default function Home() {
     // 1. Create Offer
     const offer = await pc.createOffer()
 
-    // 2. NUCLEAR FIX: Strip VP8, VP9, and AV1 completely. Force H.264.
+    // 2. Strip VP8, VP9, and AV1 completely. Force H.264.
     const cleanSdp = stripCodecs(offer.sdp || "", ['VP8', 'VP9', 'AV1'])
     
     // 3. Set Local Description with CLEAN SDP

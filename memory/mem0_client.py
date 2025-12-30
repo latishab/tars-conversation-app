@@ -101,4 +101,22 @@ class Mem0Wrapper:
             logger.warning(f"Mem0 recall failed: {e}")
             return []
 
+    def transfer_memories(self, old_user_id: str, new_user_id: str):
+        """Moves memories from a temporary ID (e.g. guest) to a named ID."""
+        if not self._client or old_user_id == new_user_id:
+            return
 
+        logger.info(f"🔄 Transferring memories from {old_user_id} to {new_user_id}...")
+        
+        # 1. Recall recent memories from the old ID
+        old_memories = self.recall(user_id=old_user_id, limit=100)
+        
+        if not old_memories:
+            logger.info("No temporary memories found to transfer.")
+            return
+
+        # 2. Add them to the new ID
+        for memory_text in old_memories:
+            self.save_user_message(new_user_id, memory_text)
+            
+        logger.info(f"✅ Successfully transferred {len(old_memories)} memories to {new_user_id}")

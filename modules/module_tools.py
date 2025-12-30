@@ -44,43 +44,6 @@ async def fetch_user_image(params: FunctionCallParams):
         # Return error message so LLM can inform user
         await params.result_callback(f"Unable to access camera feed: {str(e)}")
 
-
-async def set_speaking_rate(params: FunctionCallParams):
-    """Adjust speaking speed: fast (1.2x) for urgent, slow (0.8x) for complex, normal (1.0x) default."""
-    rate = params.arguments.get("rate", "normal")
-    speed_value = 1.0
-    
-    if rate == "fast":
-        speed_value = 1.2  # Max reliable speed for urgent situations
-        logger.info("⚡ TARS engaging High-Speed Mode (1.2x)")
-    elif rate == "slow":
-        speed_value = 0.8  # Slower, more deliberate for complex topics
-        logger.info("🐢 TARS engaging Precision Mode (0.8x)")
-    else:
-        speed_value = 1.0
-        logger.info("✓ TARS speaking at Normal Speed (1.0x)")
-    
-    _tts_speed_storage["speed"] = speed_value
-    
-    # Update TTS service if available
-    tts_service = _tts_speed_storage.get("tts_service")
-    if tts_service:
-        try:
-            if hasattr(tts_service, 'speed'):
-                tts_service.speed = speed_value
-            elif hasattr(tts_service, '_speed'):
-                tts_service._speed = speed_value
-        except Exception as e:
-            logger.debug(f"Could not update TTS speed: {e}")
-    
-    await params.result_callback(f"Speaking rate set to {rate} ({speed_value}x speed)")
-
-
-def get_tts_speed_storage():
-    """Get the TTS speed storage dictionary for external access."""
-    return _tts_speed_storage
-
-
 def get_persona_storage():
     """Get the persona storage dictionary for external access."""
     return _persona_storage
@@ -178,23 +141,6 @@ def create_fetch_image_schema() -> FunctionSchema:
         required=["user_id", "question"],
     )
 
-
-def create_speaking_rate_schema() -> FunctionSchema:
-    """Create the set_speaking_rate function schema."""
-    return FunctionSchema(
-        name="set_speaking_rate",
-        description="Adjusts your speaking speed to match the user's energy and urgency. Use 'fast' if the user is urgent/panicked, 'slow' for complex topics or when the user is confused, 'normal' for default operation.",
-        properties={
-            "rate": {
-                "type": "string",
-                "enum": ["fast", "normal", "slow"],
-                "description": "The desired speaking rate: 'fast' (1.2x) for urgent situations, 'slow' (0.8x) for complex explanations, 'normal' (1.0x) for default.",
-            },
-        },
-        required=["rate"],
-    )
-
-
 def create_adjust_persona_schema() -> FunctionSchema:
     """Create the adjust_persona_parameter function schema."""
     return FunctionSchema(
@@ -228,3 +174,30 @@ def create_adjust_persona_schema() -> FunctionSchema:
         required=["parameter", "value"],
     )
 
+def set_user_identity(name: str):
+    """
+    Call this function when the user tells you their name. 
+    It will update the memory system to store facts under their specific name.
+    """
+    # We return a structured string that the Pipeline can parse
+    # The actual logic will be handled in bot.py by checking the tool outputs
+    return {"action": "update_identity", "name": name}
+
+def create_identity_schema():
+    return {
+        "type": "function",
+        "function": {
+            "name": "set_user_identity",
+            "description": "Call this when the user explicitly states their name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name provided by the user."
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    }
