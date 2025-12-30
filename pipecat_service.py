@@ -112,7 +112,6 @@ app.add_middleware(
 # Initialize the SmallWebRTC request handler
 small_webrtc_handler: SmallWebRTCRequestHandler = SmallWebRTCRequestHandler()
 
-
 @app.post("/api/offer")
 async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
     """Handle WebRTC offer requests via SmallWebRTCRequestHandler."""
