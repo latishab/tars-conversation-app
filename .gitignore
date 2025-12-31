@@ -15,6 +15,7 @@
 /memory/__pycache__
 /modules/__pycache__
 /character/__pycache__
+__pycache__
 
 # production
 /build

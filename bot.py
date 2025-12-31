@@ -46,7 +46,7 @@ from processors import (
     VisualObserver,
 )
 
-# CHANGED: Import Mem0Saver from memory module
+# IMPORT FROM THE CORRECT MODULE
 from config import MEM0_API_KEY
 from memory.mem0_client import Mem0Wrapper, Mem0Saver 
 
@@ -123,8 +123,8 @@ async def run_bot(webrtc_connection):
             from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
             from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
             
-            vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.8, start_secs=0.2, confidence=0.5))
-            turn_analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=1.0, pre_speech_ms=200.0))
+            vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.6, start_secs=0.2, confidence=0.4))
+            turn_analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=0.8, pre_speech_ms=200.0))
             logger.info("✓ VAD and Smart Turn Detection initialized")
         except ImportError:
             logger.warning("Smart Turn dependencies not installed.")
@@ -228,7 +228,7 @@ async def run_bot(webrtc_connection):
                         recalled = await asyncio.to_thread(_mem0.recall, user_id=new_id, limit=5)
                         if recalled:
                             memory_block = "\n".join(f"- {m}" for m in recalled)
-                            context.add_message({
+                            context.messages.append({
                                 "role": "system",
                                 "content": f"IDENTITY CONFIRMED: {name}. I have accessed your long-term files:\n{memory_block}"
                             })
@@ -236,7 +236,7 @@ async def run_bot(webrtc_connection):
                     except Exception as e:
                         logger.warning(f"Failed to load long-term memories: {e}")
                     
-                await params.result_callback(f"Identity updated to {name}. I will remember you as {name}.")
+                await params.result_callback(f"Identity updated to {name}. I have accessed your personnel file.")
 
             llm.register_function("set_user_identity", wrapped_set_identity)
             logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
@@ -296,7 +296,7 @@ async def run_bot(webrtc_connection):
             visual_observer,
             stt,
             transcription_logger,
-            memory_saver, # Saves transcriptions using current client_id (guest or user)
+            memory_saver, # Saver is here, non-blocking now
             latency_logger_upstream,
             vision_logger,
             context_aggregator.user(),
@@ -327,7 +327,13 @@ async def run_bot(webrtc_connection):
             if task_ref["task"]:
                 verbosity = persona_params.get("verbosity", 10) if persona_params else 10
                 intro_instruction = get_introduction_instruction(client_state['client_id'], verbosity)
-                messages.append(intro_instruction)
+                
+                # Directly append the intro message to the context history
+                if context and hasattr(context, "messages"):
+                     context.messages.append(intro_instruction)
+
+                # Wait for pipeline stabilization then trigger speech
+                await asyncio.sleep(0.5)
                 await task_ref["task"].queue_frames([LLMRunFrame()])
 
         @pipecat_transport.event_handler("on_client_disconnected")

@@ -98,53 +98,64 @@ The application will be available at `http://localhost:3000`
 ## Project Structure
 
 ```
-├── app/                        # Next.js application (completely self-contained)
+├── __pycache__/                 # Python bytecode cache
+├── app/                         # Next.js application (completely self-contained)
 │   ├── api/
-│   │   ├── offer/route.ts       # WebRTC offer handling (proxies to backend)
-│   │   └── status/route.ts      # Health check endpoint
-│   ├── components/              # Reusable React components
+│   │   ├── status/
+│   │   │   └── route.ts         # Health check endpoint
+│   │   └── voice/
+│   │       └── route.ts         # Voice API endpoint
+│   ├── components/
 │   │   └── ui/                  # shadcn/ui components
+│   │       ├── alert.tsx
+│   │       ├── badge.tsx
 │   │       ├── button.tsx
-│   │       └── card.tsx
-│   ├── lib/                     # Utility functions
-│   │   └── utils.ts
-│   ├── public/                  # Static assets
+│   │       ├── card.tsx
+│   │       ├── progress.tsx
+│   │       └── separator.tsx
 │   ├── globals.css              # Global styles with shadcn/ui + Tailwind
 │   ├── layout.tsx               # Root layout
-│   ├── page.tsx                 # Main React component with WebRTC
-│   ├── favicon.ico              # App favicon
-│   ├── package.json             # Next.js dependencies and scripts
-│   ├── tsconfig.json            # TypeScript configuration
-│   ├── next.config.ts           # Next.js configuration
-│   ├── tailwind.config.ts       # Tailwind CSS configuration
-│   ├── components.json          # shadcn/ui configuration
-│   ├── postcss.config.mjs       # PostCSS configuration
-│   └── eslint.config.mjs        # ESLint configuration
-├── config/                      # Configuration module
-│   └── __init__.py              # Environment variable loading and config
-├── processors/                  # Custom Pipecat processors
-│   ├── __init__.py              # Processor exports
-│   ├── gating.py                # Gating Layer (AI decision system)
-│   ├── transcription_logger.py  # Transcription logging and frontend messaging
-│   ├── assistant_logger.py      # Assistant response logging
-│   ├── tts_state_logger.py      # TTS state broadcasting
-│   ├── vision_logger.py         # Vision frame logging
-│   ├── latency_logger.py        # Pipeline latency tracking
-│   └── filters.py               # Audio filters (silence, input)
+│   ├── page.module.css          # Page-specific styles
+│   └── page.tsx                 # Main React component with WebRTC
 ├── bot.py                       # Main bot pipeline setup and execution
-├── pipecat_service.py           # FastAPI server with SmallWebRTC transport
 ├── character/                   # Character configuration
 │   ├── persona.ini              # Character personality settings
 │   ├── prompts.py               # Prompt generation utilities
 │   └── TARS.json                # TARS character definition
+├── components.json              # shadcn/ui configuration
+├── config/                      # Configuration module
+│   └── __init__.py              # Environment variable loading and config
+├── lib/
+│   └── utils.ts                 # Utility functions
 ├── memory/                      # Memory management
 │   └── mem0_client.py           # Mem0 integration for persistent memory
 ├── modules/                     # Module tools and utilities
 │   └── module_tools.py          # Tool definitions for LLM
+├── next-env.d.ts                # Next.js TypeScript definitions
+├── next.config.js               # Next.js configuration
+├── node_modules/                # Node.js dependencies
+├── package-lock.json            # NPM lock file
 ├── package.json                 # Root scripts for running both frontend/backend
+├── pipecat_service.py           # FastAPI server with SmallWebRTC transport
+├── postcss.config.js            # PostCSS configuration
+├── processors/                  # Custom Pipecat processors
+│   ├── __init__.py              # Processor exports
+│   ├── __pycache__/             # Python bytecode cache
+│   ├── assistant_logger.py      # Assistant response logging
+│   ├── filters.py               # Audio filters (silence, input)
+│   ├── gating.py                # Gating Layer (AI decision system)
+│   ├── latency_logger.py        # Pipeline latency tracking
+│   ├── transcription_logger.py  # Transcription logging and frontend messaging
+│   ├── tts_state_logger.py      # TTS state broadcasting
+│   ├── vision_logger.py         # Vision frame logging
+│   └── visual_observer.py       # Visual observation processor
+├── README.md                    # This file
 ├── requirements.txt             # Python dependencies
-├── env.example                  # Environment variables template
-└── README.md                    # This file
+├── scripts/                     # Utility scripts
+│   └── check_av.py              # Audio/video checking script
+├── tailwind.config.js           # Tailwind CSS configuration
+├── tsconfig.json                # TypeScript configuration
+└── env.example                  # Environment variables template
 ```
 
 ## API Endpoints
@@ -222,16 +233,3 @@ TARS uses a sophisticated three-layer system to ensure natural, context-aware co
 8. **Vision Analysis**: Moondream analyzes camera images when requested
 9. **Text-to-Speech**: ElevenLabs converts responses to speech
 10. **Audio Output**: Synthesized speech streamed back via WebRTC
-
-## Migration Summary
-
-This project has been successfully migrated from CSS modules to a modern stack:
-
-- ✅ **CSS Modules** → **Tailwind CSS + shadcn/ui**
-- ✅ **Legacy styling** → **Modern component library**
-- ✅ **Complex CSS** → **Utility-first classes**
-- ✅ **Old structure** → **Clean Next.js App Router**
-- ✅ **Manual components** → **shadcn/ui components**
-- ✅ **TypeScript support** → **Full type safety**
-
-The voice AI functionality, WebRTC streaming, and all backend integrations remain fully intact while providing a much better development experience.

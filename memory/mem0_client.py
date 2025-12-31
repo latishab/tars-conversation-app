@@ -85,20 +85,15 @@ class Mem0Wrapper:
             return []
 
     def transfer_memories(self, old_user_id: str, new_user_id: str):
-        """Moves memories from a temporary ID to a named ID."""
         if not self._client or old_user_id == new_user_id:
             return
-
         logger.info(f"🔄 Transferring memories from {old_user_id} to {new_user_id}...")
-        
         old_memories = self.recall(user_id=old_user_id, limit=100)
         if not old_memories:
             logger.info("No temporary memories found to transfer.")
             return
-
         for memory_text in old_memories:
             self.save_user_message(new_user_id, memory_text)
-            
         logger.info(f"✅ Successfully transferred {len(old_memories)} memories to {new_user_id}")
 
 
@@ -107,24 +102,28 @@ class Mem0Saver(FrameProcessor):
     Pipeline processor that saves user transcriptions to Mem0.
     """
     def __init__(self, mem0_wrapper: Mem0Wrapper, client_state_ref: dict):
+        # CRITICAL: This call initializes the internal queues of FrameProcessor
         super().__init__()
         self._mem0 = mem0_wrapper
         self._client_state = client_state_ref 
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        # 1. ALWAYS push downstream first. This ensures the audio/text reaches the LLM.
+        # 1. Forward frame downstream immediately (Non-blocking)
         await super().process_frame(frame, direction)
 
-        # 2. Process side-effects (saving) in background
+        # 2. Inspect for Transcription (Side effect)
         try:
             if isinstance(frame, TranscriptionFrame) and direction == FrameDirection.UPSTREAM:
                 text = frame.text
                 user_id = self._client_state.get("client_id", "unknown_guest")
                 
+                # Filter out empty noise
                 if text and len(text.strip()) > 1:
+                    # Save in background task
                     asyncio.create_task(self._save_safe(user_id, text))
         except Exception as e:
-            logger.error(f"Error in Mem0Saver logic: {e}")
+            # Swallow errors here so we never crash the pipeline flow
+            logger.error(f"Mem0Saver logic error: {e}")
 
     async def _save_safe(self, user_id, text):
         try:
