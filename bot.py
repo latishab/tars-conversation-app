@@ -7,7 +7,8 @@ import logging
 import uuid
 
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame, Frame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -33,6 +34,7 @@ from config import (
     DEEPINFRA_BASE_URL,
     DEEPINFRA_MODEL,
     DEEPINFRA_GATING_MODEL,
+    MEM0_API_KEY,
 )
 from processors import (
     SimpleTranscriptionLogger,
@@ -45,10 +47,7 @@ from processors import (
     InterventionGating,
     VisualObserver,
 )
-
-# IMPORT FROM THE CORRECT MODULE
-from config import MEM0_API_KEY
-from memory.mem0_client import Mem0Wrapper, Mem0Saver 
+from memory.mem0_client import Mem0Wrapper 
 
 from character.prompts import (
     load_persona_ini,
@@ -65,14 +64,10 @@ from modules.module_tools import (
     get_persona_storage,
 )
 
-if not MEM0_API_KEY:
-    raise RuntimeError("MEM0_API_KEY is required but not set.")
-
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
 async def _cleanup_services(service_refs: dict):
-    """Cleanup STT and TTS services to prevent connection leaks."""
     if service_refs.get("stt"):
         try:
             stt_service = service_refs["stt"]
@@ -97,7 +92,6 @@ async def _cleanup_services(service_refs: dict):
 
 
 async def run_bot(webrtc_connection):
-    """Run the bot pipeline with the given WebRTC connection"""
     logger.info("Starting bot pipeline for WebRTC connection...")
     
     session_id = str(uuid.uuid4())[:8]
@@ -106,15 +100,7 @@ async def run_bot(webrtc_connection):
 
     service_refs = {"stt": None, "tts": None}
 
-    def handle_speechmatics_error(error: Exception) -> bool:
-        error_str = str(error).lower()
-        if "quota" in error_str or "4005" in error_str:
-            logger.error("❌ Speechmatics quota exceeded!")
-            return False
-        return False
-
     try:
-        # Initialize VAD and Smart Turn Detection
         logger.info("Initializing VAD and Smart Turn Detection...")
         vad_analyzer = None
         turn_analyzer = None
@@ -269,16 +255,16 @@ async def run_bot(webrtc_connection):
 
         context_aggregator = LLMContextAggregatorPair(context)
         
-        # Initialize Mem0 Saver
-        logger.info("Initializing Mem0 Saver...")
-        memory_saver = Mem0Saver(mem0_wrapper=_mem0, client_state_ref=client_state)
-
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
 
-        transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
+        transcription_logger = SimpleTranscriptionLogger(
+            webrtc_connection=webrtc_connection,
+            client_state=client_state
+        )
+        
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
@@ -295,8 +281,7 @@ async def run_bot(webrtc_connection):
             pipecat_transport.input(),
             visual_observer,
             stt,
-            transcription_logger,
-            memory_saver, # Saver is here, non-blocking now
+            transcription_logger, # Handles "S1" -> "guest" rename, logging, and Mem0
             latency_logger_upstream,
             vision_logger,
             context_aggregator.user(),
@@ -328,11 +313,9 @@ async def run_bot(webrtc_connection):
                 verbosity = persona_params.get("verbosity", 10) if persona_params else 10
                 intro_instruction = get_introduction_instruction(client_state['client_id'], verbosity)
                 
-                # Directly append the intro message to the context history
                 if context and hasattr(context, "messages"):
                      context.messages.append(intro_instruction)
 
-                # Wait for pipeline stabilization then trigger speech
                 await asyncio.sleep(0.5)
                 await task_ref["task"].queue_frames([LLMRunFrame()])
 
