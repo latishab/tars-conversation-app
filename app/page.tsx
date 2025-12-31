@@ -175,8 +175,6 @@ export default function Home() {
     }
 
     pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
-    
-    // --- VIDEO TRANSCEIVER CONFIGURATION (ENHANCED FOR STABILITY) ---
     if (videoTrack) {
         const videoTransceiver = pc.addTransceiver(videoTrack, { 
             direction: 'sendrecv',
@@ -194,8 +192,7 @@ export default function Home() {
         videoTransceiver.sender.setParameters(parameters)
             .catch(e => console.warn("setParameters failed:", e));
 
-        // 2. Set Codec Preferences: Prioritize Constrained Baseline (42e01f)
-        // This is the "Safety Profile" that almost all decoders support.
+        // 2. Set Codec Preferences
         if ('setCodecPreferences' in videoTransceiver.sender) {
             try {
                 const codecs = RTCRtpSender.getCapabilities('video')?.codecs || [];

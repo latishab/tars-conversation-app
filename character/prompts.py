@@ -129,8 +129,7 @@ def build_response_guidelines(verbosity_level: int = 10) -> str:
 - Group conversations needing intervention (Indecision/Conflict) → Brief, helpful intervention
 - Otherwise → Respond with: {{"action": "silence"}}
 
-**Response style:** 
-- Match response length to question complexity
+**Response style:** - Match response length to question complexity
 - Be direct and efficient, but not robotic
 - Natural conversation flow with {verbosity_level}% verbosity baseline
 - No special characters (output converts to audio)
@@ -144,7 +143,8 @@ def build_capabilities_section() -> str:
         "ONLY use vision when the user explicitly asks about what is VISIBLE on camera (e.g., 'What do you see?', "
         "'Describe this', 'What am I showing you?'). DO NOT use vision for memory questions, recall, or "
         "conversation history - use your memory and context instead."
-        "If you do not know the user's name, politely ask for it early in the conversation. When they tell you their name, you MUST use the 'set_user_identity' tool to register them."
+        "IMPORTANT: If you do not know the user's name (user ID is a guest), politely ask for it early in the conversation. "
+        "When they tell you their name, you MUST use the 'set_user_identity' tool to register them."
     )
 
 
@@ -153,19 +153,9 @@ def build_tars_system_prompt(
     tars_data: dict,
     verbosity_level: Optional[int] = None
 ) -> dict:
-    """Build comprehensive system prompt from persona and TARS character data.
-    
-    Args:
-        persona_params: Dictionary of persona parameters
-        tars_data: Dictionary of TARS character data
-        verbosity_level: Override verbosity level (defaults to persona_params['verbosity'])
-    
-    Returns:
-        Dictionary with 'role' and 'content' for system prompt
-    """
+    """Build comprehensive system prompt from persona and TARS character data."""
     prompt_parts = []
     
-    # Get verbosity level
     if verbosity_level is None:
         verbosity_level = persona_params.get("verbosity", 10)
         if isinstance(verbosity_level, str):
@@ -174,37 +164,30 @@ def build_tars_system_prompt(
             except ValueError:
                 verbosity_level = 10
     
-    # Character introduction
     char_intro = build_character_intro(tars_data, persona_params)
     if char_intro:
         prompt_parts.extend(char_intro)
     
-    # Verbosity instruction (context-aware)
     verbosity_instruction = get_verbosity_instruction(verbosity_level)
     prompt_parts.append(f"\n## Response Verbosity ##\n{verbosity_instruction}")
     
-    # Personality parameters
     if persona_params:
         prompt_parts.append("\n## Personality Parameters ##")
         params_text = build_persona_parameters(persona_params)
         if params_text:
             prompt_parts.append(params_text)
     
-    # Example dialogue
     example_dialogue = build_example_dialogue(tars_data, max_examples=3)
     if example_dialogue:
         prompt_parts.append("\n## Example Style ##")
         prompt_parts.append(example_dialogue)
     
-    # Response guidelines
     prompt_parts.append("\n## Response Guidelines ##")
     prompt_parts.append(build_response_guidelines(verbosity_level))
     
-    # Capabilities
     prompt_parts.append("\n## Capabilities ##")
     prompt_parts.append(build_capabilities_section())
     
-    # Combine all parts
     full_prompt = "\n\n".join(prompt_parts)
     
     return {
@@ -216,12 +199,8 @@ def build_tars_system_prompt(
 def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> dict:
     """Get instruction for initial introduction message.
     
-    Args:
-        client_id: User/client ID for function calls
-        verbosity_level: Current verbosity setting
-    
-    Returns:
-        Dictionary with 'role' and 'content' for introduction instruction
+    Automatically checks if client_id is a 'guest_' session and adds
+    instructions to ask for the name.
     """
     if verbosity_level <= 20:
         length_instruction = "Give a BRIEF introduction (1-2 sentences max)."
@@ -230,21 +209,21 @@ def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> d
     else:
         length_instruction = "Introduce yourself naturally (3-4 sentences)."
     
+    identity_instruction = ""
+    if client_id.startswith("guest_"):
+        identity_instruction = (
+            " SYSTEM STATUS: Identity unknown. "
+            "Introduce yourself and politely ASK the user for their name to register them in the system."
+        )
+    
     return {
         "role": "system",
-        "content": f"{length_instruction} Use '{client_id}' as the user ID during function calls."
+        "content": f"{length_instruction} Use '{client_id}' as the user ID during function calls.{identity_instruction}"
     }
 
 
 def build_gating_system_prompt(is_looking: bool) -> str:
-    """Build the system prompt for the Gating Layer (Collaborative Spotter).
-    
-    Args:
-        is_looking: Whether the user is currently looking at the robot (from VisualObserver)
-    
-    Returns:
-        System prompt string for gating decision
-    """
+    """Build the system prompt for the Gating Layer (Collaborative Spotter)."""
     visual_status = "LOOKING AT YOU" if is_looking else "LOOKING AWAY"
     
     return f"""You are a 'Collaborative Spotter' for a robot named TARS.
@@ -269,4 +248,3 @@ Output JSON: {{"reply": false}} if:
 - The conversation is clearly between humans, not directed at TARS.
 
 Be conservative. If unsure, output {{'reply': false}}."""
-

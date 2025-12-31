@@ -9,9 +9,6 @@ from pipecat.services.llm_service import FunctionCallParams
 from loguru import logger
 from character.prompts import load_persona_ini, load_tars_json, build_tars_system_prompt
 
-# Global storage for TTS speed setting (shared across function calls)
-_tts_speed_storage = {"speed": 1.0, "tts_service": None}
-
 # Global storage for persona parameters and context
 _persona_storage = {
     "persona_params": {},
@@ -19,7 +16,6 @@ _persona_storage = {
     "context_aggregator": None,
     "character_dir": None
 }
-
 
 async def fetch_user_image(params: FunctionCallParams):
     """Fetch user image for vision analysis."""
@@ -36,8 +32,6 @@ async def fetch_user_image(params: FunctionCallParams):
         logger.debug("✓ UserImageRequestFrame sent to pipeline")
         
         # Return a minimal status - the LLM should wait for the vision result
-        # Moondream will process in the background and send results when ready
-        # We return a minimal message to avoid triggering an immediate LLM response
         await params.result_callback("Processing...")
     except Exception as e:
         logger.error(f"❌ Error requesting image: {e}", exc_info=True)
@@ -47,7 +41,6 @@ async def fetch_user_image(params: FunctionCallParams):
 def get_persona_storage():
     """Get the persona storage dictionary for external access."""
     return _persona_storage
-
 
 async def adjust_persona_parameter(params: FunctionCallParams):
     """Adjust a persona parameter (0-100). Updates the system prompt dynamically."""
@@ -109,7 +102,6 @@ async def adjust_persona_parameter(params: FunctionCallParams):
         f"Persona parameter '{parameter_name}' adjusted from {old_value}% to {value_int}%. "
         f"Changes will take effect in subsequent responses."
     )
-
 
 def create_fetch_image_schema() -> FunctionSchema:
     """Create the fetch_user_image function schema."""
@@ -176,28 +168,20 @@ def create_adjust_persona_schema() -> FunctionSchema:
 
 def set_user_identity(name: str):
     """
-    Call this function when the user tells you their name. 
-    It will update the memory system to store facts under their specific name.
+    Called when the user states their name.
     """
-    # We return a structured string that the Pipeline can parse
-    # The actual logic will be handled in bot.py by checking the tool outputs
+    # We return a structured dict. The wrapped handler in bot.py uses the name.
     return {"action": "update_identity", "name": name}
 
 def create_identity_schema():
-    return {
-        "type": "function",
-        "function": {
-            "name": "set_user_identity",
-            "description": "Call this when the user explicitly states their name.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "The name provided by the user."
-                    }
-                },
-                "required": ["name"]
+    return FunctionSchema(
+        name="set_user_identity",
+        description="Call this function IMMEDIATELY when the user tells you their name.",
+        properties={
+            "name": {
+                "type": "string",
+                "description": "The name the user provided."
             }
-        }
-    }
+        },
+        required=["name"],
+    )

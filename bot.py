@@ -18,6 +18,7 @@ from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -57,7 +58,7 @@ from modules.module_tools import (
     adjust_persona_parameter,
     create_fetch_image_schema,
     create_adjust_persona_schema,
-    create_identity_schema,  # NEW
+    create_identity_schema,
     get_persona_storage,
 )
 
@@ -97,14 +98,12 @@ async def run_bot(webrtc_connection):
     logger.info("Starting bot pipeline for WebRTC connection...")
     
     # 1. Start with a unique Guest ID for this session
-    # We use a mutable dict so inner functions can update the ID
     session_id = str(uuid.uuid4())[:8]
     client_state = {"client_id": f"guest_{session_id}"}
     logger.info(f"Starting session as: {client_state['client_id']}")
 
     service_refs = {"stt": None, "tts": None}
 
-    # Define error handler EARLY
     def handle_speechmatics_error(error: Exception) -> bool:
         """Handle Speechmatics errors. Returns True if retryable."""
         error_str = str(error).lower()
@@ -164,7 +163,7 @@ async def run_bot(webrtc_connection):
             service_refs["stt"] = stt
             logger.info("✓ Speechmatics STT initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize Speechmatics: {e}")
+            logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
 
         # Initialize ElevenLabs TTS
@@ -181,7 +180,7 @@ async def run_bot(webrtc_connection):
             service_refs["tts"] = tts
             logger.info("✓ ElevenLabs TTS service created")
         except Exception as e:
-            logger.error(f"Failed to initialize ElevenLabs: {e}")
+            logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
             return
 
         # Initialize LLM
@@ -199,21 +198,19 @@ async def run_bot(webrtc_connection):
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
             # Define the IDENTITY HANDLER wrapper
-            async def wrapped_set_identity(function_name, tool_call_id, args, llm, context, result_callback):
-                name = args["name"]
+            async def wrapped_set_identity(params: FunctionCallParams):
+                name = params.arguments["name"]
                 logger.info(f"👤 Identity discovered: {name}")
                 
                 old_id = client_state["client_id"]
-                # Normalize name to a clean ID (e.g. "Sarah" -> "user_sarah")
                 new_id = f"user_{name.lower().replace(' ', '_')}"
                 
                 if old_id != new_id:
                     logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
-                    # Run memory transfer in background to avoid blocking
                     await asyncio.to_thread(_mem0.transfer_memories, old_id, new_id)
                     client_state["client_id"] = new_id
                     
-                await result_callback(f"Identity updated to {name}. I will remember you as {name}.")
+                await params.result_callback(f"Identity updated to {name}. I will remember you as {name}.")
 
             # Register the wrapped function
             llm.register_function("set_user_identity", wrapped_set_identity)
@@ -253,12 +250,13 @@ async def run_bot(webrtc_connection):
         persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
         tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
         
+        # Build initial system prompt (WITHOUT manual string concatenation)
         system_prompt = build_tars_system_prompt(persona_params, tars_data)
 
         # Create Tools Schema
         fetch_image_tool = create_fetch_image_schema()
         persona_tool = create_adjust_persona_schema()
-        identity_tool = create_identity_schema() 
+        identity_tool = create_identity_schema()
         
         tools = ToolsSchema(standard_tools=[fetch_image_tool, persona_tool, identity_tool])
 
@@ -312,10 +310,6 @@ async def run_bot(webrtc_connection):
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
             
-            # Note: We now use the 'client_state["client_id"]' which starts as "guest_..."
-            # Memories will only be recalled if this guest ID has history (unlikely for new sessions)
-            # Real recall happens after they authenticate/state name
-            
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})
@@ -323,9 +317,9 @@ async def run_bot(webrtc_connection):
                 pass
 
             if task_ref["task"]:
-                # Custom Intro: Ask who they are if generic guest
-                intro_text = "TARS online. Identity unknown. Please state your name."
-                messages.append({"role": "system", "content": f"The user has just connected. Introduce yourself and ask for their name. System status: {intro_text}"})
+                verbosity = persona_params.get("verbosity", 10) if persona_params else 10
+                intro_instruction = get_introduction_instruction(client_state['client_id'], verbosity)
+                messages.append(intro_instruction)
                 await task_ref["task"].queue_frames([LLMRunFrame()])
 
         @pipecat_transport.event_handler("on_client_disconnected")

@@ -11,7 +11,6 @@ from typing import List, Optional
 from loguru import logger
 
 try:
-    # The canonical package name is `mem0ai` (as of 2025); some versions expose `mem0` top-level
     try:
         from mem0 import MemoryClient  # type: ignore
     except Exception:  # pragma: no cover - fallback
@@ -50,7 +49,6 @@ class Mem0Wrapper:
             if hasattr(self._client, "add_memory"):
                 self._client.add_memory(user_id=user_id, text=text)  # type: ignore[attr-defined]
             elif hasattr(self._client, "add"):
-                # add() requires messages as first positional arg, user_id in kwargs
                 self._client.add(messages, user_id=user_id)  # type: ignore[attr-defined]
             elif hasattr(self._client, "create"):
                 self._client.create(user_id=user_id, text=text)  # type: ignore[attr-defined]
@@ -86,7 +84,6 @@ class Mem0Wrapper:
                     if isinstance(item, str):
                         texts.append(item)
                     elif isinstance(item, dict):
-                        # Try different possible keys for the memory content
                         text = (
                             item.get("text") 
                             or item.get("content") 
