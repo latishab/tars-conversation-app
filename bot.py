@@ -45,8 +45,11 @@ from processors import (
     InterventionGating,
     VisualObserver,
 )
+
+# CHANGED: Import Mem0Saver from memory module
 from config import MEM0_API_KEY
-from memory import Mem0Wrapper
+from memory.mem0_client import Mem0Wrapper, Mem0Saver 
+
 from character.prompts import (
     load_persona_ini,
     load_tars_json,
@@ -97,7 +100,6 @@ async def run_bot(webrtc_connection):
     """Run the bot pipeline with the given WebRTC connection"""
     logger.info("Starting bot pipeline for WebRTC connection...")
     
-    # 1. Start with a unique Guest ID for this session
     session_id = str(uuid.uuid4())[:8]
     client_state = {"client_id": f"guest_{session_id}"}
     logger.info(f"Starting session as: {client_state['client_id']}")
@@ -105,7 +107,6 @@ async def run_bot(webrtc_connection):
     service_refs = {"stt": None, "tts": None}
 
     def handle_speechmatics_error(error: Exception) -> bool:
-        """Handle Speechmatics errors. Returns True if retryable."""
         error_str = str(error).lower()
         if "quota" in error_str or "4005" in error_str:
             logger.error("❌ Speechmatics quota exceeded!")
@@ -128,7 +129,6 @@ async def run_bot(webrtc_connection):
         except ImportError:
             logger.warning("Smart Turn dependencies not installed.")
 
-        # Create SmallWebRTC transport
         transport_params = TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
@@ -145,7 +145,6 @@ async def run_bot(webrtc_connection):
             params=transport_params,
         )
 
-        # Initialize Speechmatics STT
         logger.info("Initializing Speechmatics STT...")
         stt = None
         try:
@@ -166,16 +165,21 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
 
-        # Initialize ElevenLabs TTS
         logger.info("Initializing ElevenLabs TTS...")
         tts = None
         try:
             tts = ElevenLabsTTSService(
                 api_key=ELEVENLABS_API_KEY,
                 voice_id=ELEVENLABS_VOICE_ID,
-                model="eleven_flash_v2_5",
+                model="eleven_turbo_v2_5",
                 output_format="pcm_24000",
-                enable_word_timestamps=False
+                enable_word_timestamps=False,
+                voice_settings={
+                    "stability": 0.5,
+                    "similarity_boost": 0.75, 
+                    "style": 0.0,
+                    "use_speaker_boost": True
+                }
             )
             service_refs["tts"] = tts
             logger.info("✓ ElevenLabs TTS service created")
@@ -183,7 +187,6 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
             return
 
-        # Initialize LLM
         logger.info("Initializing LLM via DeepInfra...")
         llm = None
         try:
@@ -193,11 +196,22 @@ async def run_bot(webrtc_connection):
                 model=DEEPINFRA_MODEL
             )
             
-            # --- TOOL REGISTRATION ---
+            character_dir = os.path.join(os.path.dirname(__file__), "character")
+            persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
+            tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
+            system_prompt = build_tars_system_prompt(persona_params, tars_data)
+
+            fetch_image_tool = create_fetch_image_schema()
+            persona_tool = create_adjust_persona_schema()
+            identity_tool = create_identity_schema()
+            
+            tools = ToolsSchema(standard_tools=[fetch_image_tool, persona_tool, identity_tool])
+            messages = [system_prompt]
+            context = LLMContext(messages, tools)
+
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
-            # Define the IDENTITY HANDLER wrapper
             async def wrapped_set_identity(params: FunctionCallParams):
                 name = params.arguments["name"]
                 logger.info(f"👤 Identity discovered: {name}")
@@ -209,18 +223,28 @@ async def run_bot(webrtc_connection):
                     logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
                     await asyncio.to_thread(_mem0.transfer_memories, old_id, new_id)
                     client_state["client_id"] = new_id
+
+                    try:
+                        recalled = await asyncio.to_thread(_mem0.recall, user_id=new_id, limit=5)
+                        if recalled:
+                            memory_block = "\n".join(f"- {m}" for m in recalled)
+                            context.add_message({
+                                "role": "system",
+                                "content": f"IDENTITY CONFIRMED: {name}. I have accessed your long-term files:\n{memory_block}"
+                            })
+                            logger.info(f"✓ Injected {len(recalled)} long-term memories for {name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load long-term memories: {e}")
                     
                 await params.result_callback(f"Identity updated to {name}. I will remember you as {name}.")
 
-            # Register the wrapped function
             llm.register_function("set_user_identity", wrapped_set_identity)
-
             logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
+
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             return
 
-        # Initialize Moondream vision
         logger.info("Initializing Moondream vision service...")
         moondream = None
         try:
@@ -230,12 +254,10 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize Moondream: {e}")
             return
 
-        # Initialize Visual Observer
         logger.info("Initializing Visual Observer...")
         visual_observer = VisualObserver(vision_client=moondream)
         logger.info("✓ Visual Observer initialized")
 
-        # Initialize Gating Layer
         logger.info("Initializing Gating Layer...")
         gating_layer = InterventionGating(
             api_key=DEEPINFRA_API_KEY,
@@ -245,31 +267,17 @@ async def run_bot(webrtc_connection):
         )
         logger.info(f"✓ Gating Layer initialized")
 
-        # Load Context & Prompts
-        character_dir = os.path.join(os.path.dirname(__file__), "character")
-        persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
-        tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
-        
-        # Build initial system prompt (WITHOUT manual string concatenation)
-        system_prompt = build_tars_system_prompt(persona_params, tars_data)
-
-        # Create Tools Schema
-        fetch_image_tool = create_fetch_image_schema()
-        persona_tool = create_adjust_persona_schema()
-        identity_tool = create_identity_schema()
-        
-        tools = ToolsSchema(standard_tools=[fetch_image_tool, persona_tool, identity_tool])
-
-        messages = [system_prompt]
-        context = LLMContext(messages, tools)
         context_aggregator = LLMContextAggregatorPair(context)
         
+        # Initialize Mem0 Saver
+        logger.info("Initializing Mem0 Saver...")
+        memory_saver = Mem0Saver(mem0_wrapper=_mem0, client_state_ref=client_state)
+
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
 
-        # Loggers
         transcription_logger = SimpleTranscriptionLogger(webrtc_connection=webrtc_connection)
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
@@ -288,10 +296,11 @@ async def run_bot(webrtc_connection):
             visual_observer,
             stt,
             transcription_logger,
+            memory_saver, # Saves transcriptions using current client_id (guest or user)
             latency_logger_upstream,
             vision_logger,
             context_aggregator.user(),
-            # gating_layer, # Disabled for now as requested
+            # gating_layer, 
             ParallelPipeline(parallel_branches),
             assistant_logger,
             latency_logger_llm,
@@ -309,7 +318,6 @@ async def run_bot(webrtc_connection):
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Pipecat Client connected")
-            
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})

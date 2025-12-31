@@ -170,7 +170,6 @@ def set_user_identity(name: str):
     """
     Called when the user states their name.
     """
-    # We return a structured dict. The wrapped handler in bot.py uses the name.
     return {"action": "update_identity", "name": name}
 
 def create_identity_schema():

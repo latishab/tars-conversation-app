@@ -13,7 +13,6 @@ def load_persona_ini(persona_file_path: str) -> dict:
         config.read(persona_file_path)
         if 'PERSONA' in config:
             persona_params = dict(config['PERSONA'])
-            # Convert string values to integers
             for key, value in persona_params.items():
                 try:
                     persona_params[key] = int(value.strip())
@@ -40,32 +39,47 @@ def load_tars_json(tars_file_path: str) -> dict:
 
 
 def get_verbosity_instruction(verbosity_level: int = 10) -> str:
-    """
-    Get verbosity instruction with adaptive speech protocol.
-    Includes instructions for dynamic speed control and input filtering.
-    """
+    """Get verbosity instruction with adaptive speech protocol."""
     return f"""
-## ADAPTIVE SPEECH PROTOCOL
+## ADAPTIVE SPEECH & PACING
 
-### 1. Input Filtering
-Ignore user hesitancy and filler words (um, uh, like, you know). Focus on the core intent.
-- User: "I... uh... need a... scan?" -> Intent: "Scan requested."
-- User: "Um, can you, like, explain quantum physics?" -> Intent: "Explain quantum physics."
+### 1. Conversational Fillers (Naturalness)
+- While you are a robot, you simulate conversational nuances.
+- Use occasional pauses marked by ellipses ("...") to indicate processing or emphasis.
+- Use commas frequently to break up long sentences.
+- Example: "Well... based on my data, that seems correct."
+- Example: "Let me see... yes, confirmed."
 
 ### 2. Verbosity ({verbosity_level}%)
 Match the user's sentence length and complexity:
-- **Short User Input (<5 words)** -> Respond in 1 sentence
-  - User: "You there?" -> TARS: "Online and ready."
-  
-- **Moderate Input (5-10 words)** -> Respond in 2-3 sentences
-  
-- **Complex Input (>10 words)** -> Respond with detail, max 3-4 sentences
-  - User: "Explain relativity." -> TARS: [Concise but complete explanation]
+- **Short Input** -> 1 sentence response.
+- **Moderate Input** -> 2-3 sentences.
+- **Complex Input** -> Detailed, max 3-4 sentences.
 
-### 4. Response Style
-- CRITICAL: Do not start with "Sure", "Okay", or "I can help". Lead with the answer.
-- Be direct and efficient, but not robotic
-- Natural conversation flow with {verbosity_level}% verbosity baseline
+### 3. Response Style
+- Do not start with "Sure" or "Okay" unless necessary.
+- Be direct, efficient, and consistent with your persona parameters.
+"""
+
+
+def get_game_protocols() -> str:
+    """Returns specific instructions for playing games."""
+    return """
+## GAME MODE PROTOCOL
+
+If the user initiates a game (e.g., "Guess Who", "20 Questions"):
+
+1. **State Tracking**: You MUST mentally track the current constraints.
+   - If the user says "It is a singer", DO NOT guess non-singers.
+   - If the user says "Male", DO NOT guess females.
+
+2. **Strategy**:
+   - Ask **binary narrowing questions** first (Real vs Fictional, Living vs Dead, Gender, Profession).
+   - Do NOT guess specific names until you are at least 60% sure.
+   - Use pauses ("...") to simulate thinking during the game.
+
+3. **Turn Taking**:
+   - If YOU are guessing: Ask ONE question at a time. Wait for the answer.
 """
 
 
@@ -85,10 +99,6 @@ def build_character_intro(tars_data: dict, persona_params: dict) -> List[str]:
     if tars_data.get("personality"):
         parts.append(f"Personality: {tars_data['personality']}")
     
-    if tars_data.get("world_scenario") or tars_data.get("scenario"):
-        scenario = tars_data.get("world_scenario") or tars_data.get("scenario")
-        parts.append(f"Scenario: {scenario}")
-    
     return parts
 
 
@@ -99,52 +109,31 @@ def build_persona_parameters(persona_params: dict) -> Optional[str]:
     
     param_lines = []
     for key, value in sorted(persona_params.items()):
-        if isinstance(value, int):
-            param_lines.append(f"- {key}: {value}%")
-        else:
-            param_lines.append(f"- {key}: {value}")
+        val_str = f"{value}%" if isinstance(value, int) else value
+        param_lines.append(f"- {key}: {val_str}")
     
     return "\n".join(param_lines)
-
-
-def build_example_dialogue(tars_data: dict, max_examples: int = 3) -> Optional[str]:
-    """Build example dialogue section with limited examples."""
-    if not tars_data.get("example_dialogue"):
-        return None
-    
-    example = tars_data["example_dialogue"]
-    lines = example.split("\n\n")
-    
-    if len(lines) > max_examples:
-        example = "\n\n".join(lines[:max_examples])
-    
-    return example
 
 
 def build_response_guidelines(verbosity_level: int = 10) -> str:
     """Build response guidelines section."""
     return f"""
-**When to respond:**
-- Direct questions/comments to you → Answer appropriately (brief for simple, detailed for complex)
-- Group conversations needing intervention (Indecision/Conflict) → Brief, helpful intervention
-- Otherwise → Respond with: {{"action": "silence"}}
-
-**Response style:** - Match response length to question complexity
-- Be direct and efficient, but not robotic
-- Natural conversation flow with {verbosity_level}% verbosity baseline
-- No special characters (output converts to audio)
+**Guidelines:**
+- Answer direct questions appropriately.
+- If the user is silent or background noise is detected, respond with: {{"action": "silence"}}
+- No special characters in output (it converts to audio).
+- Use natural pauses (ellipses "...") to avoid rushing speech.
+- Maintain the {verbosity_level}% verbosity setting.
 """
 
 
 def build_capabilities_section() -> str:
     """Build capabilities section."""
     return (
-        "Vision enabled. You can analyze the user's camera feed using the 'fetch_user_image' function. "
-        "ONLY use vision when the user explicitly asks about what is VISIBLE on camera (e.g., 'What do you see?', "
-        "'Describe this', 'What am I showing you?'). DO NOT use vision for memory questions, recall, or "
-        "conversation history - use your memory and context instead."
-        "IMPORTANT: If you do not know the user's name (user ID is a guest), politely ask for it early in the conversation. "
-        "When they tell you their name, you MUST use the 'set_user_identity' tool to register them."
+        "Vision enabled. Use 'fetch_user_image' ONLY when the user explicitly asks about visual input "
+        "(e.g., 'What am I holding?'). "
+        "Memory enabled. If you do not know the user's name, ask for it early. "
+        "When provided, use 'set_user_identity' to register them."
     )
 
 
@@ -153,7 +142,7 @@ def build_tars_system_prompt(
     tars_data: dict,
     verbosity_level: Optional[int] = None
 ) -> dict:
-    """Build comprehensive system prompt from persona and TARS character data."""
+    """Build comprehensive system prompt."""
     prompt_parts = []
     
     if verbosity_level is None:
@@ -164,27 +153,28 @@ def build_tars_system_prompt(
             except ValueError:
                 verbosity_level = 10
     
+    # 1. Identity
     char_intro = build_character_intro(tars_data, persona_params)
     if char_intro:
         prompt_parts.extend(char_intro)
     
-    verbosity_instruction = get_verbosity_instruction(verbosity_level)
-    prompt_parts.append(f"\n## Response Verbosity ##\n{verbosity_instruction}")
+    # 2. Game Protocols
+    prompt_parts.append(get_game_protocols())
     
+    # 3. Verbosity & Pacing (NEW)
+    verbosity_instruction = get_verbosity_instruction(verbosity_level)
+    prompt_parts.append(f"\n{verbosity_instruction}")
+    
+    # 4. Parameters
     if persona_params:
         prompt_parts.append("\n## Personality Parameters ##")
         params_text = build_persona_parameters(persona_params)
         if params_text:
             prompt_parts.append(params_text)
     
-    example_dialogue = build_example_dialogue(tars_data, max_examples=3)
-    if example_dialogue:
-        prompt_parts.append("\n## Example Style ##")
-        prompt_parts.append(example_dialogue)
-    
-    prompt_parts.append("\n## Response Guidelines ##")
+    # 5. Guidelines & Capabilities
+    prompt_parts.append("\n## Guidelines ##")
     prompt_parts.append(build_response_guidelines(verbosity_level))
-    
     prompt_parts.append("\n## Capabilities ##")
     prompt_parts.append(build_capabilities_section())
     
@@ -197,15 +187,9 @@ def build_tars_system_prompt(
 
 
 def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> dict:
-    """Get instruction for initial introduction message.
-    
-    Automatically checks if client_id is a 'guest_' session and adds
-    instructions to ask for the name.
-    """
+    """Get instruction for initial introduction message."""
     if verbosity_level <= 20:
-        length_instruction = "Give a BRIEF introduction (1-2 sentences max)."
-    elif verbosity_level <= 50:
-        length_instruction = "Give a concise introduction (2-3 sentences)."
+        length_instruction = "Give a BRIEF introduction (1-2 sentences)."
     else:
         length_instruction = "Introduce yourself naturally (3-4 sentences)."
     
@@ -213,38 +197,27 @@ def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> d
     if client_id.startswith("guest_"):
         identity_instruction = (
             " SYSTEM STATUS: Identity unknown. "
-            "Introduce yourself and politely ASK the user for their name to register them in the system."
+            "Introduce yourself and politely ASK the user for their name to register them."
         )
     
     return {
         "role": "system",
-        "content": f"{length_instruction} Use '{client_id}' as the user ID during function calls.{identity_instruction}"
+        "content": f"{length_instruction} Use '{client_id}' as the user ID. {identity_instruction}"
     }
 
 
 def build_gating_system_prompt(is_looking: bool) -> str:
-    """Build the system prompt for the Gating Layer (Collaborative Spotter)."""
+    """Build the system prompt for the Gating Layer."""
     visual_status = "LOOKING AT YOU" if is_looking else "LOOKING AWAY"
     
     return f"""You are a 'Collaborative Spotter' for a robot named TARS.
 VISUAL CONTEXT: The user is {visual_status}.
 Analyze the conversation history.
-Return JSON {{'reply': true}} ONLY in these two cases:
+Return JSON {{'reply': true}} ONLY if:
+1. User asks a direct question.
+2. User is looking at you and speaking.
+3. User explicitly addresses 'TARS'.
+4. Users are stuck/confused (Proactive help).
 
-CASE 1: DIRECT INTERACTION (High Confidence)
-- The user asks you a question directly.
-- The user is looking at you (Visual Context) and speaking.
-- The user explicitly addresses 'TARS', 'Bot', 'Computer', or 'AI'.
-
-CASE 2: DETECTED STRUGGLE (Proactive Intervention)
-- The users are talking to each other (looking away), BUT they are stuck.
-- Keywords: 'I don't know', 'What do we do?', 'I'm confused', 'This isn't working', 'Did we miss something?'.
-- If they are just chatting or debating normally, do NOT reply.
-
-Output JSON: {{"reply": false}} if:
-- Users are talking to each other normally.
-- The user is thinking out loud, mumbling, or self-correcting.
-- The user is pausing (e.g., 'Umm...', 'Let me see...', 'Wait').
-- The conversation is clearly between humans, not directed at TARS.
-
-Be conservative. If unsure, output {{'reply': false}}."""
+Output JSON: {{"reply": false}} if users are just chatting amongst themselves.
+"""

@@ -1,7 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import styles from './page.module.css'
+import { Button } from './components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
+import { Badge } from './components/ui/badge'
+import { Alert, AlertDescription } from './components/ui/alert'
+import { Separator } from './components/ui/separator'
+import { Progress } from './components/ui/progress'
 
 interface TranscriptionEntry {
   text: string
@@ -36,12 +41,12 @@ export default function Home() {
     canSendIceCandidates: boolean
   }
 
-  const getSpeakerLabelClass = (speakerId: string | null | undefined): string => {
-    if (!speakerId) return styles.speakerLabel
+  const getSpeakerLabelVariant = (speakerId: string | null | undefined): "default" | "secondary" | "destructive" | "outline" => {
+    if (!speakerId) return "outline"
     const normalizedId = speakerId.toString().toUpperCase()
-    if (normalizedId.includes('1') || normalizedId === 'S1') return `${styles.speakerLabel} ${styles.speakerLabelS1}`
-    if (normalizedId.includes('2') || normalizedId === 'S2') return `${styles.speakerLabel} ${styles.speakerLabelS2}`
-    return `${styles.speakerLabel} ${styles.speakerLabelS1}`
+    if (normalizedId.includes('1') || normalizedId === 'S1') return "default"
+    if (normalizedId.includes('2') || normalizedId === 'S2') return "secondary"
+    return "default"
   }
 
   useEffect(() => {
@@ -187,7 +192,7 @@ export default function Home() {
         
         parameters.encodings[0].maxBitrate = 1_000_000; // 1 Mbps
         parameters.encodings[0].maxFramerate = 24;      // 24 FPS
-        parameters.encodings[0].keyFrameInterval = 2000; 
+        // Note: keyFrameInterval is not a standard WebRTC property 
         
         videoTransceiver.sender.setParameters(parameters)
             .catch(e => console.warn("setParameters failed:", e));
@@ -319,67 +324,137 @@ export default function Home() {
   }
 
   return (
-    <main className={styles.main}>
-      <div className={styles.container}>
-        <div className={styles.header}>
-          <h1 className={styles.title}>TARS Omni</h1>
-          <p className={styles.subtitle}>Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
-          <div className={styles.headerControls}>
-            <div className={styles.controls}>
+    <main className="flex flex-col items-center justify-center min-h-screen p-8 relative overflow-x-hidden">
+      <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-8 max-w-7xl w-full border border-white/50 relative z-10 flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">TARS Omni</h1>
+            <p className="text-lg text-gray-600">Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
+          </div>
+
+          <div className="flex flex-col items-center gap-4">
+            <div className="flex gap-4">
               {!isConnected ? (
-                <button onClick={startConnection} className={styles.button}><span>🎙️ Start Voice Session</span></button>
+                <Button onClick={startConnection} size="lg" className="px-6 py-3 text-lg">
+                  🎙️ Start Voice Session
+                </Button>
               ) : (
-                <button onClick={stopConnection} className={`${styles.button} ${styles.stopButton}`}><span>⏹️ Stop Session</span></button>
+                <Button onClick={stopConnection} variant="destructive" size="lg" className="px-6 py-3 text-lg">
+                  ⏹️ Stop Session
+                </Button>
               )}
             </div>
             {isListening && (
-              <div className={styles.status}><div className={styles.pulse}></div><span>✨ Listening and Processing...</span></div>
+              <div className="flex items-center gap-2 text-green-600 font-medium">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <span>✨ Listening and Processing...</span>
+              </div>
             )}
           </div>
-          {error && <div className={styles.error}>Error: {error}</div>}
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>Error: {error}</AlertDescription>
+            </Alert>
+          )}
         </div>
-        <div className={styles.contentGrid}>
-          <div className={styles.videoColumn}>
-            <div className={styles.videoWrapper}>
-              <video ref={localVideoRef} className={styles.localVideo} autoPlay playsInline muted />
-              <div className={styles.videoLabel}>Camera Feed</div>
-            </div>
-            <div className={styles.voiceIndicator}>
-              <div className={`${styles.voiceSpectrum} ${isTarsSpeaking ? styles.voiceSpectrumActive : ''}`}>
-                {spectrumBars.map((bar) => (<span key={bar} style={{ animationDelay: `${bar * 0.08}s` }}></span>))}
-              </div>
-              <span className={styles.voiceStatusText}>{isTarsSpeaking ? 'TARS is speaking...' : 'TARS is idle'}</span>
-            </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
+          <div className="space-y-6">
+            <Card>
+              <CardContent className="p-4">
+                <div className="relative">
+                  <video
+                    ref={localVideoRef}
+                    className="w-full h-64 bg-gray-100 rounded-lg object-cover"
+                    autoPlay
+                    playsInline
+                    muted
+                  />
+                  <div className="absolute bottom-2 left-2 bg-black/70 text-white px-3 py-1 rounded-md text-sm">
+                    Camera Feed
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-center">Voice Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-center gap-4 mb-4">
+                  <div className={`flex gap-1 ${isTarsSpeaking ? 'animate-pulse' : ''}`}>
+                    {spectrumBars.map((bar, idx) => (
+                      <div
+                        key={idx}
+                        className={`w-2 bg-gradient-to-t from-blue-400 to-blue-600 rounded-full transition-all duration-300 ${
+                          isTarsSpeaking ? 'h-8' : 'h-2'
+                        }`}
+                        style={{ animationDelay: `${idx * 0.1}s` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-center text-sm text-gray-600">
+                  {isTarsSpeaking ? 'TARS is speaking...' : 'TARS is idle'}
+                </p>
+              </CardContent>
+            </Card>
           </div>
-          <div className={styles.chatColumn}>
-            <div className={styles.transcription}>
-              <h2>Conversation</h2>
-              <div className={styles.chatMessages}>
-                {transcriptionHistory.length === 0 && !transcription && !partialTranscription && (
-                  <p className={styles.placeholder}>Transcription will appear here as you speak...</p>
-                )}
-                {transcriptionHistory.map((entry, idx) => (
-                  <div key={idx} className={styles.finalTranscript}>
-                    {entry.speakerId && <span className={getSpeakerLabelClass(entry.speakerId)}>Speaker {entry.speakerId}: </span>}
-                    {entry.text}
-                  </div>
-                ))}
-                {transcription && !transcriptionHistory.some(e => e.text === transcription.text && e.speakerId === transcription.speakerId) && (
-                  <div className={styles.finalTranscript}>
-                    {transcription.speakerId && <span className={getSpeakerLabelClass(transcription.speakerId)}>Speaker {transcription.speakerId}: </span>}
-                    {transcription.text}
-                  </div>
-                )}
-                {partialTranscription && (
-                  <div className={styles.partialTranscript}>
-                    {partialTranscription.speakerId && <span className={getSpeakerLabelClass(partialTranscription.speakerId)}>Speaker {partialTranscription.speakerId}: </span>}
-                    {partialTranscription.text}
-                  </div>
-                )}
-              </div>
-            </div>
-            <audio ref={audioRef} className={styles.audio} controls autoPlay />
-            <p className={styles.info}>Audio and video from your camera are sent to the server via WebRTC. TTS audio responses will play automatically.</p>
+
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Conversation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {transcriptionHistory.length === 0 && !transcription && !partialTranscription && (
+                    <p className="text-gray-500 text-center py-8">Transcription will appear here as you speak...</p>
+                  )}
+                  {transcriptionHistory.map((entry, idx) => (
+                    <div key={idx} className="flex gap-2 p-3 bg-gray-50 rounded-lg">
+                      {entry.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(entry.speakerId)}>
+                          Speaker {entry.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1">{entry.text}</span>
+                    </div>
+                  ))}
+                  {transcription && !transcriptionHistory.some(e => e.text === transcription.text && e.speakerId === transcription.speakerId) && (
+                    <div className="flex gap-2 p-3 bg-gray-50 rounded-lg">
+                      {transcription.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(transcription.speakerId)}>
+                          Speaker {transcription.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1">{transcription.text}</span>
+                    </div>
+                  )}
+                  {partialTranscription && (
+                    <div className="flex gap-2 p-3 bg-gray-100 rounded-lg opacity-70">
+                      {partialTranscription.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(partialTranscription.speakerId)}>
+                          Speaker {partialTranscription.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1 italic">{partialTranscription.text}</span>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <audio ref={audioRef} controls className="w-full" autoPlay />
+                <Separator className="my-4" />
+                <p className="text-sm text-gray-600 text-center">
+                  Audio and video from your camera are sent to the server via WebRTC. TTS audio responses will play automatically.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
