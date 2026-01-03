@@ -7,14 +7,16 @@ import logging
 import uuid
 
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame, Frame
+from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame, Frame, StartFrame, EndFrame, TextFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams
+)
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -66,37 +68,40 @@ from modules.module_tools import (
 
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
+# --- DEBUG LOGGER ---
+class DebugLogger(FrameProcessor):
+    def __init__(self, label="Debug"):
+        super().__init__()
+        self.label = label 
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        frame_type = type(frame).__name__
+        if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
+            # Log the User ID so we can verify they match
+            uid = getattr(frame, 'user_id', 'None')
+            logger.info(f"🔍 [{self.label}] {frame_type} | User: '{uid}' | Content: {str(frame)[:100]}")
+        await super().process_frame(frame, direction)
+# --------------------
 
 async def _cleanup_services(service_refs: dict):
     if service_refs.get("stt"):
         try:
-            stt_service = service_refs["stt"]
-            if hasattr(stt_service, 'cleanup'):
-                await stt_service.cleanup()
-            elif hasattr(stt_service, 'close'):
-                await stt_service.close()
+            await service_refs["stt"].close()
             logger.info("✓ STT service cleaned up")
-        except Exception as e:
-            logger.debug(f"Error cleaning up STT service: {e}")
-    
+        except Exception:
+            pass
     if service_refs.get("tts"):
         try:
-            tts_service = service_refs["tts"]
-            if hasattr(tts_service, 'cleanup'):
-                await tts_service.cleanup()
-            elif hasattr(tts_service, 'close'):
-                await tts_service.close()
+            await service_refs["tts"].close()
             logger.info("✓ TTS service cleaned up")
-        except Exception as e:
-            logger.debug(f"Error cleaning up TTS service: {e}")
-
+        except Exception:
+            pass
 
 async def run_bot(webrtc_connection):
     logger.info("Starting bot pipeline for WebRTC connection...")
-    
     session_id = str(uuid.uuid4())[:8]
     client_state = {"client_id": f"guest_{session_id}"}
-    logger.info(f"Starting session as: {client_state['client_id']}")
+    logger.info(f"Session started: {client_state['client_id']}")
 
     service_refs = {"stt": None, "tts": None}
 
@@ -118,7 +123,7 @@ async def run_bot(webrtc_connection):
         transport_params = TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            video_in_enabled=True,
+            video_in_enabled=False,
             video_out_enabled=False,
             video_out_is_live=False,
         )
@@ -136,7 +141,7 @@ async def run_bot(webrtc_connection):
         try:
             stt_params = SpeechmaticsSTTService.InputParams(
                 language=Language.EN,
-                enable_diarization=True,
+                enable_diarization=False,
                 max_speakers=2,
             )
             if turn_analyzer: stt_params.enable_vad = False
@@ -179,7 +184,7 @@ async def run_bot(webrtc_connection):
             llm = OpenAILLMService(
                 api_key=DEEPINFRA_API_KEY,
                 base_url=DEEPINFRA_BASE_URL,
-                model=DEEPINFRA_MODEL
+                model=DEEPINFRA_MODEL 
             )
             
             character_dir = os.path.join(os.path.dirname(__file__), "character")
@@ -211,18 +216,23 @@ async def run_bot(webrtc_connection):
                     client_state["client_id"] = new_id
 
                     try:
-                        recalled = await asyncio.to_thread(_mem0.recall, user_id=new_id, limit=5)
-                        if recalled:
-                            memory_block = "\n".join(f"- {m}" for m in recalled)
-                            context.messages.append({
-                                "role": "system",
-                                "content": f"IDENTITY CONFIRMED: {name}. I have accessed your long-term files:\n{memory_block}"
-                            })
-                            logger.info(f"✓ Injected {len(recalled)} long-term memories for {name}")
+                        if _mem0 and _mem0.enabled:
+                            recalled = await asyncio.to_thread(
+                                _mem0.recall, 
+                                user_id=client_state["client_id"], 
+                                limit=8
+                            )
+                            if recalled:
+                                memory_text = "\n".join(f"- {m}" for m in recalled)
+                                context.messages.append({
+                                    "role": "system",
+                                    "content": (f"Facts: {memory_text}")
+                                })
+                                logger.info(f"✓ Injected {len(recalled)} long-term memories")
                     except Exception as e:
                         logger.warning(f"Failed to load long-term memories: {e}")
                     
-                await params.result_callback(f"Identity updated to {name}. I have accessed your personnel file.")
+                await params.result_callback(f"Identity updated to {name}.")
 
             llm.register_function("set_user_identity", wrapped_set_identity)
             logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
@@ -253,7 +263,11 @@ async def run_bot(webrtc_connection):
         )
         logger.info(f"✓ Gating Layer initialized")
 
-        context_aggregator = LLMContextAggregatorPair(context)
+        user_params = LLMUserAggregatorParams(aggregation_timeout=1.5)
+        context_aggregator = LLMContextAggregatorPair(
+            context,
+            user_params=user_params
+        )
         
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params
@@ -268,32 +282,25 @@ async def run_bot(webrtc_connection):
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
-        latency_logger_upstream = LatencyLogger()
-        latency_logger_llm = LatencyLogger()
-        latency_logger_tts = LatencyLogger()
 
         logger.info("Creating audio/video pipeline...")
 
-        parallel_branches = [llm]
-        if moondream: parallel_branches.append(moondream)
-
         pipeline = Pipeline([
             pipecat_transport.input(),
-            visual_observer,
             stt,
-            transcription_logger, # Handles "S1" -> "guest" rename, logging, and Mem0
-            latency_logger_upstream,
-            vision_logger,
+            transcription_logger, 
+            DebugLogger("BeforeAggregator"),
+            
             context_aggregator.user(),
-            # gating_layer, 
-            ParallelPipeline(parallel_branches),
+            
+            DebugLogger("BeforeLLM"),
+            llm,
+            DebugLogger("AfterLLM"),
+            
             assistant_logger,
-            latency_logger_llm,
             SilenceFilter(),
-            InputAudioFilter(),
             tts,
             tts_state_broadcaster,
-            latency_logger_tts,
             pipecat_transport.output(),
             context_aggregator.assistant(),
         ])
@@ -316,7 +323,10 @@ async def run_bot(webrtc_connection):
                 if context and hasattr(context, "messages"):
                      context.messages.append(intro_instruction)
 
-                await asyncio.sleep(0.5)
+                logger.info("Waiting for pipeline to warm up...")
+                await asyncio.sleep(2.0)
+                
+                logger.info("Queueing initial LLM greeting...")
                 await task_ref["task"].queue_frames([LLMRunFrame()])
 
         @pipecat_transport.event_handler("on_client_disconnected")
