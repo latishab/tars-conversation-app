@@ -5,6 +5,7 @@ import json
 import os
 import logging
 import uuid
+import httpx
 
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import (
@@ -287,10 +288,12 @@ async def run_bot(webrtc_connection):
                     pipeline_unifier.target_user_id = new_id
                     logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
 
-                    # Update Mem0 service with new user_id
+                    # Update Mem0 service with new user_id and run_id
                     if memory_service:
-                        memory_service._user_id = new_id
-                        logger.info(f"✓ Updated Mem0 service user_id to: {new_id}")
+                        new_run_id = new_id.split('_')[-1]  # Extract the identifier part
+                        memory_service.user_id = new_id
+                        memory_service.run_id = new_run_id
+                        logger.info(f"✓ Updated Mem0 service user_id to: {new_id}, run_id to: {new_run_id}")
 
                     # Notify frontend of identity change
                     try:
