@@ -263,20 +263,37 @@ async def run_bot(webrtc_connection):
             async def wrapped_set_identity(params: FunctionCallParams):
                 name = params.arguments["name"]
                 logger.info(f"👤 Identity discovered: {name}")
-                
+
                 old_id = client_state["client_id"]
                 new_id = f"user_{name.lower().replace(' ', '_')}"
-                
+
                 if old_id != new_id:
                     logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
                     await asyncio.to_thread(_mem0.transfer_memories, old_id, new_id)
                     client_state["client_id"] = new_id
 
+                    # Update the pipeline unifier to use new identity
+                    pipeline_unifier.target_user_id = new_id
+                    logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
+
+                    # Notify frontend of identity change
+                    try:
+                        if webrtc_connection and webrtc_connection.is_connected():
+                            webrtc_connection.send_app_message({
+                                "type": "identity_update",
+                                "old_id": old_id,
+                                "new_id": new_id,
+                                "name": name
+                            })
+                            logger.info(f"📤 Sent identity update to frontend: {new_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to send identity update to frontend: {e}")
+
                     try:
                         if _mem0 and _mem0.enabled:
                             recalled = await asyncio.to_thread(
-                                _mem0.recall, 
-                                user_id=client_state["client_id"], 
+                                _mem0.recall,
+                                user_id=client_state["client_id"],
                                 limit=8
                             )
                             if recalled:
@@ -288,7 +305,7 @@ async def run_bot(webrtc_connection):
                                 logger.info(f"✓ Injected {len(recalled)} long-term memories")
                     except Exception as e:
                         logger.warning(f"Failed to load long-term memories: {e}")
-                    
+
                 await params.result_callback(f"Identity updated to {name}.")
 
             llm.register_function("set_user_identity", wrapped_set_identity)

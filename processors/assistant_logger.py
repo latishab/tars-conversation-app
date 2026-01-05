@@ -23,8 +23,14 @@ class AssistantResponseLogger(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        # Debug: Log all frame types to see what's coming through
+        frame_type = type(frame).__name__
+        if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
+            logger.debug(f"🔍 [AssistantLogger] Received {frame_type}")
+
         if isinstance(frame, (LLMTextFrame, TTSTextFrame)):
             text = getattr(frame, "text", "") or ""
+            logger.debug(f"📝 [AssistantLogger] Text frame detected: '{text[:50]}'")
             self._ingest_text(text)
 
         await self.push_frame(frame, direction)
@@ -60,16 +66,20 @@ class AssistantResponseLogger(FrameProcessor):
 
     def _send_to_frontend(self, text: str):
         if not self.webrtc_connection:
+            logger.warning("⚠️ [AssistantLogger] No WebRTC connection available")
             return
 
         try:
             if self.webrtc_connection.is_connected():
+                logger.info(f"📤 [AssistantLogger] Sending to frontend: type=assistant, text='{text[:50]}'")
                 self.webrtc_connection.send_app_message(
                     {
                         "type": "assistant",
                         "text": text,
                     }
                 )
+            else:
+                logger.warning("⚠️ [AssistantLogger] WebRTC connection not connected")
         except Exception as exc:  # pragma: no cover
-            logger.error(f"Failed to send assistant text to frontend: {exc}")
+            logger.error(f"❌ [AssistantLogger] Failed to send assistant text to frontend: {exc}")
 
