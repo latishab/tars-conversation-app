@@ -12,14 +12,6 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     InterimTranscriptionFrame,
     Frame,
-    StartFrame,
-    EndFrame,
-    UserSpeakingFrame,
-    VADUserStartedSpeakingFrame,
-    VADUserStoppedSpeakingFrame,
-    UserStartedSpeakingFrame,
-    UserStoppedSpeakingFrame,
-    MetricsFrame,
     TranscriptionMessage,
     TranslationFrame,
     UserImageRawFrame,
@@ -86,6 +78,11 @@ from modules.module_tools import (
 
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
+
+# ============================================================================
+# CUSTOM FRAME PROCESSORS
+# ============================================================================
+
 class IdentityUnifier(FrameProcessor):
     """
     Applies 'guest_ID' ONLY to specific user input frames.
@@ -120,7 +117,7 @@ class IdentityUnifier(FrameProcessor):
         # 3. Push downstream
         await self.push_frame(frame, direction)
 
-# --- DEBUG LOGGER ---
+
 class DebugLogger(FrameProcessor):
     def __init__(self, label="Debug"):
         super().__init__()
@@ -136,7 +133,11 @@ class DebugLogger(FrameProcessor):
             logger.info(f"🔍 [{self.label}] {frame_type} | User: '{uid}' | Content: {str(frame)[:100]}")
 
         await self.push_frame(frame, direction)
-# --------------------
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
 async def _cleanup_services(service_refs: dict):
     if service_refs.get("stt"):
@@ -152,8 +153,16 @@ async def _cleanup_services(service_refs: dict):
         except Exception:
             pass
 
+
+# ============================================================================
+# MAIN BOT PIPELINE
+# ============================================================================
+
 async def run_bot(webrtc_connection):
+    """Initialize and run the TARS bot pipeline."""
     logger.info("Starting bot pipeline for WebRTC connection...")
+
+    # Session initialization
     session_id = str(uuid.uuid4())[:8]
     client_id = f"guest_{session_id}"
     client_state = {"client_id": client_id}
@@ -162,6 +171,9 @@ async def run_bot(webrtc_connection):
     service_refs = {"stt": None, "tts": None}
 
     try:
+        # ====================================================================
+        # VAD & SMART TURN DETECTION
+        # ====================================================================
         logger.info("Initializing VAD and Smart Turn Detection...")
         vad_analyzer = None
         turn_analyzer = None
@@ -175,6 +187,10 @@ async def run_bot(webrtc_connection):
             logger.info("✓ VAD and Smart Turn Detection initialized")
         except ImportError:
             logger.warning("Smart Turn dependencies not installed.")
+
+        # ====================================================================
+        # TRANSPORT INITIALIZATION
+        # ====================================================================
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -191,6 +207,10 @@ async def run_bot(webrtc_connection):
             webrtc_connection=webrtc_connection,
             params=transport_params,
         )
+
+        # ====================================================================
+        # SPEECH-TO-TEXT SERVICE
+        # ====================================================================
 
         logger.info("Initializing Speechmatics STT...")
         stt = None
@@ -211,6 +231,10 @@ async def run_bot(webrtc_connection):
         except Exception as e:
             logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
+
+        # ====================================================================
+        # TEXT-TO-SPEECH SERVICE
+        # ====================================================================
 
         logger.info("Initializing ElevenLabs TTS...")
         tts = None
@@ -233,6 +257,10 @@ async def run_bot(webrtc_connection):
         except Exception as e:
             logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
             return
+
+        # ====================================================================
+        # LLM SERVICE & TOOLS
+        # ====================================================================
 
         logger.info("Initializing LLM via DeepInfra...")
         llm = None
@@ -315,6 +343,10 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize LLM: {e}")
             return
 
+        # ====================================================================
+        # VISION & GATING SERVICES
+        # ====================================================================
+
         logger.info("Initializing Moondream vision service...")
         moondream = None
         try:
@@ -337,6 +369,10 @@ async def run_bot(webrtc_connection):
         )
         logger.info(f"✓ Gating Layer initialized")
 
+        # ====================================================================
+        # CONTEXT AGGREGATOR & PERSONA STORAGE
+        # ====================================================================
+
         user_params = LLMUserAggregatorParams(
             aggregation_timeout=1.5
         )
@@ -350,6 +386,10 @@ async def run_bot(webrtc_connection):
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
 
+        # ====================================================================
+        # LOGGING PROCESSORS
+        # ====================================================================
+
         transcription_logger = TranscriptionLogger(
             webrtc_connection=webrtc_connection,
             client_state=client_state
@@ -358,6 +398,11 @@ async def run_bot(webrtc_connection):
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
+        latency_logger = LatencyLogger()
+
+        # ====================================================================
+        # PIPELINE ASSEMBLY
+        # ====================================================================
 
         logger.info("Creating audio/video pipeline...")
 
@@ -365,16 +410,21 @@ async def run_bot(webrtc_connection):
             pipecat_transport.input(),
             stt,
             pipeline_unifier,
-            transcription_logger, 
+            transcription_logger,
             context_aggregator.user(),
             llm,
             assistant_logger,
+            latency_logger,
             SilenceFilter(),
             tts,
             tts_state_broadcaster,
             pipecat_transport.output(),
             context_aggregator.assistant(),
         ])
+
+        # ====================================================================
+        # EVENT HANDLERS
+        # ====================================================================
 
         task_ref = {"task": None}
 
@@ -406,6 +456,10 @@ async def run_bot(webrtc_connection):
             if task_ref["task"]:
                 await task_ref["task"].cancel()
             await _cleanup_services(service_refs)
+
+        # ====================================================================
+        # PIPELINE EXECUTION
+        # ====================================================================
 
         task = PipelineTask(pipeline)
         task_ref["task"] = task
