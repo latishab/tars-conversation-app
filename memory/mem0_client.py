@@ -45,7 +45,7 @@ class Mem0Wrapper:
             logger.debug("Mem0 client not available, skipping save")
             return None
         try:
-            logger.debug(f"💾 Saving message to Mem0 for user '{user_id}': {text[:50]}...")
+            logger.debug(f"Saving message to Mem0 for user '{user_id}': {text[:50]}...")
             messages = [{"role": "user", "content": text}]
             result = None
 
@@ -85,7 +85,7 @@ class Mem0Wrapper:
 
             # Handle dict response
             if isinstance(result, dict):
-                # Check for 'results' array (v2 API format)
+                # Check for 'results' array 
                 if 'results' in result and isinstance(result['results'], list):
                     for item in result['results']:
                         if isinstance(item, dict) and 'memory' in item:
