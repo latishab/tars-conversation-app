@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'TARS Omni - Real-time Voice AI',
-  description: 'Real-time transcription and text-to-speech using Speechmatics and ElevenLabs',
+  title: 'TARS Omni',
+  description: 'Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs',
 }
 
 export default function RootLayout({
@@ -17,4 +17,3 @@ export default function RootLayout({
     </html>
   )
 }
-

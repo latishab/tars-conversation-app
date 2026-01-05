@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 
 export async function GET() {
   try {
-    // Check if Pipecat service is running
     const pipecatRunning = await fetch('http://localhost:8765', {
       method: 'GET',
       signal: AbortSignal.timeout(1000),
@@ -23,4 +22,3 @@ export async function GET() {
     }, { status: 500 })
   }
 }
-

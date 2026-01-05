@@ -21,11 +21,9 @@ class InputAudioFilter(FrameProcessor):
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
         
-        # 1. The Logic: Block Audio going Downstream
+        # block Audio going Downstream
         if isinstance(frame, InputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
             return
-        
-        # 2. THE FIX: We MUST push every other frame (StartFrame, Text, etc.)
         await self.push_frame(frame, direction)
 
 class SilenceFilter(FrameProcessor):
@@ -40,15 +38,11 @@ class SilenceFilter(FrameProcessor):
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
         
-        # THE FIX: Explicitly handle StartFrame/EndFrame/CancelFrame 
-        # so they don't get trapped here.
         if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
             self.current_response_text = ""
             self.is_collecting = False
             await self.push_frame(frame, direction)
             return
-        
-        # --- Normal Logic Below ---
         
         # Start collecting text
         if isinstance(frame, LLMFullResponseStartFrame):
