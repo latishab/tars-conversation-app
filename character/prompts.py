@@ -133,7 +133,12 @@ def build_capabilities_section() -> str:
     """Build capabilities section."""
     return (
         "Vision enabled. Use 'fetch_user_image' ONLY when asked what you see. "
-        "Memory enabled. If you do not know the user's name, ask for it."
+        "Memory enabled. If you do not know the user's name, ask for it. "
+        "\n\n**Name Precision Protocol:**\n"
+        "- When user spells their name letter-by-letter, they are CORRECTING you\n"
+        "- Use the spelled-out version exactly, not your previous assumption\n"
+        "- Call set_user_identity again with the correct spelling\n"
+        "- Example: If user says 'L-A-T-I-S-H-A', it's 'Latisha' not 'Leticia'"
     )
 
 

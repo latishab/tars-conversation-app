@@ -52,12 +52,18 @@ class Mem0Wrapper:
             if hasattr(self._client, "add_memory"):
                 result = self._client.add_memory(user_id=user_id, text=text)
                 logger.info(f"✓ Saved to Mem0 (add_memory) for '{user_id}'")
+                logger.debug(f"Mem0 response type: {type(result)}")
+                logger.debug(f"Mem0 response: {result}")
             elif hasattr(self._client, "add"):
                 result = self._client.add(messages, user_id=user_id)
                 logger.info(f"✓ Saved to Mem0 (add) for '{user_id}'")
+                logger.debug(f"Mem0 response type: {type(result)}")
+                logger.debug(f"Mem0 response: {result}")
             elif hasattr(self._client, "create"):
                 result = self._client.create(user_id=user_id, text=text)
                 logger.info(f"✓ Saved to Mem0 (create) for '{user_id}'")
+                logger.debug(f"Mem0 response type: {type(result)}")
+                logger.debug(f"Mem0 response: {result}")
             else:
                 logger.warning(f"⚠️  Mem0 client has no save method available")
                 return None

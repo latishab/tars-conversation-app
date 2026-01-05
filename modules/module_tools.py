@@ -175,11 +175,20 @@ def set_user_identity(name: str):
 def create_identity_schema():
     return FunctionSchema(
         name="set_user_identity",
-        description="Call this function IMMEDIATELY when the user tells you their name.",
+        description=(
+            "Call this function IMMEDIATELY when the user tells you their name, "
+            "OR when they correct/clarify the spelling. "
+            "CRITICAL: When user spells out their name (e.g. 'L-A-T-I-S-H-A'), "
+            "that is the CORRECT spelling - use it exactly as spelled, not your assumption."
+        ),
         properties={
             "name": {
                 "type": "string",
-                "description": "The name the user provided."
+                "description": (
+                    "The user's name EXACTLY as they spelled it or said it. "
+                    "If they spell it out letter-by-letter, reconstruct it carefully. "
+                    "Examples: 'L-A-T-I-S-H-A' becomes 'Latisha', not 'Leticia'."
+                )
             }
         },
         required=["name"],
