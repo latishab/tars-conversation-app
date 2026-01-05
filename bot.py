@@ -7,7 +7,25 @@ import logging
 import uuid
 
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import LLMRunFrame, TranscriptionFrame, Frame, StartFrame, EndFrame, TextFrame
+from pipecat.frames.frames import (
+    LLMRunFrame,
+    TranscriptionFrame,
+    InterimTranscriptionFrame,
+    Frame,
+    StartFrame,
+    EndFrame,
+    UserSpeakingFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+    MetricsFrame,
+    TranscriptionMessage,
+    TranslationFrame,
+    UserImageRawFrame,
+    UserAudioRawFrame,
+    UserImageRequestFrame,
+)
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -39,7 +57,7 @@ from config import (
     MEM0_API_KEY,
 )
 from processors import (
-    SimpleTranscriptionLogger,
+    TranscriptionLogger,
     AssistantResponseLogger,
     TTSSpeechStateBroadcaster,
     VisionLogger,
@@ -68,19 +86,56 @@ from modules.module_tools import (
 
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
+class IdentityUnifier(FrameProcessor):
+    """
+    Applies 'guest_ID' ONLY to specific user input frames.
+    Leaves other frames untouched.
+    """
+    # Define the frame types that should have user_id set
+    TARGET_FRAME_TYPES = (
+        TranscriptionFrame,
+        TranscriptionMessage,
+        TranslationFrame,
+        InterimTranscriptionFrame,
+        UserImageRawFrame,
+        UserAudioRawFrame,
+        UserImageRequestFrame,
+    )
+
+    def __init__(self, target_user_id):
+        super().__init__()
+        self.target_user_id = target_user_id
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        # 1. Handle internal state
+        await super().process_frame(frame, direction)
+
+        # 2. Only modify specific frame types
+        if isinstance(frame, self.TARGET_FRAME_TYPES):
+            try:
+                frame.user_id = self.target_user_id
+            except Exception:
+                pass
+
+        # 3. Push downstream
+        await self.push_frame(frame, direction)
+
 # --- DEBUG LOGGER ---
 class DebugLogger(FrameProcessor):
     def __init__(self, label="Debug"):
         super().__init__()
-        self.label = label 
+        self.label = label
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
         frame_type = type(frame).__name__
         if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
             # Log the User ID so we can verify they match
             uid = getattr(frame, 'user_id', 'None')
             logger.info(f"🔍 [{self.label}] {frame_type} | User: '{uid}' | Content: {str(frame)[:100]}")
-        await super().process_frame(frame, direction)
+
+        await self.push_frame(frame, direction)
 # --------------------
 
 async def _cleanup_services(service_refs: dict):
@@ -100,8 +155,9 @@ async def _cleanup_services(service_refs: dict):
 async def run_bot(webrtc_connection):
     logger.info("Starting bot pipeline for WebRTC connection...")
     session_id = str(uuid.uuid4())[:8]
-    client_state = {"client_id": f"guest_{session_id}"}
-    logger.info(f"Session started: {client_state['client_id']}")
+    client_id = f"guest_{session_id}"
+    client_state = {"client_id": client_id}
+    logger.info(f"Session started: {client_id}")
 
     service_refs = {"stt": None, "tts": None}
 
@@ -203,6 +259,7 @@ async def run_bot(webrtc_connection):
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
+            pipeline_unifier = IdentityUnifier(client_id)
             async def wrapped_set_identity(params: FunctionCallParams):
                 name = params.arguments["name"]
                 logger.info(f"👤 Identity discovered: {name}")
@@ -263,7 +320,9 @@ async def run_bot(webrtc_connection):
         )
         logger.info(f"✓ Gating Layer initialized")
 
-        user_params = LLMUserAggregatorParams(aggregation_timeout=1.5)
+        user_params = LLMUserAggregatorParams(
+            aggregation_timeout=1.5
+        )
         context_aggregator = LLMContextAggregatorPair(
             context,
             user_params=user_params
@@ -274,7 +333,7 @@ async def run_bot(webrtc_connection):
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
 
-        transcription_logger = SimpleTranscriptionLogger(
+        transcription_logger = TranscriptionLogger(
             webrtc_connection=webrtc_connection,
             client_state=client_state
         )
@@ -288,15 +347,10 @@ async def run_bot(webrtc_connection):
         pipeline = Pipeline([
             pipecat_transport.input(),
             stt,
+            pipeline_unifier,
             transcription_logger, 
-            DebugLogger("BeforeAggregator"),
-            
             context_aggregator.user(),
-            
-            DebugLogger("BeforeLLM"),
             llm,
-            DebugLogger("AfterLLM"),
-            
             assistant_logger,
             SilenceFilter(),
             tts,

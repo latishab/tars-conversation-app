@@ -14,8 +14,8 @@ if not MEM0_API_KEY:
 _mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
-class SimpleTranscriptionLogger(FrameProcessor):
-    """Simple processor to log transcriptions, save to Mem0, and send to frontend."""
+class TranscriptionLogger(FrameProcessor):
+    """Pprocessor to log transcriptions, save to Mem0, and send to frontend."""
 
     def __init__(self, webrtc_connection=None, client_state=None):
         super().__init__()
