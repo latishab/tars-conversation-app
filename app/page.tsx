@@ -1,7 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import styles from './page.module.css'
+import { Button } from './components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
+import { Badge } from './components/ui/badge'
+import { Alert, AlertDescription } from './components/ui/alert'
+import { Separator } from './components/ui/separator'
+import { Progress } from './components/ui/progress'
 
 interface TranscriptionEntry {
   text: string
@@ -15,13 +20,20 @@ export default function Home() {
   const [transcriptionHistory, setTranscriptionHistory] = useState<TranscriptionEntry[]>([])
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isTarsSpeaking, setIsTarsSpeaking] = useState(false)
+  
   const audioRef = useRef<HTMLAudioElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const lastSpeakingTimeRef = useRef<number>(0)
 
   const PIPECAT_URL = process.env.NEXT_PUBLIC_PIPECAT_URL || 'http://localhost:7860'
+  const spectrumBars = Array.from({ length: 8 }, (_, idx) => idx)
 
   interface ExtendedRTCPeerConnection extends RTCPeerConnection {
     pc_id?: string
@@ -29,32 +41,109 @@ export default function Home() {
     canSendIceCandidates: boolean
   }
 
-  // Helper function to get speaker label class based on speaker ID
-  const getSpeakerLabelClass = (speakerId: string | null | undefined): string => {
-    if (!speakerId) return styles.speakerLabel
+  const getSpeakerLabelVariant = (speakerId: string | null | undefined): "default" | "secondary" | "destructive" | "outline" => {
+    if (!speakerId) return "outline"
     const normalizedId = speakerId.toString().toUpperCase()
-    // Check if speaker ID contains '1' (for S1) or '2' (for S2)
-    if (normalizedId.includes('1') || normalizedId === 'S1') {
-      return `${styles.speakerLabel} ${styles.speakerLabelS1}`
-    } else if (normalizedId.includes('2') || normalizedId === 'S2') {
-      return `${styles.speakerLabel} ${styles.speakerLabelS2}`
-    }
-    // Default to S1 style if unknown
-    return `${styles.speakerLabel} ${styles.speakerLabelS1}`
+    if (normalizedId.includes('1') || normalizedId === 'S1') return "default"
+    if (normalizedId.includes('2') || normalizedId === 'S2') return "secondary"
+    return "default"
   }
 
   useEffect(() => {
-    return () => {
-      stopConnection()
-    }
+    return () => { stopConnection() }
   }, [])
 
-  const sendIceCandidate = async (pc: ExtendedRTCPeerConnection, candidate: RTCIceCandidate) => {
-    if (!pc.pc_id) {
-      console.error('Cannot send ICE candidate: pc_id not set')
-      return
+  // --- AUDIO ANALYSIS ---
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
     }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(console.error)
+    }
+  }
 
+  const startAudioAnalysis = (stream: MediaStream) => {
+    try {
+      if (!audioContextRef.current) initAudioContext();
+      const ctx = audioContextRef.current!
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.5
+      source.connect(analyser)
+      analyserRef.current = analyser
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      
+      const checkAudioLevel = () => {
+        if (!analyserRef.current) return
+        analyserRef.current.getByteFrequencyData(dataArray)
+        let sum = 0
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
+        const average = sum / dataArray.length
+        
+        if (average > 20) { 
+          setIsTarsSpeaking(true)
+          lastSpeakingTimeRef.current = Date.now()
+        } else if (Date.now() - lastSpeakingTimeRef.current > 400) {
+          setIsTarsSpeaking(false)
+        }
+        rafRef.current = requestAnimationFrame(checkAudioLevel)
+      }
+      checkAudioLevel()
+    } catch (err) { console.warn(err) }
+  }
+
+  const stopAudioAnalysis = () => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    analyserRef.current = null; setIsTarsSpeaking(false);
+  }
+
+  const stripCodecs = (sdp: string, codecsToRemove: string[]) => {
+    const lines = sdp.split('\r\n');
+    const mLineIndex = lines.findIndex(l => l.startsWith('m=video'));
+    if (mLineIndex === -1) return sdp;
+
+    const badPts = new Set<string>();
+    lines.forEach(l => {
+      const match = l.match(/^a=rtpmap:(\d+) ([a-zA-Z0-9-]+)\/\d+/);
+      if (match) {
+        const pt = match[1];
+        const codec = match[2].toUpperCase();
+        if (codecsToRemove.includes(codec)) badPts.add(pt);
+      }
+    });
+
+    lines.forEach(l => {
+      const match = l.match(/^a=fmtp:(\d+) apt=(\d+)/);
+      if (match && badPts.has(match[2])) badPts.add(match[1]);
+    });
+
+    if (badPts.size === 0) return sdp;
+
+    const mLineParts = lines[mLineIndex].split(' ');
+    const newMLine = [
+      ...mLineParts.slice(0, 3), 
+      ...mLineParts.slice(3).filter(pt => !badPts.has(pt))
+    ].join(' ');
+    lines[mLineIndex] = newMLine;
+
+    const newLines = lines.filter(l => {
+      const rtpmapMatch = l.match(/^a=rtpmap:(\d+)/);
+      if (rtpmapMatch && badPts.has(rtpmapMatch[1])) return false;
+      const fmtpMatch = l.match(/^a=fmtp:(\d+)/);
+      if (fmtpMatch && badPts.has(fmtpMatch[1])) return false;
+      const rtcpMatch = l.match(/^a=rtcp-fb:(\d+)/);
+      if (rtcpMatch && badPts.has(rtcpMatch[1])) return false;
+      return true;
+    });
+
+    console.log(`Removed codecs: ${codecsToRemove.join(', ')}. Remaining SDP lines: ${newLines.length}`);
+    return newLines.join('\r\n');
+  }
+
+  const sendIceCandidate = async (pc: ExtendedRTCPeerConnection, candidate: RTCIceCandidate) => {
+    if (!pc.pc_id) return
     await fetch(`${PIPECAT_URL}/api/offer`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -70,218 +159,126 @@ export default function Home() {
   }
 
   const createSmallWebRTCConnection = async (audioTrack: MediaStreamTrack, videoTrack: MediaStreamTrack | null) => {
-    const config = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-      ],
-    }
-
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
     const pc = new RTCPeerConnection(config) as ExtendedRTCPeerConnection
-
-    // Queue to store ICE candidates until we have received the answer and have a session in progress
     pc.pendingIceCandidates = []
     pc.canSendIceCandidates = false
 
-    // Handle incoming audio and video tracks from server
     pc.ontrack = (event) => {
-      console.log('Received remote track:', event.track.kind)
       if (event.track.kind === 'audio') {
-        const audioElement = audioRef.current
-        if (audioElement) {
-          audioElement.srcObject = event.streams[0]
-          audioElement.play().catch(console.error)
+        if (audioRef.current) {
+          audioRef.current.srcObject = event.streams[0]
+          audioRef.current.play().catch(console.error)
+          startAudioAnalysis(event.streams[0])
         }
       } else if (event.track.kind === 'video') {
-        const videoElement = remoteVideoRef.current
-        if (videoElement) {
-          videoElement.srcObject = event.streams[0]
-          videoElement.play().catch(console.error)
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0]
+          remoteVideoRef.current.play().catch(console.error)
         }
       }
     }
 
-    // SmallWebRTCTransport expects to receive both transceivers
     pc.addTransceiver(audioTrack, { direction: 'sendrecv' })
     if (videoTrack) {
-      const videoTransceiver = pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
-      
-      // Configure codec preferences to prefer VP9 or H.264 over VP8 for better decoder support
-      // This helps avoid VP8 decoder errors on macOS
-      if ('setCodecPreferences' in videoTransceiver.sender) {
-        try {
-          const codecs = RTCRtpSender.getCapabilities('video')?.codecs || []
-          // Prefer VP9, then H.264, then VP8
-          const preferredCodecs = [
-            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp9')),
-            ...codecs.filter(c => c.mimeType.toLowerCase().includes('h264')),
-            ...codecs.filter(c => c.mimeType.toLowerCase().includes('vp8')),
-          ]
-          if (preferredCodecs.length > 0) {
-            const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void }
-            if (sender.setCodecPreferences) {
-              sender.setCodecPreferences(preferredCodecs)
-              console.log('Video codec preferences set:', preferredCodecs.map(c => c.mimeType))
-            }
-          }
-        } catch (err) {
-          console.warn('Could not set codec preferences:', err)
+        const videoTransceiver = pc.addTransceiver(videoTrack, { 
+            direction: 'sendrecv',
+            streams: [streamRef.current!] 
+        });
+
+        // 1. Set Parameters: Lower bitrate and framerate for stability
+        const parameters = videoTransceiver.sender.getParameters();
+        if (!parameters.encodings) parameters.encodings = [{}];
+        
+        parameters.encodings[0].maxBitrate = 1_000_000; // 1 Mbps
+        parameters.encodings[0].maxFramerate = 24;      // 24 FPS
+        // Note: keyFrameInterval is not a standard WebRTC property 
+        
+        videoTransceiver.sender.setParameters(parameters)
+            .catch(e => console.warn("setParameters failed:", e));
+
+        // 2. Set Codec Preferences
+        if ('setCodecPreferences' in videoTransceiver.sender) {
+            try {
+                const codecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
+                const h264Codecs = codecs.filter(c => c.mimeType.toLowerCase().includes('h264'));
+                
+                // Sort to put 42e01f (Constrained Baseline) first
+                h264Codecs.sort((a, b) => {
+                    const aIsSafe = (a.sdpFmtpLine || "").includes("42e01f") ? 2 : 0;
+                    const bIsSafe = (b.sdpFmtpLine || "").includes("42e01f") ? 2 : 0;
+                    // Secondary sort: standard baseline (42001f)
+                    const aIsBase = (a.sdpFmtpLine || "").includes("42001f") ? 1 : 0;
+                    const bIsBase = (b.sdpFmtpLine || "").includes("42001f") ? 1 : 0;
+                    return (bIsSafe + bIsBase) - (aIsSafe + aIsBase);
+                });
+
+                const sender = videoTransceiver.sender as RTCRtpSender & { setCodecPreferences?: (codecs: any[]) => void };
+                if (sender.setCodecPreferences && h264Codecs.length > 0) {
+                    console.log("Setting H.264 preferences:", h264Codecs[0].sdpFmtpLine);
+                    sender.setCodecPreferences(h264Codecs);
+                }
+            } catch (e) { console.warn("setCodecPreferences failed:", e); }
         }
-      }
     } else {
-      // Add video transceiver even if no video track yet (server expects it)
-      pc.addTransceiver('video', { direction: 'sendrecv' })
+        pc.addTransceiver('video', { direction: 'sendrecv' });
     }
 
-    // Create data channel for receiving transcription messages from server
-    // This must be created BEFORE creating the offer
     const dataChannel = pc.createDataChannel('messages', { ordered: true })
-    
-    dataChannel.onopen = () => {
-      console.log('Data channel opened')
-    }
-    
-    dataChannel.onmessage = (event) => {
+    const handleMessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data)
-        console.log('Received data channel message:', data)
         if (data.type === 'transcription') {
-          const entry: TranscriptionEntry = {
-            text: data.text,
-            speakerId: data.speaker_id || null
-          }
-          setTranscription(entry)
-          setPartialTranscription(null)
-          if (data.text) {
-            setTranscriptionHistory(prev => [...prev, entry])
-          }
+          const entry = { text: data.text, speakerId: data.speaker_id || null }
+          setTranscription(entry); setPartialTranscription(null);
+          if (data.text) setTranscriptionHistory(prev => [...prev, entry])
         } else if (data.type === 'partial') {
-          const entry: TranscriptionEntry = {
-            text: data.text,
-            speakerId: data.speaker_id || null
-          }
-          setPartialTranscription(entry)
+          setPartialTranscription({ text: data.text, speakerId: data.speaker_id || null })
         } else if (data.type === 'error') {
-          setError(data.message || 'An error occurred')
-          setIsConnected(false)
-          setIsListening(false)
-        } else if (data.type === 'system') {
-          console.log('System message:', data.message)
+          setError(data.message); setIsConnected(false); setIsListening(false);
         }
-      } catch (e) {
-        console.error('Error parsing data channel message:', e)
-      }
+      } catch (e) { console.error(e) }
     }
-    
-    dataChannel.onerror = (error) => {
-      console.error('Data channel error:', error)
-    }
-    
-    // Also listen for data channels created by server (backup)
-    pc.ondatachannel = (event) => {
-      const serverChannel = event.channel
-      console.log('Server data channel received:', serverChannel.label)
-      
-      serverChannel.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          console.log('Received from server channel:', data)
-          if (data.type === 'transcription') {
-            const entry: TranscriptionEntry = {
-              text: data.text,
-              speakerId: data.speaker_id || null
-            }
-            setTranscription(entry)
-            setPartialTranscription(null)
-            if (data.text) {
-              setTranscriptionHistory(prev => [...prev, entry])
-            }
-          } else if (data.type === 'partial') {
-            const entry: TranscriptionEntry = {
-              text: data.text,
-              speakerId: data.speaker_id || null
-            }
-            setPartialTranscription(entry)
-          } else if (data.type === 'error') {
-            setError(data.message || 'An error occurred')
-            setIsConnected(false)
-            setIsListening(false)
-          } else if (data.type === 'system') {
-            console.log('System message:', data.message)
-          }
-        } catch (e) {
-          console.error('Error parsing server channel message:', e)
-        }
-      }
-      
-      serverChannel.onopen = () => {
-        console.log('Server data channel opened')
-      }
-    }
+    dataChannel.onmessage = handleMessage
+    pc.ondatachannel = (event) => { event.channel.onmessage = handleMessage }
 
-    // Handle ICE candidates
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
-        console.log('New ICE candidate:', event.candidate)
-        // Check if we can send ICE candidates (we have received the answer with pc_id)
-        if (pc.canSendIceCandidates && pc.pc_id) {
-          // Send immediately
-          await sendIceCandidate(pc, event.candidate)
-        } else {
-          // Queue the candidate until we have pc_id
-          pc.pendingIceCandidates.push(event.candidate)
-        }
-      } else {
-        console.log('All ICE candidates have been sent.')
+        if (pc.canSendIceCandidates && pc.pc_id) await sendIceCandidate(pc, event.candidate)
+        else pc.pendingIceCandidates.push(event.candidate)
       }
-    }
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', pc.iceConnectionState)
     }
 
     pc.onconnectionstatechange = () => {
-      console.log('Connection state:', pc.connectionState)
       if (pc.connectionState === 'connected') {
-        setIsConnected(true)
-        setIsListening(true)
-        setError(null) // Clear any previous errors
+        setIsConnected(true); setIsListening(true); setError(null);
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        setIsConnected(false)
-        setIsListening(false)
-        if (pc.connectionState === 'failed' && !error) {
-          setError('Connection failed. Please check your network and try again.')
-        }
+        setIsConnected(false); setIsListening(false); stopAudioAnalysis();
       }
     }
 
-    // Create offer
-    await pc.setLocalDescription(await pc.createOffer())
-    const offer = pc.localDescription
+    // 1. Create Offer
+    const offer = await pc.createOffer()
 
-    // Send offer to server
+    // 2. Strip VP8, VP9, and AV1 completely. Force H.264.
+    const cleanSdp = stripCodecs(offer.sdp || "", ['VP8', 'VP9', 'AV1'])
+    
+    // 3. Set Local Description with CLEAN SDP
+    await pc.setLocalDescription({ type: offer.type, sdp: cleanSdp })
+
+    // 4. Send to Server
     const response = await fetch(`${PIPECAT_URL}/api/offer`, {
-      body: JSON.stringify({ sdp: offer!.sdp, type: offer!.type }),
+      body: JSON.stringify({ sdp: cleanSdp, type: offer.type }),
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
     })
 
-    if (!response.ok) {
-      throw new Error(`Server error: ${response.status}`)
-    }
-
+    if (!response.ok) throw new Error(`Server error: ${response.status}`)
     const answer = await response.json()
     pc.pc_id = answer.pc_id
-
-    // Set remote description from server answer
     await pc.setRemoteDescription(answer)
-
-    // Now we can send ICE candidates
     pc.canSendIceCandidates = true
-
-    // Send any queued ICE candidates
-    for (const candidate of pc.pendingIceCandidates) {
-      await sendIceCandidate(pc, candidate)
-    }
+    for (const candidate of pc.pendingIceCandidates) await sendIceCandidate(pc, candidate)
     pc.pendingIceCandidates = []
 
     return pc
@@ -289,193 +286,175 @@ export default function Home() {
 
   const startConnection = async () => {
     try {
-      setError(null)
-      setIsConnected(false)
-      setIsListening(false)
+      initAudioContext()
+      setError(null); setIsConnected(false); setIsListening(false);
 
-      // Get user media (audio and video) with fixed resolution to prevent mid-stream changes
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
         audio: true,
-        video: {
-          width: { ideal: 1280, min: 1280 },
-          height: { ideal: 720, min: 720 },
-          frameRate: { ideal: 30, max: 30 },
-          facingMode: 'user'
-        }
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
       })
-      
       streamRef.current = mediaStream
 
-      // Display local video stream directly
-      const localVideoElement = localVideoRef.current
-      if (localVideoElement) {
-        localVideoElement.srcObject = mediaStream
-        localVideoElement.play().catch(console.error)
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = mediaStream
+        localVideoRef.current.play().catch(console.error)
       }
 
-      // Get audio and video tracks
       const audioTrack = mediaStream.getAudioTracks()[0]
       const videoTrack = mediaStream.getVideoTracks()[0] || null
-      
-      // Lock the video track settings to prevent resolution changes mid-stream
-      if (videoTrack) {
-        videoTrack.applyConstraints({
-          width: 1280,
-          height: 720,
-          frameRate: 30
-        }).catch(err => {
-          console.warn('Could not apply video constraints:', err)
-        })
-      }
+      if (videoTrack) videoTrack.applyConstraints({ width: 1280, height: 720, frameRate: 30 }).catch(console.warn)
 
-      // Create SmallWebRTC connection
       const pc = await createSmallWebRTCConnection(audioTrack, videoTrack)
       pcRef.current = pc
-
-      console.log('WebRTC connection established')
-
     } catch (err) {
-      console.error('Error starting connection:', err)
+      console.error(err)
       setError(err instanceof Error ? err.message : 'Failed to start connection')
       stopConnection()
     }
   }
 
   const stopConnection = () => {
-    if (pcRef.current) {
-      pcRef.current.close()
-      pcRef.current = null
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-    }
-    if (audioRef.current) {
-      audioRef.current.srcObject = null
-    }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null
-    }
-    setIsConnected(false)
-    setIsListening(false)
-    setTranscription(null)
-    setPartialTranscription(null)
+    stopAudioAnalysis()
+    if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(track => track.stop()); streamRef.current = null; }
+    if (audioRef.current) audioRef.current.srcObject = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    setIsConnected(false); setIsListening(false); setTranscription(null); setPartialTranscription(null); setIsTarsSpeaking(false);
   }
 
-  // Note: Transcription and TTS are handled by the pipeline on the server side
-  // The WebRTC connection streams audio bidirectionally, so speech goes directly to STT
-  // and TTS audio comes back through the audio track
-
   return (
-    <main className={styles.main}>
-      <div className={styles.container}>
-        <div className={styles.header}>
-          <h1 className={styles.title}>TARS Omni</h1>
-          <p className={styles.subtitle}>Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
-          
-          <div className={styles.headerControls}>
-            <div className={styles.controls}>
+    <main className="flex flex-col items-center justify-center min-h-screen p-8 relative overflow-x-hidden">
+      <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-8 max-w-7xl w-full border border-white/50 relative z-10 flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">TARS Omni</h1>
+            <p className="text-lg text-gray-600">Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
+          </div>
+
+          <div className="flex flex-col items-center gap-4">
+            <div className="flex gap-4">
               {!isConnected ? (
-                <button 
-                  onClick={startConnection} 
-                  className={styles.button}
-                >
-                  <span>🎙️ Start Voice Session</span>
-                </button>
+                <Button onClick={startConnection} size="lg" className="px-6 py-3 text-lg">
+                  🎙️ Start Voice Session
+                </Button>
               ) : (
-                <button 
-                  onClick={stopConnection} 
-                  className={`${styles.button} ${styles.stopButton}`}
-                >
-                  <span>⏹️ Stop Session</span>
-                </button>
+                <Button onClick={stopConnection} variant="destructive" size="lg" className="px-6 py-3 text-lg">
+                  ⏹️ Stop Session
+                </Button>
               )}
             </div>
-            
             {isListening && (
-              <div className={styles.status}>
-                <div className={styles.pulse}></div>
+              <div className="flex items-center gap-2 text-green-600 font-medium">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                 <span>✨ Listening and Processing...</span>
               </div>
             )}
           </div>
 
           {error && (
-            <div className={styles.error}>
-              Error: {error}
-            </div>
+            <Alert variant="destructive">
+              <AlertDescription>Error: {error}</AlertDescription>
+            </Alert>
           )}
         </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
+          <div className="space-y-6">
+            <Card>
+              <CardContent className="p-4">
+                <div className="relative">
+                  <video
+                    ref={localVideoRef}
+                    className="w-full h-64 bg-gray-100 rounded-lg object-cover"
+                    autoPlay
+                    playsInline
+                    muted
+                  />
+                  <div className="absolute bottom-2 left-2 bg-black/70 text-white px-3 py-1 rounded-md text-sm">
+                    Camera Feed
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        <div className={styles.contentGrid}>
-          {/* Left Column - Video */}
-          <div className={styles.videoColumn}>
-            <div className={styles.videoWrapper}>
-              <video 
-                ref={localVideoRef} 
-                className={styles.localVideo} 
-                autoPlay 
-                playsInline 
-                muted
-              />
-              <div className={styles.videoLabel}>Camera Feed</div>
-            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-center">Voice Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-center gap-4 mb-4">
+                  <div className={`flex gap-1 ${isTarsSpeaking ? 'animate-pulse' : ''}`}>
+                    {spectrumBars.map((bar, idx) => (
+                      <div
+                        key={idx}
+                        className={`w-2 bg-gradient-to-t from-blue-400 to-blue-600 rounded-full transition-all duration-300 ${
+                          isTarsSpeaking ? 'h-8' : 'h-2'
+                        }`}
+                        style={{ animationDelay: `${idx * 0.1}s` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-center text-sm text-gray-600">
+                  {isTarsSpeaking ? 'TARS is speaking...' : 'TARS is idle'}
+                </p>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Right Column - Chatbox */}
-          <div className={styles.chatColumn}>
-            <div className={styles.transcription}>
-              <h2>Conversation</h2>
-              <div className={styles.chatMessages}>
-                {transcriptionHistory.length === 0 && !transcription && !partialTranscription && (
-                  <p className={styles.placeholder}>
-                    Transcription will appear here as you speak...
-                  </p>
-                )}
-                
-                {transcriptionHistory.map((entry, idx) => (
-                  <div key={idx} className={styles.finalTranscript}>
-                    {entry.speakerId && (
-                      <span className={getSpeakerLabelClass(entry.speakerId)}>
-                        Speaker {entry.speakerId}: 
-                      </span>
-                    )}
-                    {entry.text}
-                  </div>
-                ))}
-                
-                {transcription && !transcriptionHistory.some(e => e.text === transcription.text && e.speakerId === transcription.speakerId) && (
-                  <div className={styles.finalTranscript}>
-                    {transcription.speakerId && (
-                      <span className={getSpeakerLabelClass(transcription.speakerId)}>
-                        Speaker {transcription.speakerId}: 
-                      </span>
-                    )}
-                    {transcription.text}
-                  </div>
-                )}
-                
-                {partialTranscription && (
-                  <div className={styles.partialTranscript}>
-                    {partialTranscription.speakerId && (
-                      <span className={getSpeakerLabelClass(partialTranscription.speakerId)}>
-                        Speaker {partialTranscription.speakerId}: 
-                      </span>
-                    )}
-                    {partialTranscription.text}
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            <audio ref={audioRef} className={styles.audio} controls autoPlay />
-            <p className={styles.info}>
-              Audio and video from your camera are sent to the server via WebRTC.
-              TTS audio responses will play automatically.
-            </p>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Conversation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {transcriptionHistory.length === 0 && !transcription && !partialTranscription && (
+                    <p className="text-gray-500 text-center py-8">Transcription will appear here as you speak...</p>
+                  )}
+                  {transcriptionHistory.map((entry, idx) => (
+                    <div key={idx} className="flex gap-2 p-3 bg-gray-50 rounded-lg">
+                      {entry.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(entry.speakerId)}>
+                          Speaker {entry.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1">{entry.text}</span>
+                    </div>
+                  ))}
+                  {transcription && !transcriptionHistory.some(e => e.text === transcription.text && e.speakerId === transcription.speakerId) && (
+                    <div className="flex gap-2 p-3 bg-gray-50 rounded-lg">
+                      {transcription.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(transcription.speakerId)}>
+                          Speaker {transcription.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1">{transcription.text}</span>
+                    </div>
+                  )}
+                  {partialTranscription && (
+                    <div className="flex gap-2 p-3 bg-gray-100 rounded-lg opacity-70">
+                      {partialTranscription.speakerId && (
+                        <Badge variant={getSpeakerLabelVariant(partialTranscription.speakerId)}>
+                          Speaker {partialTranscription.speakerId}
+                        </Badge>
+                      )}
+                      <span className="flex-1 italic">{partialTranscription.text}</span>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <audio ref={audioRef} controls className="w-full" autoPlay />
+                <Separator className="my-4" />
+                <p className="text-sm text-gray-600 text-center">
+                  Audio and video from your camera are sent to the server via WebRTC. TTS audio responses will play automatically.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

@@ -58,7 +58,7 @@ from config import (
     PIPECAT_PORT,
     SPEECHMATICS_API_KEY,
     ELEVENLABS_API_KEY,
-    QWEN_API_KEY,
+    DEEPINFRA_API_KEY
 )
 
 # Remove default loguru handler and set up custom logging
@@ -85,10 +85,10 @@ except:
 async def lifespan(app: FastAPI):
     """Handle app lifespan events."""
     logger.info(f"Starting Pipecat service on http://{PIPECAT_HOST}:{PIPECAT_PORT}...")
-    logger.info("Make sure SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and QWEN_API_KEY are set")
+    logger.info("Make sure SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and DEEPINFRA_API_KEY are set")
 
-    if not SPEECHMATICS_API_KEY or not ELEVENLABS_API_KEY or not QWEN_API_KEY:
-        logger.error("ERROR: API keys not found! Please set SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and QWEN_API_KEY")
+    if not SPEECHMATICS_API_KEY or not ELEVENLABS_API_KEY or not DEEPINFRA_API_KEY:
+        logger.error("ERROR: API keys not found! Please set SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and DEEPINFRA_API_KEY")
         sys.exit(1)
 
     yield  # Run app
@@ -111,7 +111,6 @@ app.add_middleware(
 
 # Initialize the SmallWebRTC request handler
 small_webrtc_handler: SmallWebRTCRequestHandler = SmallWebRTCRequestHandler()
-
 
 @app.post("/api/offer")
 async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
@@ -141,13 +140,11 @@ async def ice_candidate(request: SmallWebRTCPatchRequest):
 @app.get("/api/status")
 async def status():
     """Health check endpoint."""
-    from config import QWEN_MODEL
     return {
         "status": "ok",
         "speechmatics_configured": bool(SPEECHMATICS_API_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
-        "qwen_configured": bool(QWEN_API_KEY),
-        "qwen_model": QWEN_MODEL if QWEN_API_KEY else None,
+        "deepinfra_configured": bool(DEEPINFRA_API_KEY)
     }
 
 
