@@ -35,34 +35,103 @@ class Mem0Wrapper:
     def enabled(self) -> bool:
         return True
 
-    def save_user_message(self, user_id: str, text: str) -> None:
+    def save_user_message(self, user_id: str, text: str) -> Optional[List[str]]:
+        """Save user message and return extracted memories from the response.
+
+        Returns:
+            List of memory strings extracted from the save response, or None if no memories.
+        """
         if not self._client:
-            return
+            logger.debug("Mem0 client not available, skipping save")
+            return None
         try:
+            logger.debug(f"💾 Saving message to Mem0 for user '{user_id}': {text[:50]}...")
             messages = [{"role": "user", "content": text}]
+            result = None
+
             if hasattr(self._client, "add_memory"):
-                self._client.add_memory(user_id=user_id, text=text)
+                result = self._client.add_memory(user_id=user_id, text=text)
+                logger.info(f"✓ Saved to Mem0 (add_memory) for '{user_id}'")
             elif hasattr(self._client, "add"):
-                self._client.add(messages, user_id=user_id)
+                result = self._client.add(messages, user_id=user_id)
+                logger.info(f"✓ Saved to Mem0 (add) for '{user_id}'")
             elif hasattr(self._client, "create"):
-                self._client.create(user_id=user_id, text=text)
+                result = self._client.create(user_id=user_id, text=text)
+                logger.info(f"✓ Saved to Mem0 (create) for '{user_id}'")
+            else:
+                logger.warning(f"⚠️  Mem0 client has no save method available")
+                return None
+
+            # Extract new memories from the API response
+            return self._extract_memories_from_result(result)
+
         except Exception as e:
-            logger.warning(f"Mem0 save_user_message failed: {e}")
+            logger.warning(f"❌ Mem0 save_user_message failed: {e}")
+            return None
+
+    def _extract_memories_from_result(self, result) -> Optional[List[str]]:
+        """Extract memory strings from Mem0 API response."""
+        if not result:
+            return None
+
+        try:
+            memories = []
+
+            # Handle dict response
+            if isinstance(result, dict):
+                # Check for 'results' array (v2 API format)
+                if 'results' in result and isinstance(result['results'], list):
+                    for item in result['results']:
+                        if isinstance(item, dict) and 'memory' in item:
+                            memories.append(str(item['memory']))
+
+                # Check for direct memory field
+                elif 'memory' in result:
+                    memories.append(str(result['memory']))
+
+            # Handle list response
+            elif isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and 'memory' in item:
+                        memories.append(str(item['memory']))
+                    elif isinstance(item, str):
+                        memories.append(item)
+
+            if memories:
+                logger.info(f"💡 Extracted {len(memories)} new memories")
+                for i, mem in enumerate(memories, 1):
+                    logger.debug(f"  New: {mem[:100]}...")
+                return memories
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Could not extract memories from response: {e}")
+            return None
 
     def recall(self, user_id: str, query: Optional[str] = None, limit: int = 8) -> List[str]:
         if not self._client:
+            logger.debug("Mem0 client not available, returning empty list")
             return []
         try:
+            logger.debug(f"🔍 Recalling memories for user '{user_id}' (limit={limit}, query={query})")
             results = []
             if query and hasattr(self._client, "search"):
+                logger.debug(f"Using search method with query: {query}")
                 results = self._client.search(query, user_id=user_id, limit=limit)
             elif hasattr(self._client, "get_all"):
+                logger.debug("Using get_all method")
                 all_results = self._client.get_all(user_id=user_id)
                 results = all_results[:limit] if isinstance(all_results, list) else []
+                logger.debug(f"get_all returned {len(results)} results")
             elif hasattr(self._client, "search"):
+                logger.debug("Using search method with empty query")
                 results = self._client.search("", user_id=user_id, limit=limit)
             else:
+                logger.warning("⚠️  Mem0 client has no recall method available")
                 return []
+
+            logger.debug(f"Raw results count: {len(results) if isinstance(results, list) else 'not a list'}")
 
             texts: List[str] = []
             if isinstance(results, list):
@@ -71,17 +140,19 @@ class Mem0Wrapper:
                         texts.append(item)
                     elif isinstance(item, dict):
                         text = (
-                            item.get("text") 
-                            or item.get("content") 
+                            item.get("text")
+                            or item.get("content")
                             or item.get("memory")
                             or item.get("message")
                             or (item.get("messages", [{}])[0].get("content") if isinstance(item.get("messages"), list) else None)
                         )
                         if isinstance(text, str):
                             texts.append(text)
+
+            logger.info(f"📚 Recalled {len(texts)} memories for '{user_id}'")
             return texts[:limit]
         except Exception as e:
-            logger.warning(f"Mem0 recall failed: {e}")
+            logger.error(f"❌ Mem0 recall failed: {e}", exc_info=True)
             return []
 
     def transfer_memories(self, old_user_id: str, new_user_id: str):

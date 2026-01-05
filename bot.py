@@ -49,17 +49,21 @@ from config import (
     MEM0_API_KEY,
 )
 from processors import (
-    TranscriptionLogger,
-    AssistantResponseLogger,
-    TTSSpeechStateBroadcaster,
-    VisionLogger,
-    LatencyLogger,
     SilenceFilter,
     InputAudioFilter,
     InterventionGating,
     VisualObserver,
 )
-from memory.mem0_client import Mem0Wrapper 
+from loggers import (
+    DebugLogger,
+    TurnDetectionLogger,
+    TranscriptionLogger,
+    AssistantResponseLogger,
+    TTSSpeechStateBroadcaster,
+    VisionLogger,
+    LatencyLogger,
+)
+from memory.mem0_client import Mem0Wrapper
 
 from character.prompts import (
     load_persona_ini,
@@ -115,23 +119,6 @@ class IdentityUnifier(FrameProcessor):
                 pass
 
         # 3. Push downstream
-        await self.push_frame(frame, direction)
-
-
-class DebugLogger(FrameProcessor):
-    def __init__(self, label="Debug"):
-        super().__init__()
-        self.label = label
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        frame_type = type(frame).__name__
-        if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
-            # Log the User ID so we can verify they match
-            uid = getattr(frame, 'user_id', 'None')
-            logger.info(f"🔍 [{self.label}] {frame_type} | User: '{uid}' | Content: {str(frame)[:100]}")
-
         await self.push_frame(frame, direction)
 
 
@@ -317,22 +304,32 @@ async def run_bot(webrtc_connection):
                     except Exception as e:
                         logger.warning(f"Failed to send identity update to frontend: {e}")
 
+                    # Recall long-term memories for this user
                     try:
                         if _mem0 and _mem0.enabled:
+                            logger.info(f"🔍 Attempting to recall memories for user: {client_state['client_id']}")
                             recalled = await asyncio.to_thread(
                                 _mem0.recall,
                                 user_id=client_state["client_id"],
                                 limit=8
                             )
+                            logger.info(f"📝 Recalled {len(recalled) if recalled else 0} memories from Mem0")
+
                             if recalled:
+                                # Log what memories were recalled
+                                for i, mem in enumerate(recalled, 1):
+                                    logger.info(f"  Memory {i}: {mem[:100]}{'...' if len(mem) > 100 else ''}")
+
                                 memory_text = "\n".join(f"- {m}" for m in recalled)
                                 context.messages.append({
                                     "role": "system",
-                                    "content": (f"Facts: {memory_text}")
+                                    "content": (f"Facts about {name}: {memory_text}")
                                 })
-                                logger.info(f"✓ Injected {len(recalled)} long-term memories")
+                                logger.info(f"✓ Injected {len(recalled)} long-term memories into context")
+                            else:
+                                logger.warning(f"⚠️  No memories found for user: {client_state['client_id']}")
                     except Exception as e:
-                        logger.warning(f"Failed to load long-term memories: {e}")
+                        logger.error(f"❌ Failed to load long-term memories: {e}", exc_info=True)
 
                 await params.result_callback(f"Identity updated to {name}.")
 
@@ -394,11 +391,12 @@ async def run_bot(webrtc_connection):
             webrtc_connection=webrtc_connection,
             client_state=client_state
         )
-        
+
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
         latency_logger = LatencyLogger()
+        turn_logger = TurnDetectionLogger()
 
         # ====================================================================
         # PIPELINE ASSEMBLY
@@ -409,6 +407,7 @@ async def run_bot(webrtc_connection):
         pipeline = Pipeline([
             pipecat_transport.input(),
             stt,
+            turn_logger,  
             pipeline_unifier,
             transcription_logger,
             context_aggregator.user(),
