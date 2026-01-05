@@ -9,9 +9,6 @@ import re
 import time
 from loguru import logger
 
-from config import MEM0_API_KEY
-from memory import Mem0Wrapper
-
 from pipecat.frames.frames import (
     Frame,
     TranscriptionFrame,
@@ -30,13 +27,6 @@ from pipecat.frames.frames import (
     ErrorFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-
-
-# Initialize Mem0 for TranscriptionLogger
-if not MEM0_API_KEY:
-    raise RuntimeError("MEM0_API_KEY is required but not set.")
-
-_mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
 # ============================================================================
@@ -105,8 +95,6 @@ class LatencyLogger(FrameProcessor):
         await super().process_frame(frame, direction)
 
         current_time = time.time()
-
-        # Use shared state (all instances share the same tracking data)
         state = LatencyLogger._shared_state
 
         # Track when transcription is received (STT complete) - can be UPSTREAM or DOWNSTREAM
@@ -163,7 +151,7 @@ class LatencyLogger(FrameProcessor):
 # ============================================================================
 
 class TranscriptionLogger(FrameProcessor):
-    """Logs transcriptions, saves to Mem0, and sends to frontend."""
+    """Logs transcriptions and sends to frontend."""
 
     def __init__(self, webrtc_connection=None, client_state=None):
         super().__init__()
@@ -175,25 +163,12 @@ class TranscriptionLogger(FrameProcessor):
 
         await super().process_frame(frame, direction)
 
-        # --- (Logging & Memory Logic) ---
+        # --- (Logging Logic) ---
         if isinstance(frame, TranscriptionFrame):
             raw_id = getattr(frame, 'user_id', None)
             display_id = raw_id if (raw_id and raw_id != "S1") else self.client_state.get("client_id", "guest")
 
             logger.info(f"🎤 Transcription [{display_id}]: {frame.text}")
-
-            # Fire-and-forget Memory Save
-            try:
-                if _mem0 and _mem0.enabled and frame.text:
-                    asyncio.create_task(
-                        asyncio.to_thread(
-                            _mem0.save_user_message,
-                            user_id=str(display_id),
-                            text=frame.text
-                        )
-                    )
-            except Exception as e:
-                logger.debug(f"Skipping Mem0 save due to error: {e}")
 
             # Update Frontend
             if self.webrtc_connection:

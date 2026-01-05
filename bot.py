@@ -32,6 +32,7 @@ from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
+from pipecat.services.mem0.memory import Mem0MemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -63,8 +64,6 @@ from loggers import (
     VisionLogger,
     LatencyLogger,
 )
-from memory.mem0_client import Mem0Wrapper
-
 from character.prompts import (
     load_persona_ini,
     load_tars_json,
@@ -79,8 +78,6 @@ from modules.module_tools import (
     create_identity_schema,
     get_persona_storage,
 )
-
-_mem0 = Mem0Wrapper(api_key=MEM0_API_KEY)
 
 
 # ============================================================================
@@ -284,12 +281,16 @@ async def run_bot(webrtc_connection):
 
                 if old_id != new_id:
                     logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
-                    await asyncio.to_thread(_mem0.transfer_memories, old_id, new_id)
                     client_state["client_id"] = new_id
 
                     # Update the pipeline unifier to use new identity
                     pipeline_unifier.target_user_id = new_id
                     logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
+
+                    # Update Mem0 service with new user_id
+                    if memory_service:
+                        memory_service._user_id = new_id
+                        logger.info(f"✓ Updated Mem0 service user_id to: {new_id}")
 
                     # Notify frontend of identity change
                     try:
@@ -303,33 +304,6 @@ async def run_bot(webrtc_connection):
                             logger.info(f"📤 Sent identity update to frontend: {new_id}")
                     except Exception as e:
                         logger.warning(f"Failed to send identity update to frontend: {e}")
-
-                    # Recall long-term memories for this user
-                    try:
-                        if _mem0 and _mem0.enabled:
-                            logger.info(f"🔍 Attempting to recall memories for user: {client_state['client_id']}")
-                            recalled = await asyncio.to_thread(
-                                _mem0.recall,
-                                user_id=client_state["client_id"],
-                                limit=8
-                            )
-                            logger.info(f"📝 Recalled {len(recalled) if recalled else 0} memories from Mem0")
-
-                            if recalled:
-                                # Log what memories were recalled
-                                for i, mem in enumerate(recalled, 1):
-                                    logger.info(f"  Memory {i}: {mem[:100]}{'...' if len(mem) > 100 else ''}")
-
-                                memory_text = "\n".join(f"- {m}" for m in recalled)
-                                context.messages.append({
-                                    "role": "system",
-                                    "content": (f"Facts about {name}: {memory_text}")
-                                })
-                                logger.info(f"✓ Injected {len(recalled)} long-term memories into context")
-                            else:
-                                logger.warning(f"⚠️  No memories found for user: {client_state['client_id']}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to load long-term memories: {e}", exc_info=True)
 
                 await params.result_callback(f"Identity updated to {name}.")
 
@@ -365,6 +339,32 @@ async def run_bot(webrtc_connection):
             visual_observer=visual_observer
         )
         logger.info(f"✓ Gating Layer initialized")
+
+        # ====================================================================
+        # MEMORY SERVICE
+        # ====================================================================
+
+        logger.info("Initializing Mem0 memory service...")
+        memory_service = None
+        try:
+            memory_service = Mem0MemoryService(
+                api_key=MEM0_API_KEY,
+                user_id=client_id,
+                agent_id="tars_agent",
+                run_id=session_id,
+                params=Mem0MemoryService.InputParams(
+                    search_limit=10,
+                    search_threshold=0.3,
+                    api_version="v2",
+                    system_prompt="Based on previous conversations, I recall: \n\n",
+                    add_as_system_message=True,
+                    position=1,
+                ),
+            )
+            logger.info(f"✓ Mem0 memory service initialized for {client_id}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Mem0 service: {e}")
+            return
 
         # ====================================================================
         # CONTEXT AGGREGATOR & PERSONA STORAGE
@@ -407,10 +407,11 @@ async def run_bot(webrtc_connection):
         pipeline = Pipeline([
             pipecat_transport.input(),
             stt,
-            turn_logger,  
+            # turn_logger,
             pipeline_unifier,
             transcription_logger,
             context_aggregator.user(),
+            memory_service,  # Mem0 memory service for automatic recall/storage
             llm,
             assistant_logger,
             latency_logger,
