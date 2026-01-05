@@ -321,7 +321,7 @@ async def run_bot(webrtc_connection):
         logger.info("Initializing Moondream vision service...")
         moondream = None
         try:
-            moondream = MoondreamService(model="vikhyatk/moondream2", device="mps")
+            moondream = MoondreamService(model="vikhyatk/moondream2", revision="2025-01-09")
             logger.info("✓ Moondream vision service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize Moondream: {e}")
