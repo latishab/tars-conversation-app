@@ -49,12 +49,21 @@ from config import (
     DEEPINFRA_MODEL,
     DEEPINFRA_GATING_MODEL,
     MEM0_API_KEY,
+    TTS_PROVIDER,
+    QWEN3_TTS_MODEL,
+    QWEN3_TTS_DEVICE,
+    QWEN3_TTS_REF_AUDIO,
+    EMOTIONAL_MONITORING_ENABLED,
+    EMOTIONAL_SAMPLING_INTERVAL,
+    EMOTIONAL_INTERVENTION_THRESHOLD,
 )
+from services.qwen_tts_service import Qwen3TTSService
 from processors import (
     SilenceFilter,
     InputAudioFilter,
     InterventionGating,
     VisualObserver,
+    EmotionalStateMonitor,
 )
 from loggers import (
     DebugLogger,
@@ -221,26 +230,41 @@ async def run_bot(webrtc_connection):
         # TEXT-TO-SPEECH SERVICE
         # ====================================================================
 
-        logger.info("Initializing ElevenLabs TTS...")
+        logger.info(f"Initializing TTS service: {TTS_PROVIDER}...")
         tts = None
         try:
-            tts = ElevenLabsTTSService(
-                api_key=ELEVENLABS_API_KEY,
-                voice_id=ELEVENLABS_VOICE_ID,
-                model="eleven_turbo_v2_5",
-                output_format="pcm_24000",
-                enable_word_timestamps=False,
-                voice_settings={
-                    "stability": 0.5,
-                    "similarity_boost": 0.75, 
-                    "style": 0.0,
-                    "use_speaker_boost": True
-                }
-            )
+            if TTS_PROVIDER == "qwen3":
+                # Use local Qwen3-TTS with voice cloning
+                logger.info("Using Qwen3-TTS (local, voice cloning)")
+                tts = Qwen3TTSService(
+                    model_name=QWEN3_TTS_MODEL,
+                    device=QWEN3_TTS_DEVICE,
+                    ref_audio_path=QWEN3_TTS_REF_AUDIO,
+                    x_vector_only_mode=True,
+                    sample_rate=24000,
+                )
+                logger.info(f"✓ Qwen3-TTS service created (device: {QWEN3_TTS_DEVICE})")
+            else:
+                # Use ElevenLabs
+                logger.info("Using ElevenLabs TTS")
+                tts = ElevenLabsTTSService(
+                    api_key=ELEVENLABS_API_KEY,
+                    voice_id=ELEVENLABS_VOICE_ID,
+                    model="eleven_turbo_v2_5",
+                    output_format="pcm_24000",
+                    enable_word_timestamps=False,
+                    voice_settings={
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                )
+                logger.info("✓ ElevenLabs TTS service created")
+
             service_refs["tts"] = tts
-            logger.info("✓ ElevenLabs TTS service created")
         except Exception as e:
-            logger.error(f"Failed to initialize ElevenLabs: {e}", exc_info=True)
+            logger.error(f"Failed to initialize TTS service: {e}", exc_info=True)
             return
 
         # ====================================================================
@@ -334,6 +358,16 @@ async def run_bot(webrtc_connection):
         visual_observer = VisualObserver(vision_client=moondream)
         logger.info("✓ Visual Observer initialized")
 
+        logger.info("Initializing Emotional State Monitor...")
+        emotional_monitor = EmotionalStateMonitor(
+            vision_client=moondream,
+            model="vikhyatk/moondream2",
+            sampling_interval=EMOTIONAL_SAMPLING_INTERVAL,
+            intervention_threshold=EMOTIONAL_INTERVENTION_THRESHOLD,
+            enabled=EMOTIONAL_MONITORING_ENABLED,
+        )
+        logger.info(f"✓ Emotional State Monitor initialized (enabled: {EMOTIONAL_MONITORING_ENABLED})")
+
         logger.info("Initializing Gating Layer...")
         gating_layer = InterventionGating(
             api_key=DEEPINFRA_API_KEY,
@@ -409,6 +443,7 @@ async def run_bot(webrtc_connection):
 
         pipeline = Pipeline([
             pipecat_transport.input(),
+            emotional_monitor,  # Real-time emotional state monitoring
             stt,
             # turn_logger,
             pipeline_unifier,

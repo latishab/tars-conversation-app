@@ -21,3 +21,14 @@ PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 # Mem0 (optional)
 MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 
+# TTS Configuration
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "qwen3")  # Options: "elevenlabs" or "qwen3"
+QWEN3_TTS_MODEL = os.getenv("QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
+QWEN3_TTS_DEVICE = os.getenv("QWEN3_TTS_DEVICE", "mps")  # "mps" for Mac, "cuda" for GPU
+QWEN3_TTS_REF_AUDIO = os.getenv("QWEN3_TTS_REF_AUDIO", "tars-clean-compressed.mp3")
+
+# Emotional State Monitoring
+EMOTIONAL_MONITORING_ENABLED = os.getenv("EMOTIONAL_MONITORING_ENABLED", "true").lower() == "true"
+EMOTIONAL_SAMPLING_INTERVAL = float(os.getenv("EMOTIONAL_SAMPLING_INTERVAL", "3.0"))  # seconds
+EMOTIONAL_INTERVENTION_THRESHOLD = int(os.getenv("EMOTIONAL_INTERVENTION_THRESHOLD", "2"))  # consecutive states
+

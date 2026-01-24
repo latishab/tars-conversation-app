@@ -1,235 +1,204 @@
 # TARS Omni - Real-time Voice AI
 
-A Next.js application that provides real-time voice AI with transcription, vision capabilities, and intelligent conversation using Speechmatics, ElevenLabs, Qwen LLM, and Moondream, integrated with pipecat.ai and SmallWebRTC for peer-to-peer real-time audio/video processing.
+Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics, Qwen3-TTS (or ElevenLabs), Qwen LLM, and Moondream.
 
 ## Features
 
-- 🎤 **Real-time Transcription**: Live audio transcription using Speechmatics with speaker diarization
-- 🔊 **Text-to-Speech**: Natural voice synthesis using ElevenLabs Flash model
-- 🤖 **LLM Integration**: Conversational AI powered by Qwen models via DeepInfra
-- 👁️ **Vision Capabilities**: Image analysis using Moondream vision service
-- 🎯 **Smart Turn Detection**: Prevents interruptions with VAD and Smart Turn Detection
-- 🚦 **Intelligent Gating Layer**: AI-powered decision system that determines when TARS should respond
-- 👥 **Multi-Speaker Awareness**: Distinguishes between direct commands and inter-human conversations
-- 🌐 **WebRTC Communication**: Direct peer-to-peer WebRTC audio/video streaming (no WebSocket proxy needed)
-- 📱 **Live Transcription Display**: Real-time transcription updates on the frontend
-- 🎨 **Modern UI**: Beautiful, responsive user interface built with shadcn/ui
-- 🧠 **Long-term Memory (optional)**: Persistent user memory via Mem0
+- 🎤 **Real-time Transcription** - Speechmatics with speaker diarization
+- 🔊 **Dual TTS** - Qwen3-TTS (local, free) or ElevenLabs (cloud)
+- 🤖 **LLM** - Qwen via DeepInfra
+- 👁️ **Vision** - Moondream image analysis
+- 🎯 **Smart Turn Detection** - VAD prevents interruptions
+- 🚦 **Gating Layer** - AI decides when to respond
+- 🌐 **WebRTC** - Peer-to-peer audio/video
+- 🧠 **Memory** - Optional Mem0 long-term memory
+- 🎙️ **Voice Cloning** - 3 seconds of audio with Qwen3-TTS
+- 😊 **Emotional Monitoring** - Real-time detection of confusion/hesitation/frustration
 
-## Prerequisites
+## Quick Start
 
-- Node.js 18+ and npm
-- Python 3.9+
-- Speechmatics API key ([Get one here](https://portal.speechmatics.com/))
-- ElevenLabs API key ([Get one here](https://elevenlabs.io/app/settings/api-keys))
-- DeepInfra API key for Qwen models ([Get one here](https://deepinfra.com/))
-- Mem0 API key ([Docs](https://docs.mem0.ai/))
-
-## Installation
-
-1. Install Python dependencies:
+### 1. Install Dependencies
 
 ```bash
+# Python
 pip install -r requirements.txt
-```
 
-This will install all required packages including:
-- `pipecat-ai` with extensions: speechmatics, elevenlabs, webrtc, qwen, moondream, local-smart-turn-v3, silero
-- `aiohttp` for async HTTP requests (Gating Layer API calls)
-- FastAPI and Uvicorn for the web server
-- Additional dependencies for SSL certificate handling and logging
-
-2. Install frontend dependencies:
-
-```bash
+# Node.js
 npm install
 ```
 
-3. Create a `.env.local` file in the root directory:
+### 2. Configure
 
 ```bash
 cp env.example .env.local
+# Edit .env.local with your API keys
 ```
 
-4. Add your API keys to `.env.local`:
+Required keys:
+- `SPEECHMATICS_API_KEY`
+- `DEEPINFRA_API_KEY`
+- `TTS_PROVIDER=qwen3` (or `elevenlabs`)
 
-```env
-# Speechmatics API Key
-SPEECHMATICS_API_KEY=your_speechmatics_api_key_here
+Optional:
+- `ELEVENLABS_API_KEY` (if using cloud TTS)
+- `MEM0_API_KEY` (for memory)
 
-# ElevenLabs API Key
-ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
-ELEVENLABS_VOICE_ID=ry8mpwRw6nugb2qjP0tu
-
-# DeepInfra API Key (for Qwen LLM and Gating Layer)
-DEEPINFRA_API_KEY=your_deepinfra_api_key_here
-
-# Frontend configuration
-NEXT_PUBLIC_PIPECAT_URL=http://localhost:7860
-
-# Mem0 API Key (optional, enables long-term memory)
-MEM0_API_KEY=your_mem0_api_key_here
-```
-
-## Running the Application
-
-You need to run TWO servers:
-
-1. **Start the Pipecat FastAPI service** (in one terminal):
+### 3. Run
 
 ```bash
+# Terminal 1: Backend
 npm run dev:backend
-# or
-python3 pipecat_service.py
-```
 
-This will start the FastAPI service on `http://localhost:7860`
-
-2. **Start the Next.js server** (in another terminal):
-
-```bash
+# Terminal 2: Frontend
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000`
-
-**Note**: Make sure both services are running before connecting from the browser!
+Open http://localhost:3000
 
 ## Project Structure
 
 ```
-├── __pycache__/                 # Python bytecode cache
-├── app/                         # Next.js application (completely self-contained)
-│   ├── api/
-│   │   ├── status/
-│   │   │   └── route.ts         # Health check endpoint
-│   │   └── voice/
-│   │       └── route.ts         # Voice API endpoint
-│   ├── components/
-│   │   └── ui/                  # shadcn/ui components
-│   │       ├── alert.tsx
-│   │       ├── badge.tsx
-│   │       ├── button.tsx
-│   │       ├── card.tsx
-│   │       ├── progress.tsx
-│   │       └── separator.tsx
-│   ├── globals.css              # Global styles with shadcn/ui + Tailwind
-│   ├── layout.tsx               # Root layout
-│   ├── page.module.css          # Page-specific styles
-│   └── page.tsx                 # Main React component with WebRTC
-├── bot.py                       # Main bot pipeline setup and execution
-├── character/                   # Character configuration
-│   ├── persona.ini              # Character personality settings
-│   ├── prompts.py               # Prompt generation utilities
-│   └── TARS.json                # TARS character definition
-├── components.json              # shadcn/ui configuration
-├── config/                      # Configuration module
-│   └── __init__.py              # Environment variable loading and config
-├── lib/
-│   └── utils.ts                 # Utility functions
-├── memory/                      # Memory management
-│   └── mem0_client.py           # Mem0 integration for persistent memory
-├── modules/                     # Module tools and utilities
-│   └── module_tools.py          # Tool definitions for LLM
-├── next-env.d.ts                # Next.js TypeScript definitions
-├── next.config.js               # Next.js configuration
-├── node_modules/                # Node.js dependencies
-├── package-lock.json            # NPM lock file
-├── package.json                 # Root scripts for running both frontend/backend
-├── pipecat_service.py           # FastAPI server with SmallWebRTC transport
-├── postcss.config.js            # PostCSS configuration
-├── processors/                  # Custom Pipecat processors
-│   ├── __init__.py              # Processor exports
-│   ├── __pycache__/             # Python bytecode cache
-│   ├── assistant_logger.py      # Assistant response logging
-│   ├── filters.py               # Audio filters (silence, input)
-│   ├── gating.py                # Gating Layer (AI decision system)
-│   ├── latency_logger.py        # Pipeline latency tracking
-│   ├── transcription_logger.py  # Transcription logging and frontend messaging
-│   ├── tts_state_logger.py      # TTS state broadcasting
-│   ├── vision_logger.py         # Vision frame logging
-│   └── visual_observer.py       # Visual observation processor
-├── README.md                    # This file
-├── requirements.txt             # Python dependencies
-├── scripts/                     # Utility scripts
-│   └── check_av.py              # Audio/video checking script
-├── tailwind.config.js           # Tailwind CSS configuration
-├── tsconfig.json                # TypeScript configuration
-└── env.example                  # Environment variables template
+tars-omni/
+├── app/                    # Next.js frontend
+│   ├── api/               # API routes
+│   ├── components/        # React components
+│   └── page.tsx           # Main UI
+│
+├── pipecat_service.py     # FastAPI server
+├── bot.py                 # Pipeline orchestration
+├── loggers.py             # Monitoring processors
+│
+├── config/                # Environment config
+├── character/             # TARS personality
+├── processors/            # Frame processors
+├── services/              # AI services (TTS/STT/LLM)
+├── modules/               # LLM tools/functions
+├── memory/                # Mem0 integration
+└── scripts/               # Utilities
 ```
 
-## API Endpoints
+## Code Organization
 
-### FastAPI Backend Server (Port 7860)
+| Type | Location | Purpose |
+|------|----------|---------|
+| **AI Service** | `services/` | TTS/STT/LLM/Vision integrations |
+| **Processor** | `processors/` | Frame processing/filtering |
+| **Logger** | `loggers.py` | Monitoring/debugging |
+| **LLM Tool** | `modules/` | Functions the LLM can call |
+| **Config** | `config/` | Environment variables |
+| **Frontend** | `app/` | Next.js React app |
 
-- `POST /api/offer` - Handle WebRTC offer requests (creates bot pipeline)
-- `PATCH /api/offer` - Handle ICE candidate updates
-- `GET /api/status` - Health check endpoint (shows API key configuration status)
+**Key Distinctions**:
+- `services/` = AI engines (TTS, STT, LLM)
+- `modules/` = LLM-callable functions (backend Python)
+- `lib/` = Frontend utilities (TypeScript)
+- `processors/` = Data processing
+- `loggers.py` = Monitoring/observability
 
-### Next.js Frontend Server (Port 3000)
+## TTS Configuration
 
-- `/` - Main application UI
-- `POST /api/offer` - Proxy WebRTC offers to backend service
-- `PATCH /api/offer` - Proxy ICE candidates to backend service
-- `GET /api/status` - Proxy status checks to backend service
+### Qwen3-TTS (Default - Local & Free)
 
-## Tech Stack
+Best for Apple Silicon Macs. Voice cloning with `tars-clean-compressed.mp3`.
 
-### Frontend
-- **Next.js 16** - React framework with App Router
-- **React 19** - UI library
-- **Tailwind CSS** - Utility-first CSS framework
-- **shadcn/ui** - Modern component library
-- **TypeScript** - Type-safe JavaScript
-- **WebRTC** - Real-time communication
+**M4 24GB Performance**:
+- First load: ~15-20s
+- Generation: 2.5-3x real-time
+- Memory: ~2-3GB
 
-### Backend
-- **Python 3.9+** - Programming language
-- **FastAPI** - Modern web framework
-- **Pipecat.ai** - Real-time AI pipeline framework
-- **SmallWebRTC** - WebRTC transport
-- **Speechmatics** - Speech-to-text with diarization
-- **ElevenLabs** - Text-to-speech
-- **Qwen** - Large language model via DeepInfra
-- **Moondream** - Vision AI model
+```env
+TTS_PROVIDER=qwen3
+QWEN3_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-Base
+QWEN3_TTS_DEVICE=mps
+QWEN3_TTS_REF_AUDIO=tars-clean-compressed.mp3
+```
+
+### ElevenLabs (Cloud)
+
+Better quality, requires API key and credits.
+
+```env
+TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=your_key
+```
 
 ## How It Works
 
-### Three-Layer Conversation Architecture
+1. **Audio/Video Input** → Browser captures via WebRTC
+2. **Emotional Monitor** → Analyzes video for confusion/hesitation (every 3s)
+3. **VAD** → Detects when user stops speaking
+4. **STT** → Speechmatics transcribes with speaker labels
+5. **Gating** → AI decides if TARS should respond
+6. **LLM** → Qwen processes and generates response
+7. **Vision** → Moondream analyzes images when requested
+8. **TTS** → Qwen3-TTS or ElevenLabs synthesizes speech
+9. **Audio Output** → Streamed back via WebRTC
 
-TARS uses a sophisticated three-layer system to ensure natural, context-aware conversations:
+## Tech Stack
 
-#### Layer 1: Smart Turn Detection (The Reflex ⚡)
-- Instantly detects when someone stops talking using Silero VAD
-- Low latency response (~1 second pause detection)
-- Prevents awkward interruptions during natural pauses
+**Frontend**: Next.js 16, React 19, Tailwind, shadcn/ui, WebRTC
+**Backend**: Python 3.12, FastAPI, Pipecat.ai, PyTorch
+**AI**: Speechmatics, Qwen3-TTS/ElevenLabs, Qwen LLM, Moondream
 
-#### Layer 2: Speechmatics STT (The Ears 👂)
-- Transcribes speech to text in real-time
-- **Speaker Diarization**: Identifies and labels different speakers (Speaker 1, Speaker 2, etc.)
-- Enables multi-party conversation awareness
+## Development
 
-#### Layer 3: Gating Layer (The Brain 🧠)
-- AI-powered decision system using Qwen via DeepInfra
-- Analyzes transcribed text to determine: "Should TARS respond?"
-- **Responds when:**
-  - User directly addresses TARS ("TARS, help me with this")
-  - Clear questions or commands directed at the AI
-  - User asks for help or information
-- **Stays silent when:**
-  - Users are talking to each other ("Speaker 2: Yes, I agree")
-  - User is thinking out loud ("Umm, let me see...")
-  - Conversation is clearly inter-human, not directed at TARS
+### Testing
 
-### Processing Pipeline
+```bash
+python test_qwen_tts.py          # Qwen3-TTS standalone test
+python test_qwen_pipecat.py      # Qwen3-TTS Pipecat integration
+python test_emotional_monitor.py # Emotional monitoring test
+```
 
-1. **Audio/Video Input**: Browser captures audio and video from microphone and camera
-2. **WebRTC Connection**: Peer-to-peer connection established directly with FastAPI server
-3. **Media Streaming**: Audio and video streamed bidirectionally via WebRTC
-4. **Smart Turn Detection**: VAD analyzes audio to determine when user stops speaking
-5. **Transcription**: Speechmatics processes audio with speaker diarization
-6. **Gating Decision**: AI analyzes transcription to decide if TARS should respond
-7. **LLM Processing**: If gating passes, Qwen LLM processes transcription
-8. **Vision Analysis**: Moondream analyzes camera images when requested
-9. **Text-to-Speech**: ElevenLabs converts responses to speech
-10. **Audio Output**: Synthesized speech streamed back via WebRTC
+### Switching TTS Providers
+
+Edit `.env.local`:
+```env
+TTS_PROVIDER=elevenlabs  # or qwen3
+```
+
+### Voice Cloning
+
+Place audio file in root, update `.env.local`:
+```env
+QWEN3_TTS_REF_AUDIO=your-voice.mp3
+```
+
+### Emotional Monitoring
+
+TARS continuously analyzes your video feed for emotional cues and offers help proactively.
+
+**Detects**:
+- 😕 Confusion (puzzled expression, furrowed brow)
+- 🤔 Hesitation (pauses, uncertain gestures)
+- 😤 Frustration (tense posture, agitated movements)
+
+**Configuration**:
+```env
+EMOTIONAL_MONITORING_ENABLED=true       # Enable/disable
+EMOTIONAL_SAMPLING_INTERVAL=3.0        # Analysis frequency (seconds)
+EMOTIONAL_INTERVENTION_THRESHOLD=2     # Consecutive states before help
+```
+
+**How it works**:
+1. Samples video frames every 3 seconds
+2. Moondream analyzes emotional/cognitive state
+3. Detects patterns indicating difficulty
+4. After 2 consecutive negative states, TARS offers help
+
+**Disable**: Set `EMOTIONAL_MONITORING_ENABLED=false`
+
+## API Endpoints
+
+**Backend (Port 7860)**:
+- `POST /api/offer` - WebRTC offer
+- `PATCH /api/offer` - ICE candidates
+- `GET /api/status` - Health check
+
+**Frontend (Port 3000)**:
+- `/` - Main UI
+- Proxies to backend
+
+## License
+
+MIT
