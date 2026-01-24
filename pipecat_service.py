@@ -58,7 +58,8 @@ from config import (
     PIPECAT_PORT,
     SPEECHMATICS_API_KEY,
     ELEVENLABS_API_KEY,
-    DEEPINFRA_API_KEY
+    DEEPINFRA_API_KEY,
+    TTS_PROVIDER,
 )
 
 # Remove default loguru handler and set up custom logging
@@ -85,10 +86,19 @@ except:
 async def lifespan(app: FastAPI):
     """Handle app lifespan events."""
     logger.info(f"Starting Pipecat service on http://{PIPECAT_HOST}:{PIPECAT_PORT}...")
-    logger.info("Make sure SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and DEEPINFRA_API_KEY are set")
+    logger.info(f"TTS Provider: {TTS_PROVIDER}")
 
-    if not SPEECHMATICS_API_KEY or not ELEVENLABS_API_KEY or not DEEPINFRA_API_KEY:
-        logger.error("ERROR: API keys not found! Please set SPEECHMATICS_API_KEY, ELEVENLABS_API_KEY, and DEEPINFRA_API_KEY")
+    # Check required API keys based on TTS provider
+    missing_keys = []
+    if not SPEECHMATICS_API_KEY:
+        missing_keys.append("SPEECHMATICS_API_KEY")
+    if not DEEPINFRA_API_KEY:
+        missing_keys.append("DEEPINFRA_API_KEY")
+    if TTS_PROVIDER == "elevenlabs" and not ELEVENLABS_API_KEY:
+        missing_keys.append("ELEVENLABS_API_KEY")
+
+    if missing_keys:
+        logger.error(f"ERROR: Missing required API keys: {', '.join(missing_keys)}")
         sys.exit(1)
 
     yield  # Run app
@@ -142,9 +152,11 @@ async def status():
     """Health check endpoint."""
     return {
         "status": "ok",
+        "tts_provider": TTS_PROVIDER,
         "speechmatics_configured": bool(SPEECHMATICS_API_KEY),
-        "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
-        "deepinfra_configured": bool(DEEPINFRA_API_KEY)
+        "elevenlabs_configured": bool(ELEVENLABS_API_KEY) if TTS_PROVIDER == "elevenlabs" else None,
+        "deepinfra_configured": bool(DEEPINFRA_API_KEY),
+        "qwen3_tts_configured": True if TTS_PROVIDER == "qwen3" else None,
     }
 
 
