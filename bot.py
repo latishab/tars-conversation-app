@@ -22,7 +22,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask
+from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
@@ -72,7 +72,8 @@ from loggers import (
     AssistantResponseLogger,
     TTSSpeechStateBroadcaster,
     VisionLogger,
-    LatencyLogger,
+    MetricsLogger,
+    # LatencyLogger,  # Replaced with built-in Pipecat metrics
 )
 from character.prompts import (
     load_persona_ini,
@@ -87,6 +88,10 @@ from modules.module_tools import (
     create_adjust_persona_schema,
     create_identity_schema,
     get_persona_storage,
+)
+from modules.module_crossword import (
+    get_crossword_hint,
+    create_crossword_hint_schema,
 )
 
 
@@ -258,9 +263,12 @@ async def run_bot(webrtc_connection):
                         "similarity_boost": 0.75,
                         "style": 0.0,
                         "use_speaker_boost": True
-                    }
+                    },
+                    params=ElevenLabsTTSService.InputParams(
+                        enable_logging=True,  # Enable ElevenLabs logging for metrics
+                    ),
                 )
-                logger.info("✓ ElevenLabs TTS service created")
+                logger.info("✓ ElevenLabs TTS service created with logging enabled")
 
             service_refs["tts"] = tts
         except Exception as e:
@@ -285,16 +293,27 @@ async def run_bot(webrtc_connection):
             tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
             system_prompt = build_tars_system_prompt(persona_params, tars_data)
 
+            # Create tool schemas (these return FunctionSchema objects)
             fetch_image_tool = create_fetch_image_schema()
             persona_tool = create_adjust_persona_schema()
             identity_tool = create_identity_schema()
-            
-            tools = ToolsSchema(standard_tools=[fetch_image_tool, persona_tool, identity_tool])
+            crossword_hint_tool = create_crossword_hint_schema()
+
+            # Pass FunctionSchema objects directly to standard_tools
+            tools = ToolsSchema(
+                standard_tools=[
+                    fetch_image_tool,
+                    persona_tool,
+                    identity_tool,
+                    crossword_hint_tool
+                ]
+            )
             messages = [system_prompt]
             context = LLMContext(messages, tools)
 
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+            llm.register_function("get_crossword_hint", get_crossword_hint)
 
             pipeline_unifier = IdentityUnifier(client_id)
             async def wrapped_set_identity(params: FunctionCallParams):
@@ -338,7 +357,7 @@ async def run_bot(webrtc_connection):
             logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
 
         except Exception as e:
-            logger.error(f"Failed to initialize LLM: {e}")
+            logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
             return
 
         # ====================================================================
@@ -365,17 +384,20 @@ async def run_bot(webrtc_connection):
             sampling_interval=EMOTIONAL_SAMPLING_INTERVAL,
             intervention_threshold=EMOTIONAL_INTERVENTION_THRESHOLD,
             enabled=EMOTIONAL_MONITORING_ENABLED,
+            auto_intervene=False,  # Let gating layer handle intervention decisions
         )
         logger.info(f"✓ Emotional State Monitor initialized (enabled: {EMOTIONAL_MONITORING_ENABLED})")
+        logger.info(f"   Mode: Integrated with gating layer for smarter decisions")
 
         logger.info("Initializing Gating Layer...")
         gating_layer = InterventionGating(
             api_key=DEEPINFRA_API_KEY,
             base_url=DEEPINFRA_BASE_URL,
             model=DEEPINFRA_GATING_MODEL,
-            visual_observer=visual_observer
+            visual_observer=visual_observer,
+            emotional_monitor=emotional_monitor
         )
-        logger.info(f"✓ Gating Layer initialized")
+        logger.info(f"✓ Gating Layer initialized with emotional state integration")
 
         # ====================================================================
         # MEMORY SERVICE
@@ -428,11 +450,15 @@ async def run_bot(webrtc_connection):
             webrtc_connection=webrtc_connection,
             client_state=client_state
         )
-
         assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
         tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
         vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
-        latency_logger = LatencyLogger()
+
+        # Create 3 separate MetricsLogger instances (one per pipeline position)
+        metrics_logger_stt = MetricsLogger(webrtc_connection=webrtc_connection)
+        metrics_logger_llm = MetricsLogger(webrtc_connection=webrtc_connection)
+        metrics_logger_tts = MetricsLogger(webrtc_connection=webrtc_connection)
+
         turn_logger = TurnDetectionLogger()
 
         # ====================================================================
@@ -443,18 +469,21 @@ async def run_bot(webrtc_connection):
 
         pipeline = Pipeline([
             pipecat_transport.input(),
-            emotional_monitor,  # Real-time emotional state monitoring
+            # emotional_monitor,  # Real-time emotional state monitoring
             stt,
+            metrics_logger_stt,  # Capture STT metrics
             # turn_logger,
             pipeline_unifier,
             transcription_logger,
             context_aggregator.user(),
             memory_service,  # Mem0 memory service for automatic recall/storage
+            # gating_layer,  # AI decision system (with emotional state integration)
             llm,
+            metrics_logger_llm,  # Capture LLM metrics
             assistant_logger,
-            latency_logger,
             SilenceFilter(),
             tts,
+            metrics_logger_tts,  # Capture TTS metrics
             tts_state_broadcaster,
             pipecat_transport.output(),
             context_aggregator.assistant(),
@@ -472,6 +501,13 @@ async def run_bot(webrtc_connection):
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})
+                    # Send service configuration info
+                    webrtc_connection.send_app_message({
+                        "type": "service_info",
+                        "stt": "Speechmatics",
+                        "llm": DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL,
+                        "tts": "ElevenLabs" if TTS_PROVIDER == "elevenlabs" else "Qwen3-TTS"
+                    })
             except Exception:
                 pass
 
@@ -499,7 +535,15 @@ async def run_bot(webrtc_connection):
         # PIPELINE EXECUTION
         # ====================================================================
 
-        task = PipelineTask(pipeline)
+        # Enable built-in Pipecat metrics for latency tracking
+        task = PipelineTask(
+            pipeline,
+            params=PipelineParams(
+                enable_metrics=True,              # Enable performance metrics (TTFB, latency)
+                enable_usage_metrics=True,        # Enable LLM/TTS usage metrics
+                report_only_initial_ttfb=False,   # Report all TTFB measurements
+            ),
+        )
         task_ref["task"] = task
         runner = PipelineRunner(handle_sigint=False)
 

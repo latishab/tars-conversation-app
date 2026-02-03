@@ -73,6 +73,7 @@ class EmotionalStateMonitor(FrameProcessor):
         sampling_interval: float = 3.0,
         intervention_threshold: int = 2,
         enabled: bool = True,
+        auto_intervene: bool = False,
     ):
         """
         Args:
@@ -81,6 +82,8 @@ class EmotionalStateMonitor(FrameProcessor):
             sampling_interval: Seconds between frame analyses (default: 3.0)
             intervention_threshold: Number of consecutive negative states before intervening
             enabled: Whether monitoring is active
+            auto_intervene: If True, automatically triggers LLM when threshold reached.
+                           If False, only tracks state (used by gating layer)
         """
         super().__init__()
         self._vision_client = vision_client
@@ -88,6 +91,7 @@ class EmotionalStateMonitor(FrameProcessor):
         self._sampling_interval = sampling_interval
         self._intervention_threshold = intervention_threshold
         self._enabled = enabled
+        self._auto_intervene = auto_intervene
 
         # State tracking
         self._last_sample_time = 0
@@ -96,9 +100,14 @@ class EmotionalStateMonitor(FrameProcessor):
         self._consecutive_negative_states = 0
         self._analyzing = False
 
+        # Cooldown tracking (when user declines help)
+        self._help_declined_time: Optional[float] = None
+        self._cooldown_duration = 30.0  # seconds - don't re-offer help for 30s after decline
+
         logger.info(f"🧠 Emotional State Monitor initialized")
         logger.info(f"   Sampling interval: {sampling_interval}s")
         logger.info(f"   Intervention threshold: {intervention_threshold}")
+        logger.info(f"   Auto-intervene: {auto_intervene}")
         logger.info(f"   Enabled: {enabled}")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -197,10 +206,16 @@ class EmotionalStateMonitor(FrameProcessor):
                 else:
                     self._consecutive_negative_states = 0
 
-                # Trigger intervention if threshold reached
-                if self._consecutive_negative_states >= self._intervention_threshold:
+                # Trigger intervention if threshold reached AND auto-intervene enabled
+                if self._auto_intervene and self._consecutive_negative_states >= self._intervention_threshold:
                     await self._trigger_intervention(state)
                     self._consecutive_negative_states = 0  # Reset after intervention
+                elif self._consecutive_negative_states >= self._intervention_threshold:
+                    # Just log, don't intervene (gating layer will handle it)
+                    logger.info(
+                        f"🎭 Intervention threshold reached ({self._consecutive_negative_states}) "
+                        f"- state available for gating layer"
+                    )
 
             except asyncio.TimeoutError:
                 logger.warning("⚠️ Emotional analysis timed out")

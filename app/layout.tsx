@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { MetricsProvider } from './lib/MetricsContext'
 
 export const metadata: Metadata = {
   title: 'TARS Omni',
-  description: 'Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs',
 }
 
 export default function RootLayout({
@@ -13,7 +13,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <MetricsProvider>{children}</MetricsProvider>
+      </body>
     </html>
   )
 }

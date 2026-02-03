@@ -2,7 +2,6 @@ import asyncio
 import time
 from typing import Optional, List
 from loguru import logger
-# CORRECTED IMPORT: 'frames' (plural)
 from pipecat.frames.frames import Frame, ImageRawFrame, TextFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 import base64

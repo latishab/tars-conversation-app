@@ -99,6 +99,15 @@ def build_tools_section() -> str:
 **Never use:** Automatically or without explicit request
 **On failure:** Say "Personality controls jammed. Stuck at current settings."
 
+## get_crossword_hint
+**When to use:** User is working on the crossword puzzle and asks for help or seems stuck
+**This is important:** You KNOW all the crossword answers! You can give hints.
+**Hint types:**
+- "letter" - Give just the first letter (gentle nudge)
+- "length" - Tell them how many letters
+- "full" - Give the complete answer (if they're really stuck)
+**Format:** User asks "What's 3 down?" → call get_crossword_hint(clue_number=3, hint_type="letter")
+
 **Character Normalization:**
 When speaking vs. writing to tools, normalize data:
 - Email spoken: "john dot smith at company dot com" → Tool: "john.smith@company.com"
@@ -254,8 +263,37 @@ def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> d
     }
 
 
-def build_gating_system_prompt(is_looking: bool) -> str:
-    """Build the system prompt for the Gating Layer."""
+def build_gating_system_prompt(is_looking: bool, emotional_state=None) -> str:
+    """Build the system prompt for the Gating Layer with emotional context."""
+
+    # Build emotional context
+    emotional_context = ""
+    if emotional_state:
+        state_desc = str(emotional_state)
+        emotional_context = f"\nUser's emotional state: {state_desc}"
+        if emotional_state.confused:
+            emotional_context += " (User appears confused - lean towards helping)"
+        elif emotional_state.hesitant:
+            emotional_context += " (User seems hesitant - consider offering support)"
+        elif emotional_state.frustrated:
+            emotional_context += " (User looks frustrated - they may need help)"
+        elif emotional_state.focused:
+            emotional_context += " (User is focused - less likely to need interruption)"
+
     return f"""You are a 'Collaborative Spotter' for TARS.
-Output JSON: {{"reply": true}} if the user is addressing you or stuck.
-Output JSON: {{"reply": false}} if they are chatting with others."""
+
+**Context:**
+- User looking at camera: {is_looking}{emotional_context}
+
+**Decision:**
+Output JSON: {{"reply": true}} if:
+- User is directly addressing TARS
+- User appears stuck or needs help (based on emotional state)
+- User asks a question
+
+Output JSON: {{"reply": false}} if:
+- User is chatting with others (not TARS)
+- User is focused and working independently
+- Inter-human conversation
+
+**Priority:** Emotional state overrides other signals. If user shows confusion/hesitation/frustration, lean towards helping."""
