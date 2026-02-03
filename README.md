@@ -14,6 +14,7 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 - 🧠 **Memory** - Optional Mem0 long-term memory
 - 🎙️ **Voice Cloning** - 3 seconds of audio with Qwen3-TTS
 - 😊 **Emotional Monitoring** - Real-time detection of confusion/hesitation/frustration
+- 🧩 **Interactive Crossword** - Built-in puzzle to test emotional monitoring (TARS knows the answers!)
 
 ## Quick Start
 
@@ -71,7 +72,12 @@ tars-omni/
 ├── config/                # Environment config
 ├── character/             # TARS personality
 ├── processors/            # Frame processors
+│   ├── emotional_monitor.py  # Real-time emotion detection
+│   ├── gating.py         # Intervention decision system
+│   ├── visual_observer.py    # Vision analysis
+│   └── filters.py        # Audio filtering
 ├── services/              # AI services (TTS/STT/LLM)
+│   └── qwen_tts_service.py   # Local voice cloning
 ├── modules/               # LLM tools/functions
 ├── memory/                # Mem0 integration
 └── scripts/               # Utilities
@@ -128,8 +134,11 @@ ELEVENLABS_API_KEY=your_key
 2. **Emotional Monitor** → Analyzes video for confusion/hesitation (every 3s)
 3. **VAD** → Detects when user stops speaking
 4. **STT** → Speechmatics transcribes with speaker labels
-5. **Gating** → AI decides if TARS should respond
-6. **LLM** → Qwen processes and generates response
+5. **Gating** → AI decides if TARS should respond using:
+   - Emotional state (priority 1)
+   - Visual cues (priority 2)
+   - Transcription (priority 3)
+6. **LLM** → Qwen processes and generates response (if gating passes)
 7. **Vision** → Moondream analyzes images when requested
 8. **TTS** → Qwen3-TTS or ElevenLabs synthesizes speech
 9. **Audio Output** → Streamed back via WebRTC
@@ -145,9 +154,10 @@ ELEVENLABS_API_KEY=your_key
 ### Testing
 
 ```bash
-python test_qwen_tts.py          # Qwen3-TTS standalone test
-python test_qwen_pipecat.py      # Qwen3-TTS Pipecat integration
-python test_emotional_monitor.py # Emotional monitoring test
+python test_qwen_tts.py                    # Qwen3-TTS standalone
+python test_qwen_pipecat.py                # Qwen3-TTS Pipecat integration
+python test_emotional_monitor.py           # Emotional state detection
+python test_gating_emotional_integration.py # Gating + emotions integration
 ```
 
 ### Switching TTS Providers
@@ -164,29 +174,78 @@ Place audio file in root, update `.env.local`:
 QWEN3_TTS_REF_AUDIO=your-voice.mp3
 ```
 
-### Emotional Monitoring
+### Emotional Monitoring (Integrated with Gating)
 
-TARS continuously analyzes your video feed for emotional cues and offers help proactively.
+TARS continuously analyzes your video feed and **integrates emotional state into smart gating decisions**.
 
 **Detects**:
 - 😕 Confusion (puzzled expression, furrowed brow)
 - 🤔 Hesitation (pauses, uncertain gestures)
 - 😤 Frustration (tense posture, agitated movements)
+- 😊 Focus (engaged, attentive posture)
 
 **Configuration**:
 ```env
 EMOTIONAL_MONITORING_ENABLED=true       # Enable/disable
 EMOTIONAL_SAMPLING_INTERVAL=3.0        # Analysis frequency (seconds)
-EMOTIONAL_INTERVENTION_THRESHOLD=2     # Consecutive states before help
+EMOTIONAL_INTERVENTION_THRESHOLD=2     # Consecutive states before flagging
 ```
 
-**How it works**:
-1. Samples video frames every 3 seconds
-2. Moondream analyzes emotional/cognitive state
-3. Detects patterns indicating difficulty
-4. After 2 consecutive negative states, TARS offers help
+**How it works (3-Signal Gating)**:
+1. **Emotional State** (Highest Priority)
+   - Confused/Hesitant/Frustrated → TARS always responds
+   - Focused → Less likely to interrupt
+2. **Vision** (Medium Priority)
+   - Looking at camera → More likely to respond
+3. **Transcription** (Base Signal)
+   - "TARS, ..." → Direct address detected
+
+**Decision Flow**:
+```
+Emotional State → Vision → Transcription → Decision
+     ↓               ↓          ↓              ↓
+  Confused?       Looking?   Addressing?    Respond?
+  → YES     →     BYPASS  →  BYPASS     →    YES
+  → Focused →     No      →  No         →    NO
+  → Neutral →     Yes     →  Yes        →    YES
+```
+
+**Benefits**:
+- Proactive help when you struggle (even without asking)
+- Respects focus time (won't interrupt when engaged)
+- Smarter than transcription-only gating
 
 **Disable**: Set `EMOTIONAL_MONITORING_ENABLED=false`
+
+### Interactive Crossword (Emotional Monitoring Test)
+
+Built-in crossword puzzle to test the emotional monitoring system in action!
+
+**How to use**:
+1. Start voice session
+2. Click "🧩 Show Crossword" button
+3. Work on the crossword puzzle
+4. TARS watches you via webcam
+5. When you look confused/stuck, TARS offers help!
+
+**TARS capabilities**:
+- Knows ALL the answers
+- Can give hints (first letter, word length, or full answer)
+- Watches your emotional state while you work
+- Proactively offers help when you struggle
+
+**Example interaction**:
+```
+You: [Looking puzzled at clue #3]
+TARS: "I notice you might be stuck. Need a hint for that one?"
+You: "Yeah, what's 3 down?"
+TARS: "Hmm... flying mammal, starts with 'B'. Three letters."
+```
+
+**Perfect for testing**:
+- Place TARS on right side of table (looking at you)
+- Do the crossword (challenging enough to get confused)
+- Experience proactive AI assistance based on your expressions!
 
 ## API Endpoints
 

@@ -124,39 +124,41 @@ class Qwen3TTSService(TTSService):
         logger.debug(f"Generating TTS for text: {text[:50]}...")
 
         try:
-            # Ensure model is loaded
+            # Ensure model is loaded (includes voice clone prompt if ref audio provided)
             await self._load_model()
 
+            # CRITICAL: If voice clone prompt is still not ready, skip this TTS request
+            # This prevents crashes when TTS is called before voice cloning is initialized
+            if self._voice_clone_prompt is None:
+                logger.warning(f"Voice clone prompt not ready yet, skipping TTS for: {text[:30]}...")
+                yield TTSStartedFrame()
+                yield TTSStoppedFrame()
+                return
+
             yield TTSStartedFrame()
+
+            # Start TTFB metrics tracking
+            await self.start_ttfb_metrics()
 
             start_time = time.time()
 
             # Run TTS in executor to avoid blocking
             loop = asyncio.get_event_loop()
 
-            if self._voice_clone_prompt is not None:
-                # Use pre-created voice clone prompt (faster)
-                wavs, sr = await loop.run_in_executor(
-                    None,
-                    lambda: self._model.generate_voice_clone(
-                        text=text,
-                        language="English",
-                        voice_clone_prompt=self._voice_clone_prompt,
-                    ),
-                )
-            else:
-                # Fallback to regular generation (no voice cloning)
-                logger.warning("No voice clone prompt - using default voice")
-                wavs, sr = await loop.run_in_executor(
-                    None,
-                    lambda: self._model.generate_custom_voice(
-                        text=text,
-                        language="English",
-                        speaker="Vivian",
-                    ),
-                )
+            # Use voice clone prompt (guaranteed to be ready at this point)
+            wavs, sr = await loop.run_in_executor(
+                None,
+                lambda: self._model.generate_voice_clone(
+                    text=text,
+                    language="English",
+                    voice_clone_prompt=self._voice_clone_prompt,
+                ),
+            )
 
             generation_time = time.time() - start_time
+
+            # Stop TTFB metrics tracking (first audio ready)
+            await self.stop_ttfb_metrics()
 
             # Convert to the expected format
             audio_data = wavs[0]
@@ -194,6 +196,7 @@ class Qwen3TTSService(TTSService):
 
         except Exception as e:
             logger.error(f"TTS generation error: {e}", exc_info=True)
+            await self.stop_ttfb_metrics()  # Ensure metrics are stopped on error
             yield ErrorFrame(f"TTS Error: {str(e)}")
             yield TTSStoppedFrame()
 

@@ -11,48 +11,64 @@ from character.prompts import build_gating_system_prompt
 
 class InterventionGating(FrameProcessor):
     """
-    Traffic Controller: Decides if TARS should reply based on Audio + Vision.
+    Traffic Controller: Decides if TARS should reply based on Audio + Vision + Emotions.
     Uses OpenAI-compatible API (DeepInfra).
     """
     def __init__(
-        self, 
-        api_key: str, 
+        self,
+        api_key: str,
         base_url: str = "https://api.deepinfra.com/v1/openai",
         model: str = "meta-llama/Llama-3.2-3B-Instruct",
-        visual_observer=None
+        visual_observer=None,
+        emotional_monitor=None
     ):
         super().__init__()
         self.api_key = api_key
         self.base_url = base_url
-        self.model = model 
+        self.model = model
         self.visual_observer = visual_observer
+        self.emotional_monitor = emotional_monitor
         self.api_url = f"{base_url}/chat/completions"
 
     async def _check_should_reply(self, messages: list) -> bool:
-        """Asks the fast LLM if we should reply (Audio + Vision)."""
+        """Asks the fast LLM if we should reply (Audio + Vision + Emotions)."""
         if not messages:
             return False
 
         # Extract the last user message
         last_msg = messages[-1]
         if last_msg.get("role") != "user":
-            return True 
+            return True
 
-        # 1. READ VISUAL CONTEXT (0ms Latency)
+        # 1. READ EMOTIONAL STATE (Highest Priority)
+        emotional_state = None
+        needs_help = False
+        if self.emotional_monitor:
+            emotional_state = self.emotional_monitor.get_current_state()
+            if emotional_state and emotional_state.needs_intervention():
+                # User is confused/hesitant/frustrated - ALWAYS respond
+                logger.info(
+                    f"🧠 Gating: User shows {emotional_state} - BYPASSING gating, offering help"
+                )
+                return True
+            needs_help = emotional_state.needs_intervention() if emotional_state else False
+
+        # 2. READ VISUAL CONTEXT (0ms Latency)
         is_looking = False
         if self.visual_observer:
             # Read the variable updated by the background task
             is_looking = self.visual_observer.visual_context.get("is_looking_at_robot", False)
-            
+
             # Ignore if data is too old (> 5 seconds)
             last_update = self.visual_observer.visual_context.get("last_updated", 0)
             if time.time() - last_update > 5.0:
-                is_looking = False 
+                is_looking = False
 
-        # 2. ANALYZE CONTEXT
+        # 3. ANALYZE CONTEXT
         history_text = "\n".join([f"{m['role']}: {m['content']}" for m in messages[-3:]])
-        
-        system_prompt = build_gating_system_prompt(is_looking)
+
+        # Build enriched system prompt with emotional context
+        system_prompt = build_gating_system_prompt(is_looking, emotional_state)
 
         payload = {
             "model": self.model,

@@ -7,6 +7,8 @@ import { Badge } from './components/ui/badge'
 import { Alert, AlertDescription } from './components/ui/alert'
 import { Separator } from './components/ui/separator'
 import { Progress } from './components/ui/progress'
+import { Crossword } from './components/Crossword'
+import { useMetrics } from './lib/MetricsContext'
 
 interface TranscriptionEntry {
   text: string
@@ -21,7 +23,10 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isTarsSpeaking, setIsTarsSpeaking] = useState(false)
-  
+  const [showCrossword, setShowCrossword] = useState(false)
+  const [crosswordProgress, setCrosswordProgress] = useState<any>(null)
+
+  const { addMetric, setServiceInfo } = useMetrics()
   const audioRef = useRef<HTMLAudioElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -228,12 +233,30 @@ export default function Home() {
     const handleMessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data)
+
         if (data.type === 'transcription') {
           const entry = { text: data.text, speakerId: data.speaker_id || null }
           setTranscription(entry); setPartialTranscription(null);
           if (data.text) setTranscriptionHistory(prev => [...prev, entry])
         } else if (data.type === 'partial') {
           setPartialTranscription({ text: data.text, speakerId: data.speaker_id || null })
+        } else if (data.type === 'metrics') {
+          // Add metrics to context
+          addMetric({
+            turn_number: data.turn_number,
+            timestamp: data.timestamp,
+            stt_ttfb_ms: data.stt_ttfb_ms,
+            llm_ttfb_ms: data.llm_ttfb_ms,
+            tts_ttfb_ms: data.tts_ttfb_ms,
+            total_ms: data.total_ms,
+          })
+        } else if (data.type === 'service_info') {
+          // Store service configuration
+          setServiceInfo({
+            stt: data.stt,
+            llm: data.llm,
+            tts: data.tts,
+          })
         } else if (data.type === 'error') {
           setError(data.message); setIsConnected(false); setIsListening(false);
         }
@@ -329,11 +352,10 @@ export default function Home() {
         <div className="flex flex-col gap-4">
           <div className="text-center">
             <h1 className="text-4xl font-bold text-gray-900 mb-2">TARS Omni</h1>
-            <p className="text-lg text-gray-600">Real-time Voice AI powered by Qwen, Speechmatics & ElevenLabs</p>
           </div>
 
           <div className="flex flex-col items-center gap-4">
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap justify-center">
               {!isConnected ? (
                 <Button onClick={startConnection} size="lg" className="px-6 py-3 text-lg">
                   🎙️ Start Voice Session
@@ -343,6 +365,22 @@ export default function Home() {
                   ⏹️ Stop Session
                 </Button>
               )}
+              <Button
+                onClick={() => setShowCrossword(!showCrossword)}
+                variant="outline"
+                size="lg"
+                className="px-6 py-3 text-lg"
+              >
+                {showCrossword ? '🗣️ Show Chat' : '🧩 Show Crossword'}
+              </Button>
+              <Button
+                onClick={() => window.open('/metrics', '_blank')}
+                variant="outline"
+                size="lg"
+                className="px-6 py-3 text-lg"
+              >
+                📊 View Metrics
+              </Button>
             </div>
             {isListening && (
               <div className="flex items-center gap-2 text-green-600 font-medium">
@@ -358,7 +396,14 @@ export default function Home() {
             </Alert>
           )}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
+
+        {/* Crossword Section */}
+        {showCrossword ? (
+          <div className="w-full">
+            <Crossword onProgressUpdate={setCrosswordProgress} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
           <div className="space-y-6">
             <Card>
               <CardContent className="p-4">
@@ -457,6 +502,7 @@ export default function Home() {
             </Card>
           </div>
         </div>
+        )}
       </div>
     </main>
   )

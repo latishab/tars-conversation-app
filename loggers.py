@@ -25,7 +25,9 @@ from pipecat.frames.frames import (
     TTSAudioRawFrame,
     UserImageRequestFrame,
     ErrorFrame,
+    MetricsFrame,
 )
+from pipecat.metrics.metrics import TTFBMetricsData
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 
@@ -76,75 +78,6 @@ class TurnDetectionLogger(FrameProcessor):
             logger.info(f"🗣️  [TurnDetector] Turn #{self._turn_count} ENDED")
 
         await self.push_frame(frame, direction)
-
-class LatencyLogger(FrameProcessor):
-    """Tracks latency from STT transcription to TTS start."""
-
-    # Class-level shared state (all instances share this)
-    _shared_state = {
-        "_last_transcription_time": None,
-        "_last_transcription_text": None,
-        "_llm_response_time": None,
-        "_conversation_turn": 0
-    }
-
-    def __init__(self):
-        super().__init__()
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        current_time = time.time()
-        state = LatencyLogger._shared_state
-
-        # Track when transcription is received (STT complete) - can be UPSTREAM or DOWNSTREAM
-        if isinstance(frame, TranscriptionFrame):
-            state["_last_transcription_time"] = current_time
-            state["_last_transcription_text"] = getattr(frame, 'text', None) or ""
-            state["_llm_response_time"] = None  # Reset LLM response time for new turn
-            state["_conversation_turn"] += 1
-            text_preview = state["_last_transcription_text"][:50] + "..." if len(state["_last_transcription_text"]) > 50 else state["_last_transcription_text"]
-
-        # Track when LLM generates response - DOWNSTREAM
-        elif isinstance(frame, LLMTextFrame):
-            # Only track the first LLM response time (multiple LLMTextFrames per response)
-            if state["_last_transcription_time"] is not None and state["_llm_response_time"] is None:
-                state["_llm_response_time"] = current_time
-
-        # Track when TTS starts (calculate total latency) - DOWNSTREAM
-        elif isinstance(frame, TTSStartedFrame):
-            if state["_last_transcription_time"] is not None:
-                total_latency = current_time - state["_last_transcription_time"]
-
-                # Safely get transcription text for logging
-                transcription_text = state["_last_transcription_text"] or "(no text)"
-                text_preview = transcription_text[:60] + "..." if len(transcription_text) > 60 else transcription_text
-
-                # Calculate breakdown if we have LLM response time
-                if state["_llm_response_time"] is not None:
-                    stt_to_llm = state["_llm_response_time"] - state["_last_transcription_time"]
-                    llm_to_tts = current_time - state["_llm_response_time"]
-
-                    logger.info(
-                        f"⏱️  Latency (turn #{state['_conversation_turn']}): "
-                        f"Total={total_latency:.3f}s "
-                        f"(STT→LLM={stt_to_llm:.3f}s, LLM→TTS={llm_to_tts:.3f}s) | "
-                        f"User: \"{text_preview}\""
-                    )
-                else:
-                    logger.info(
-                        f"⏱️  Latency (turn #{state['_conversation_turn']}): "
-                        f"Total={total_latency:.3f}s (STT→TTS) | "
-                        f"User: \"{text_preview}\""
-                    )
-
-                # Reset for next turn
-                state["_last_transcription_time"] = None
-                state["_last_transcription_text"] = None
-                state["_llm_response_time"] = None
-
-        await self.push_frame(frame, direction)
-
 
 # ============================================================================
 # USER INTERACTION LOGGERS
@@ -467,3 +400,146 @@ class VisionLogger(FrameProcessor):
             self._last_summary_time = current_time
 
         await self.push_frame(frame, direction)
+
+
+class MetricsLogger(FrameProcessor):
+    """Logs MetricsFrame data and sends TTFB metrics to frontend."""
+
+    # Class-level shared state (all instances share this)
+    _shared_state = {
+        "_turn_number": 0,
+        "_current_metrics": {},
+        "_tts_text_time": None,
+        "_last_sent_metrics": {},  # Track what we last sent to avoid duplicates
+    }
+
+    def __init__(self, webrtc_connection=None):
+        super().__init__()
+        self.webrtc_connection = webrtc_connection
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        state = MetricsLogger._shared_state
+
+        # Track turn numbers
+        if isinstance(frame, UserStoppedSpeakingFrame):
+            state["_turn_number"] += 1
+            state["_current_metrics"] = {}  # Reset for new turn
+            state["_tts_text_time"] = None  # Reset TTS tracking
+            state["_last_sent_metrics"] = {}  # Reset sent tracking for new turn
+
+        # Fallback: Manually track TTS TTFB if MetricsFrame isn't available
+        elif isinstance(frame, TTSTextFrame):
+            # Record when TTS text arrives
+            state["_tts_text_time"] = time.time()
+            logger.debug(f"TTS text received for turn #{state['_turn_number']}")
+
+        elif isinstance(frame, TTSStartedFrame):
+            # Calculate TTS TTFB when audio generation starts (fallback)
+            if state["_tts_text_time"] is not None and 'tts_ttfb_ms' not in state["_current_metrics"]:
+                tts_ttfb_seconds = time.time() - state["_tts_text_time"]
+                tts_ttfb_ms = tts_ttfb_seconds * 1000
+                state["_current_metrics"]['tts_ttfb_ms'] = tts_ttfb_ms
+                logger.debug(f"TTS TTFB (fallback): {tts_ttfb_ms:.2f}ms")
+
+                # Recalculate total and send update
+                total = sum([
+                    state["_current_metrics"].get('stt_ttfb_ms', 0),
+                    state["_current_metrics"].get('llm_ttfb_ms', 0),
+                    state["_current_metrics"].get('tts_ttfb_ms', 0)
+                ])
+                if total > 0:
+                    state["_current_metrics"]['total_ms'] = total
+                    logger.info(
+                        f"📊 Metrics [Turn #{state['_turn_number']}]: "
+                        f"stt_ttfb_ms={state['_current_metrics'].get('stt_ttfb_ms', 'N/A')}, "
+                        f"llm_ttfb_ms={state['_current_metrics'].get('llm_ttfb_ms', 'N/A')}, "
+                        f"tts_ttfb_ms={state['_current_metrics'].get('tts_ttfb_ms', 'N/A')}, "
+                        f"total_ms={state['_current_metrics'].get('total_ms', 'N/A')}"
+                    )
+                    self._send_to_frontend()
+
+                state["_tts_text_time"] = None  # Reset after calculating
+
+        # Capture MetricsFrame data
+        elif isinstance(frame, MetricsFrame):
+            try:
+                # Extract TTFB metrics from MetricsFrame.data list
+                for metric_data in frame.data:
+                    if isinstance(metric_data, TTFBMetricsData):
+                        processor = metric_data.processor
+                        value_ms = metric_data.value * 1000  # Convert seconds to milliseconds
+
+                        # Categorize by processor type
+                        if 'stt' in processor.lower() or 'speechmatics' in processor.lower():
+                            state["_current_metrics"]['stt_ttfb_ms'] = value_ms
+                            logger.debug(f"STT TTFB: {value_ms:.2f}ms from {processor}")
+                        elif 'llm' in processor.lower() or 'openai' in processor.lower() or 'deepinfra' in processor.lower():
+                            state["_current_metrics"]['llm_ttfb_ms'] = value_ms
+                            logger.debug(f"LLM TTFB: {value_ms:.2f}ms from {processor}")
+                        elif 'tts' in processor.lower() or 'elevenlabs' in processor.lower() or 'qwen' in processor.lower():
+                            state["_current_metrics"]['tts_ttfb_ms'] = value_ms
+                            logger.debug(f"TTS TTFB: {value_ms:.2f}ms from {processor}")
+
+                # Calculate total latency and send if we have any metrics
+                if state["_current_metrics"]:
+                    total = sum([
+                        state["_current_metrics"].get('stt_ttfb_ms', 0),
+                        state["_current_metrics"].get('llm_ttfb_ms', 0),
+                        state["_current_metrics"].get('tts_ttfb_ms', 0)
+                    ])
+                    if total > 0:
+                        state["_current_metrics"]['total_ms'] = total
+
+                    # Log to console
+                    logger.info(
+                        f"📊 Metrics [Turn #{state['_turn_number']}]: "
+                        f"stt_ttfb_ms={state['_current_metrics'].get('stt_ttfb_ms', 'N/A')}, "
+                        f"llm_ttfb_ms={state['_current_metrics'].get('llm_ttfb_ms', 'N/A')}, "
+                        f"tts_ttfb_ms={state['_current_metrics'].get('tts_ttfb_ms', 'N/A')}, "
+                        f"total_ms={state['_current_metrics'].get('total_ms', 'N/A')}"
+                    )
+
+                    # Send to frontend
+                    self._send_to_frontend()
+
+            except Exception as e:
+                logger.error(f"Error processing MetricsFrame: {e}", exc_info=True)
+
+        await self.push_frame(frame, direction)
+
+    def _send_to_frontend(self):
+        """Send metrics to frontend via WebRTC data channel."""
+        if not self.webrtc_connection:
+            return
+
+        state = MetricsLogger._shared_state
+
+        # Check if metrics have changed since last send (deduplication)
+        current_metrics_key = (
+            state["_turn_number"],
+            state["_current_metrics"].get('stt_ttfb_ms'),
+            state["_current_metrics"].get('llm_ttfb_ms'),
+            state["_current_metrics"].get('tts_ttfb_ms'),
+        )
+
+        if current_metrics_key == state["_last_sent_metrics"]:
+            logger.debug("Skipping duplicate metrics send")
+            return
+
+        try:
+            if self.webrtc_connection.is_connected():
+                message = {
+                    "type": "metrics",
+                    "turn_number": state["_turn_number"],
+                    "timestamp": int(time.time() * 1000),  # Milliseconds since epoch
+                    **state["_current_metrics"]
+                }
+                self.webrtc_connection.send_app_message(message)
+                logger.info(f"📤 Sent metrics to frontend: {message}")
+
+                # Update last sent metrics
+                state["_last_sent_metrics"] = current_metrics_key
+        except Exception as e:
+            logger.error(f"Error sending metrics to frontend: {e}")
