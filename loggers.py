@@ -1,7 +1,7 @@
-"""All logging processors for debugging and monitoring the pipeline.
+"""All logging observers for debugging and monitoring the pipeline.
 
-This module contains processors focused on logging, monitoring, and sending
-status updates to the frontend. These are separate from data processing.
+This module contains observers focused on logging, monitoring, and sending
+status updates to the frontend. These don't interrupt the pipeline flow.
 """
 
 import asyncio
@@ -25,25 +25,24 @@ from pipecat.frames.frames import (
     TTSAudioRawFrame,
     UserImageRequestFrame,
     ErrorFrame,
-    MetricsFrame,
 )
-from pipecat.metrics.metrics import TTFBMetricsData
-from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 
 
 # ============================================================================
 # DEBUG & MONITORING LOGGERS
 # ============================================================================
 
-class DebugLogger(FrameProcessor):
+class DebugLogger(BaseObserver):
     """General purpose debug logger for non-media frames."""
 
     def __init__(self, label="Debug"):
         super().__init__()
         self.label = label
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed):
+        """Watch frames as they're pushed through the pipeline."""
+        frame = data.frame
 
         frame_type = type(frame).__name__
         if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
@@ -51,39 +50,11 @@ class DebugLogger(FrameProcessor):
             uid = getattr(frame, 'user_id', 'None')
             logger.info(f"🔍 [{self.label}] {frame_type} | User: '{uid}' | Content: {str(frame)[:100]}")
 
-        await self.push_frame(frame, direction)
-
-
-class TurnDetectionLogger(FrameProcessor):
-    """Logs turn detection and VAD events to verify turn analyzer is working."""
-
-    def __init__(self):
-        super().__init__()
-        self._turn_count = 0
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        # Log VAD events (Voice Activity Detection)
-        if isinstance(frame, VADUserStartedSpeakingFrame):
-            logger.info("🎙️  [TurnDetector] VAD detected: User STARTED speaking")
-        elif isinstance(frame, VADUserStoppedSpeakingFrame):
-            logger.info("🎙️  [TurnDetector] VAD detected: User STOPPED speaking")
-
-        # Log Turn Detection events (Smart Turn Detection)
-        elif isinstance(frame, UserStartedSpeakingFrame):
-            self._turn_count += 1
-            logger.info(f"🗣️  [TurnDetector] Turn #{self._turn_count} STARTED")
-        elif isinstance(frame, UserStoppedSpeakingFrame):
-            logger.info(f"🗣️  [TurnDetector] Turn #{self._turn_count} ENDED")
-
-        await self.push_frame(frame, direction)
-
 # ============================================================================
 # USER INTERACTION LOGGERS
 # ============================================================================
 
-class TranscriptionLogger(FrameProcessor):
+class TranscriptionLogger(BaseObserver):
     """Logs transcriptions and sends to frontend."""
 
     def __init__(self, webrtc_connection=None, client_state=None):
@@ -91,10 +62,9 @@ class TranscriptionLogger(FrameProcessor):
         self.webrtc_connection = webrtc_connection
         self.client_state = client_state or {}
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process frames as they pass through the pipeline."""
-
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed):
+        """Watch frames as they're pushed through the pipeline."""
+        frame = data.frame
 
         # --- (Logging Logic) ---
         if isinstance(frame, TranscriptionFrame):
@@ -117,8 +87,6 @@ class TranscriptionLogger(FrameProcessor):
             if self.webrtc_connection:
                 self._send_to_frontend("partial", frame.text, display_id)
 
-        await self.push_frame(frame, direction)
-
     def _send_to_frontend(self, type_str, text, speaker_id):
         """Helper to send messages to frontend via WebRTC data channel."""
         try:
@@ -132,7 +100,7 @@ class TranscriptionLogger(FrameProcessor):
             logger.error(f"Error sending {type_str}: {e}")
 
 
-class AssistantResponseLogger(FrameProcessor):
+class AssistantResponseLogger(BaseObserver):
     """Logs TARS assistant responses and forwards them to the frontend."""
 
     SENTENCE_REGEX = re.compile(r"(.+?[\.!\?\n])")
@@ -143,8 +111,9 @@ class AssistantResponseLogger(FrameProcessor):
         self._buffer = ""
         self._max_buffer_chars = 320
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed):
+        """Watch frames as they're pushed through the pipeline."""
+        frame = data.frame
 
         # Debug: Log all frame types to see what's coming through
         frame_type = type(frame).__name__
@@ -155,8 +124,6 @@ class AssistantResponseLogger(FrameProcessor):
             text = getattr(frame, "text", "") or ""
             logger.debug(f"📝 [AssistantLogger] Text frame detected: '{text[:50]}'")
             self._ingest_text(text)
-
-        await self.push_frame(frame, direction)
 
     def _ingest_text(self, text: str):
         if not text.strip():
@@ -194,7 +161,6 @@ class AssistantResponseLogger(FrameProcessor):
 
         try:
             if self.webrtc_connection.is_connected():
-                logger.info(f"📤 [AssistantLogger] Sending to frontend: type=assistant, text='{text[:50]}'")
                 self.webrtc_connection.send_app_message(
                     {
                         "type": "assistant",
@@ -211,7 +177,7 @@ class AssistantResponseLogger(FrameProcessor):
 # TTS & VISION LOGGERS
 # ============================================================================
 
-class TTSSpeechStateBroadcaster(FrameProcessor):
+class TTSSpeechStateBroadcaster(BaseObserver):
     """Emits `tts_state` messages whenever the assistant starts or stops speaking."""
 
     def __init__(self, webrtc_connection=None):
@@ -220,8 +186,9 @@ class TTSSpeechStateBroadcaster(FrameProcessor):
         self._speaking = False
         self._has_received_audio = False
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed):
+        """Watch frames as they're pushed through the pipeline."""
+        frame = data.frame
 
         # Priority 1: Explicit start/stop frames (most reliable)
         if isinstance(frame, TTSStartedFrame):
@@ -238,15 +205,13 @@ class TTSSpeechStateBroadcaster(FrameProcessor):
             self._has_received_audio = True
             # Note: We rely on TTSStoppedFrame to detect stop, not audio frame absence
 
-        await self.push_frame(frame, direction)
-
     def _set_state(self, active: bool):
         if self._speaking == active:
             return
 
         self._speaking = active
         state = "started" if active else "stopped"
-        logger.info(f"TTS state changed: {state}")
+        # logger.info(f"TTS state changed: {state}")
 
         if not self.webrtc_connection:
             return
@@ -264,7 +229,7 @@ class TTSSpeechStateBroadcaster(FrameProcessor):
             logger.error(f"Failed to send TTS state: {exc}")
 
 
-class VisionLogger(FrameProcessor):
+class VisionLogger(BaseObserver):
     """Logs vision processing events and Moondream activity."""
 
     def __init__(self, webrtc_connection=None):
@@ -273,19 +238,19 @@ class VisionLogger(FrameProcessor):
         self._video_frame_count = 0
         self._last_video_frame_time = None
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed):
+        """Watch frames as they're pushed through the pipeline."""
+        frame = data.frame
 
         current_time = time.time()
 
         frame_type = type(frame).__name__
-        direction_str = "UPSTREAM" if direction == FrameDirection.UPSTREAM else "DOWNSTREAM"
 
         # Log vision request frames
         if isinstance(frame, UserImageRequestFrame):
             user_id = getattr(frame, 'user_id', 'unknown')
             question = getattr(frame, 'text', 'unknown')
-            logger.info(f"👁️ Vision request received [{direction_str}]: user_id={user_id}, question={question}")
+            logger.info(f"👁️ Vision request received: user_id={user_id}, question={question}")
             self._last_vision_request_time = current_time  # Track when vision was requested
             self._vision_request_count = getattr(self, '_vision_request_count', 0) + 1
             logger.info(f"📊 Vision request #{self._vision_request_count} - waiting for video frames and Moondream response...")
@@ -308,21 +273,21 @@ class VisionLogger(FrameProcessor):
             if is_vision_active:
                 time_since_request = current_time - self._last_vision_request_time
                 if time_since_request < 5:  # Only log during active vision processing (5 seconds)
-                    logger.debug(f"📷 Vision-related frame [{direction_str}]: {frame_type}")
+                    logger.debug(f"📷 Vision-related frame: {frame_type}")
             else:
                 # Otherwise, only log at debug level (won't show unless debug logging is enabled)
-                logger.debug(f"📷 Vision-related frame [{direction_str}]: {frame_type}")
+                logger.debug(f"📷 Vision-related frame: {frame_type}")
 
         # Log frames with image attribute only at debug level
         elif hasattr(frame, 'image'):
-            logger.debug(f"📷 Frame with image attribute [{direction_str}]: {frame_type}")
+            logger.debug(f"📷 Frame with image attribute: {frame_type}")
 
         # Log any frame that might be a vision response by checking attributes
         elif hasattr(frame, 'user_id') and hasattr(frame, 'text'):
             user_id = getattr(frame, 'user_id', 'unknown')
             text = getattr(frame, 'text', '')
             if 'vision' in frame_type.lower() or 'image' in frame_type.lower() or 'moondream' in frame_type.lower():
-                logger.info(f"✅ Vision response frame [{direction_str}]: {frame_type}, user_id={user_id}")
+                logger.info(f"✅ Vision response frame: {frame_type}, user_id={user_id}")
                 logger.info(f"   Response: {text[:200]}..." if len(text) > 200 else f"   Response: {text}")
 
         # Log LLM text frames that might contain vision responses
@@ -337,10 +302,10 @@ class VisionLogger(FrameProcessor):
                 time_since_request = current_time - self._last_vision_request_time
                 if time_since_request < 10:  # Within 10 seconds of vision request
                     is_vision_response = True
-                    logger.info(f"✅ Vision response received [{direction_str}] (within {time_since_request:.1f}s of request): {text[:200]}..." if len(text) > 200 else f"✅ Vision response: {text}")
+                    logger.info(f"✅ Vision response received (within {time_since_request:.1f}s of request): {text[:200]}..." if len(text) > 200 else f"✅ Vision response: {text}")
 
             if text and any(keyword in text.lower() for keyword in vision_keywords) and not is_vision_response:
-                logger.info(f"✅ Possible vision response in LLM text [{direction_str}]: {text[:200]}..." if len(text) > 200 else f"✅ Possible vision response: {text}")
+                logger.info(f"✅ Possible vision response in LLM text: {text[:200]}..." if len(text) > 200 else f"✅ Possible vision response: {text}")
 
         # Log errors
         elif isinstance(frame, ErrorFrame):
@@ -386,7 +351,7 @@ class VisionLogger(FrameProcessor):
             self._last_video_frame_time = current_time
             # Only log every 100 frames to reduce spam significantly
             if self._video_frame_count % 100 == 0:
-                logger.debug(f"🎥 Video frames streaming [{direction_str}]: {self._video_frame_count} frames received")
+                logger.debug(f"🎥 Video frames streaming: {self._video_frame_count} frames received")
 
         # Log frame count summary every 30 seconds (less frequent)
         if not hasattr(self, '_last_summary_time'):
@@ -398,148 +363,3 @@ class VisionLogger(FrameProcessor):
                 logger.warning(f"⚠️ No video frames detected in last 30 seconds!")
             self._video_frame_count = 0
             self._last_summary_time = current_time
-
-        await self.push_frame(frame, direction)
-
-
-class MetricsLogger(FrameProcessor):
-    """Logs MetricsFrame data and sends TTFB metrics to frontend."""
-
-    # Class-level shared state (all instances share this)
-    _shared_state = {
-        "_turn_number": 0,
-        "_current_metrics": {},
-        "_tts_text_time": None,
-        "_last_sent_metrics": {},  # Track what we last sent to avoid duplicates
-    }
-
-    def __init__(self, webrtc_connection=None):
-        super().__init__()
-        self.webrtc_connection = webrtc_connection
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        state = MetricsLogger._shared_state
-
-        # Track turn numbers
-        if isinstance(frame, UserStoppedSpeakingFrame):
-            state["_turn_number"] += 1
-            state["_current_metrics"] = {}  # Reset for new turn
-            state["_tts_text_time"] = None  # Reset TTS tracking
-            state["_last_sent_metrics"] = {}  # Reset sent tracking for new turn
-
-        # Fallback: Manually track TTS TTFB if MetricsFrame isn't available
-        elif isinstance(frame, TTSTextFrame):
-            # Record when TTS text arrives
-            state["_tts_text_time"] = time.time()
-            logger.debug(f"TTS text received for turn #{state['_turn_number']}")
-
-        elif isinstance(frame, TTSStartedFrame):
-            # Calculate TTS TTFB when audio generation starts (fallback)
-            if state["_tts_text_time"] is not None and 'tts_ttfb_ms' not in state["_current_metrics"]:
-                tts_ttfb_seconds = time.time() - state["_tts_text_time"]
-                tts_ttfb_ms = tts_ttfb_seconds * 1000
-                state["_current_metrics"]['tts_ttfb_ms'] = tts_ttfb_ms
-                logger.debug(f"TTS TTFB (fallback): {tts_ttfb_ms:.2f}ms")
-
-                # Recalculate total and send update
-                total = sum([
-                    state["_current_metrics"].get('stt_ttfb_ms', 0),
-                    state["_current_metrics"].get('llm_ttfb_ms', 0),
-                    state["_current_metrics"].get('tts_ttfb_ms', 0)
-                ])
-                if total > 0:
-                    state["_current_metrics"]['total_ms'] = total
-                    logger.info(
-                        f"📊 Metrics [Turn #{state['_turn_number']}]: "
-                        f"stt_ttfb_ms={state['_current_metrics'].get('stt_ttfb_ms', 'N/A')}, "
-                        f"llm_ttfb_ms={state['_current_metrics'].get('llm_ttfb_ms', 'N/A')}, "
-                        f"tts_ttfb_ms={state['_current_metrics'].get('tts_ttfb_ms', 'N/A')}, "
-                        f"total_ms={state['_current_metrics'].get('total_ms', 'N/A')}"
-                    )
-                    self._send_to_frontend()
-
-                state["_tts_text_time"] = None  # Reset after calculating
-
-        # Capture MetricsFrame data
-        elif isinstance(frame, MetricsFrame):
-            try:
-                # Extract TTFB metrics from MetricsFrame.data list
-                for metric_data in frame.data:
-                    if isinstance(metric_data, TTFBMetricsData):
-                        processor = metric_data.processor
-                        value_ms = metric_data.value * 1000  # Convert seconds to milliseconds
-
-                        # Categorize by processor type
-                        if 'stt' in processor.lower() or 'speechmatics' in processor.lower():
-                            state["_current_metrics"]['stt_ttfb_ms'] = value_ms
-                            logger.debug(f"STT TTFB: {value_ms:.2f}ms from {processor}")
-                        elif 'llm' in processor.lower() or 'openai' in processor.lower() or 'deepinfra' in processor.lower():
-                            state["_current_metrics"]['llm_ttfb_ms'] = value_ms
-                            logger.debug(f"LLM TTFB: {value_ms:.2f}ms from {processor}")
-                        elif 'tts' in processor.lower() or 'elevenlabs' in processor.lower() or 'qwen' in processor.lower():
-                            state["_current_metrics"]['tts_ttfb_ms'] = value_ms
-                            logger.debug(f"TTS TTFB: {value_ms:.2f}ms from {processor}")
-
-                # Calculate total latency and send if we have any metrics
-                if state["_current_metrics"]:
-                    total = sum([
-                        state["_current_metrics"].get('stt_ttfb_ms', 0),
-                        state["_current_metrics"].get('llm_ttfb_ms', 0),
-                        state["_current_metrics"].get('tts_ttfb_ms', 0)
-                    ])
-                    if total > 0:
-                        state["_current_metrics"]['total_ms'] = total
-
-                    # Log to console
-                    logger.info(
-                        f"📊 Metrics [Turn #{state['_turn_number']}]: "
-                        f"stt_ttfb_ms={state['_current_metrics'].get('stt_ttfb_ms', 'N/A')}, "
-                        f"llm_ttfb_ms={state['_current_metrics'].get('llm_ttfb_ms', 'N/A')}, "
-                        f"tts_ttfb_ms={state['_current_metrics'].get('tts_ttfb_ms', 'N/A')}, "
-                        f"total_ms={state['_current_metrics'].get('total_ms', 'N/A')}"
-                    )
-
-                    # Send to frontend
-                    self._send_to_frontend()
-
-            except Exception as e:
-                logger.error(f"Error processing MetricsFrame: {e}", exc_info=True)
-
-        await self.push_frame(frame, direction)
-
-    def _send_to_frontend(self):
-        """Send metrics to frontend via WebRTC data channel."""
-        if not self.webrtc_connection:
-            return
-
-        state = MetricsLogger._shared_state
-
-        # Check if metrics have changed since last send (deduplication)
-        current_metrics_key = (
-            state["_turn_number"],
-            state["_current_metrics"].get('stt_ttfb_ms'),
-            state["_current_metrics"].get('llm_ttfb_ms'),
-            state["_current_metrics"].get('tts_ttfb_ms'),
-        )
-
-        if current_metrics_key == state["_last_sent_metrics"]:
-            logger.debug("Skipping duplicate metrics send")
-            return
-
-        try:
-            if self.webrtc_connection.is_connected():
-                message = {
-                    "type": "metrics",
-                    "turn_number": state["_turn_number"],
-                    "timestamp": int(time.time() * 1000),  # Milliseconds since epoch
-                    **state["_current_metrics"]
-                }
-                self.webrtc_connection.send_app_message(message)
-                logger.info(f"📤 Sent metrics to frontend: {message}")
-
-                # Update last sent metrics
-                state["_last_sent_metrics"] = current_metrics_key
-        except Exception as e:
-            logger.error(f"Error sending metrics to frontend: {e}")

@@ -135,10 +135,10 @@ class Qwen3TTSService(TTSService):
                 yield TTSStoppedFrame()
                 return
 
-            yield TTSStartedFrame()
-
-            # Start TTFB metrics tracking
+            # Start TTFB metrics tracking BEFORE any work begins
             await self.start_ttfb_metrics()
+
+            yield TTSStartedFrame()
 
             start_time = time.time()
 

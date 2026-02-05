@@ -17,6 +17,8 @@
 /character/__pycache__
 /config/__pycache__
 /__pycache__/
+/observers/__pycache__
+/services/__pycache__
 
 # production
 /build
@@ -24,6 +26,8 @@
 # misc
 .DS_Store
 *.pem
+/.models/
+/.claude/
 
 # debug
 npm-debug.log*
