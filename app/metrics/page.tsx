@@ -32,8 +32,13 @@ export default function MetricsPage() {
     setIsClient(true)
   }, [])
 
+  // Debug: Log service info when it changes
+  useEffect(() => {
+    console.log('📊 [MetricsPage] Service info updated:', serviceInfo)
+  }, [serviceInfo])
+
   // Calculate statistics for each metric type (memoized to prevent recalculation on every render)
-  const { sttStats, llmStats, ttsStats, totalStats } = useMemo(() => {
+  const { sttStats, mem0Stats, llmStats, ttsStats, visionStats, totalStats } = useMemo(() => {
     const calculateStats = (key: keyof MetricsDataPoint): StatsData => {
       const values = metrics
         .map((m) => m[key])
@@ -53,8 +58,10 @@ export default function MetricsPage() {
 
     return {
       sttStats: calculateStats('stt_ttfb_ms'),
+      mem0Stats: calculateStats('mem0_latency_ms'),
       llmStats: calculateStats('llm_ttfb_ms'),
       ttsStats: calculateStats('tts_ttfb_ms'),
+      visionStats: calculateStats('vision_latency_ms'),
       totalStats: calculateStats('total_ms'),
     }
   }, [metrics])
@@ -64,8 +71,10 @@ export default function MetricsPage() {
     metrics.map((m) => ({
       turn: m.turn_number,
       STT: m.stt_ttfb_ms || null,
+      Memory: m.mem0_latency_ms || null,
       LLM: m.llm_ttfb_ms || null,
       TTS: m.tts_ttfb_ms || null,
+      Vision: m.vision_latency_ms || null,
       Total: m.total_ms || null,
     }))
   , [metrics])
@@ -89,10 +98,19 @@ export default function MetricsPage() {
               TTFB metrics for STT, LLM, and TTS services
             </p>
             {serviceInfo && (
-              <div className="flex gap-3 mt-3 text-sm">
-                <Badge variant="secondary">STT: {serviceInfo.stt}</Badge>
-                <Badge variant="secondary">LLM: {serviceInfo.llm}</Badge>
-                <Badge variant="secondary">TTS: {serviceInfo.tts}</Badge>
+              <div className="flex gap-3 mt-3">
+                <Badge variant="secondary" className="text-base px-3 py-1">
+                  STT: <span className="font-semibold">{serviceInfo.stt}</span>
+                </Badge>
+                <Badge variant="secondary" className="text-base px-3 py-1">
+                  Memory: <span className="font-semibold">{serviceInfo.mem0}</span>
+                </Badge>
+                <Badge variant="secondary" className="text-base px-3 py-1">
+                  LLM: <span className="font-semibold">{serviceInfo.llm}</span>
+                </Badge>
+                <Badge variant="secondary" className="text-base px-3 py-1">
+                  TTS: <span className="font-semibold">{serviceInfo.tts}</span>
+                </Badge>
               </div>
             )}
           </div>
@@ -116,13 +134,18 @@ export default function MetricsPage() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {/* STT Card */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-600">
                 STT Latency
               </CardTitle>
+              {serviceInfo && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {serviceInfo.stt}
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-blue-600">
@@ -145,12 +168,50 @@ export default function MetricsPage() {
             </CardContent>
           </Card>
 
+          {/* Memory Card */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">
+                Memory Latency
+              </CardTitle>
+              {serviceInfo && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {serviceInfo.mem0}
+                </p>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-indigo-600">
+                {formatMs(mem0Stats.current)}
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-gray-500">
+                <div className="flex justify-between">
+                  <span>Avg:</span>
+                  <span>{formatMs(mem0Stats.avg)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Min:</span>
+                  <span>{formatMs(mem0Stats.min)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Max:</span>
+                  <span>{formatMs(mem0Stats.max)}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* LLM Card */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-600">
                 LLM Latency
               </CardTitle>
+              {serviceInfo && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {serviceInfo.llm}
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-purple-600">
@@ -179,6 +240,11 @@ export default function MetricsPage() {
               <CardTitle className="text-sm font-medium text-gray-600">
                 TTS Latency
               </CardTitle>
+              {serviceInfo && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {serviceInfo.tts}
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-green-600">
@@ -196,6 +262,37 @@ export default function MetricsPage() {
                 <div className="flex justify-between">
                   <span>Max:</span>
                   <span>{formatMs(ttsStats.max)}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Vision Latency Card */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">
+                Vision Latency
+              </CardTitle>
+              <p className="text-xs text-gray-500 mt-1">
+                Request → Response
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-pink-600">
+                {formatMs(visionStats.current)}
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-gray-500">
+                <div className="flex justify-between">
+                  <span>Avg:</span>
+                  <span>{formatMs(visionStats.avg)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Min:</span>
+                  <span>{formatMs(visionStats.min)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Max:</span>
+                  <span>{formatMs(visionStats.max)}</span>
                 </div>
               </div>
             </CardContent>
@@ -276,6 +373,15 @@ export default function MetricsPage() {
                   />
                   <Line
                     type="monotone"
+                    dataKey="Memory"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                    connectNulls
+                    name="Memory"
+                  />
+                  <Line
+                    type="monotone"
                     dataKey="LLM"
                     stroke="#a855f7"
                     strokeWidth={2}
@@ -291,6 +397,15 @@ export default function MetricsPage() {
                     dot={{ r: 4 }}
                     connectNulls
                     name="TTS"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="Vision"
+                    stroke="#ec4899"
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                    connectNulls
+                    name="Vision"
                   />
                   <Line
                     type="monotone"
@@ -326,8 +441,10 @@ export default function MetricsPage() {
                       <th className="pb-2 font-semibold text-gray-700">Turn #</th>
                       <th className="pb-2 font-semibold text-gray-700">Timestamp</th>
                       <th className="pb-2 font-semibold text-blue-600">STT (ms)</th>
+                      <th className="pb-2 font-semibold text-indigo-600">Memory (ms)</th>
                       <th className="pb-2 font-semibold text-purple-600">LLM (ms)</th>
                       <th className="pb-2 font-semibold text-green-600">TTS (ms)</th>
+                      <th className="pb-2 font-semibold text-pink-600">Vision (ms)</th>
                       <th className="pb-2 font-semibold text-orange-600">Total (ms)</th>
                     </tr>
                   </thead>
@@ -341,11 +458,17 @@ export default function MetricsPage() {
                         <td className="py-2 font-mono text-blue-600">
                           {formatMs(metric.stt_ttfb_ms)}
                         </td>
+                        <td className="py-2 font-mono text-indigo-600">
+                          {formatMs(metric.mem0_latency_ms)}
+                        </td>
                         <td className="py-2 font-mono text-purple-600">
                           {formatMs(metric.llm_ttfb_ms)}
                         </td>
                         <td className="py-2 font-mono text-green-600">
                           {formatMs(metric.tts_ttfb_ms)}
+                        </td>
+                        <td className="py-2 font-mono text-pink-600">
+                          {formatMs(metric.vision_latency_ms)}
                         </td>
                         <td className="py-2 font-mono text-orange-600 font-semibold">
                           {formatMs(metric.total_ms)}

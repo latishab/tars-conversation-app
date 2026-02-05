@@ -28,9 +28,9 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
+from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.services.moondream.vision import MoondreamService
-from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.speechmatics.stt import SpeechmaticsSTTService, TurnDetectionMode
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.mem0.memory import Mem0MemoryService
@@ -57,7 +57,7 @@ from config import (
     EMOTIONAL_SAMPLING_INTERVAL,
     EMOTIONAL_INTERVENTION_THRESHOLD,
 )
-from services.qwen_tts_service import Qwen3TTSService
+from services.tts_factory import create_tts_service
 from processors import (
     SilenceFilter,
     InputAudioFilter,
@@ -65,15 +65,13 @@ from processors import (
     VisualObserver,
     EmotionalStateMonitor,
 )
-from loggers import (
-    DebugLogger,
-    TurnDetectionLogger,
-    TranscriptionLogger,
-    AssistantResponseLogger,
-    TTSSpeechStateBroadcaster,
-    VisionLogger,
-    MetricsLogger,
-    # LatencyLogger,  # Replaced with built-in Pipecat metrics
+from observers import (
+    MetricsObserver,
+    TranscriptionObserver,
+    AssistantResponseObserver,
+    TTSStateObserver,
+    VisionObserver,
+    DebugObserver,
 )
 from character.prompts import (
     load_persona_ini,
@@ -171,25 +169,12 @@ async def run_bot(webrtc_connection):
 
     try:
         # ====================================================================
-        # VAD & SMART TURN DETECTION
-        # ====================================================================
-        logger.info("Initializing VAD and Smart Turn Detection...")
-        vad_analyzer = None
-        turn_analyzer = None
-        try:
-            from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
-            from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-            from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-            
-            vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.6, start_secs=0.2, confidence=0.4))
-            turn_analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=0.8, pre_speech_ms=200.0))
-            logger.info("✓ VAD and Smart Turn Detection initialized")
-        except ImportError:
-            logger.warning("Smart Turn dependencies not installed.")
-
-        # ====================================================================
         # TRANSPORT INITIALIZATION
         # ====================================================================
+        # Note: We're using Speechmatics' built-in SMART_TURN mode for turn detection,
+        # so we don't need external VAD or turn analyzers in the transport.
+
+        logger.info("Initializing transport (using Speechmatics built-in turn detection)...")
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -198,14 +183,13 @@ async def run_bot(webrtc_connection):
             video_out_enabled=False,
             video_out_is_live=False,
         )
-        
-        if vad_analyzer: transport_params.vad_analyzer = vad_analyzer
-        if turn_analyzer: transport_params.turn_analyzer = turn_analyzer
-        
+
         pipecat_transport = SmallWebRTCTransport(
             webrtc_connection=webrtc_connection,
             params=transport_params,
         )
+
+        logger.info("✓ Transport initialized")
 
         # ====================================================================
         # SPEECH-TO-TEXT SERVICE
@@ -217,16 +201,15 @@ async def run_bot(webrtc_connection):
             stt_params = SpeechmaticsSTTService.InputParams(
                 language=Language.EN,
                 enable_diarization=False,
-                max_speakers=2,
+                turn_detection_mode=TurnDetectionMode.SMART_TURN,
             )
-            if turn_analyzer: stt_params.enable_vad = False
-            
+
             stt = SpeechmaticsSTTService(
                 api_key=SPEECHMATICS_API_KEY,
                 params=stt_params,
             )
             service_refs["stt"] = stt
-            logger.info("✓ Speechmatics STT initialized")
+            logger.info("✓ Speechmatics STT initialized with SMART_TURN mode")
         except Exception as e:
             logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
             return
@@ -235,41 +218,15 @@ async def run_bot(webrtc_connection):
         # TEXT-TO-SPEECH SERVICE
         # ====================================================================
 
-        logger.info(f"Initializing TTS service: {TTS_PROVIDER}...")
-        tts = None
         try:
-            if TTS_PROVIDER == "qwen3":
-                # Use local Qwen3-TTS with voice cloning
-                logger.info("Using Qwen3-TTS (local, voice cloning)")
-                tts = Qwen3TTSService(
-                    model_name=QWEN3_TTS_MODEL,
-                    device=QWEN3_TTS_DEVICE,
-                    ref_audio_path=QWEN3_TTS_REF_AUDIO,
-                    x_vector_only_mode=True,
-                    sample_rate=24000,
-                )
-                logger.info(f"✓ Qwen3-TTS service created (device: {QWEN3_TTS_DEVICE})")
-            else:
-                # Use ElevenLabs
-                logger.info("Using ElevenLabs TTS")
-                tts = ElevenLabsTTSService(
-                    api_key=ELEVENLABS_API_KEY,
-                    voice_id=ELEVENLABS_VOICE_ID,
-                    model="eleven_turbo_v2_5",
-                    output_format="pcm_24000",
-                    enable_word_timestamps=False,
-                    voice_settings={
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                        "style": 0.0,
-                        "use_speaker_boost": True
-                    },
-                    params=ElevenLabsTTSService.InputParams(
-                        enable_logging=True,  # Enable ElevenLabs logging for metrics
-                    ),
-                )
-                logger.info("✓ ElevenLabs TTS service created with logging enabled")
-
+            tts = create_tts_service(
+                provider=TTS_PROVIDER,
+                elevenlabs_api_key=ELEVENLABS_API_KEY,
+                elevenlabs_voice_id=ELEVENLABS_VOICE_ID,
+                qwen_model=QWEN3_TTS_MODEL,
+                qwen_device=QWEN3_TTS_DEVICE,
+                qwen_ref_audio=QWEN3_TTS_REF_AUDIO,
+            )
             service_refs["tts"] = tts
         except Exception as e:
             logger.error(f"Failed to initialize TTS service: {e}", exc_info=True)
@@ -430,7 +387,7 @@ async def run_bot(webrtc_connection):
         # ====================================================================
 
         user_params = LLMUserAggregatorParams(
-            aggregation_timeout=1.5
+            user_turn_stop_timeout=1.5
         )
         context_aggregator = LLMContextAggregatorPair(
             context,
@@ -446,20 +403,31 @@ async def run_bot(webrtc_connection):
         # LOGGING PROCESSORS
         # ====================================================================
 
-        transcription_logger = TranscriptionLogger(
+        transcription_observer = TranscriptionObserver(
             webrtc_connection=webrtc_connection,
             client_state=client_state
         )
-        assistant_logger = AssistantResponseLogger(webrtc_connection=webrtc_connection)
-        tts_state_broadcaster = TTSSpeechStateBroadcaster(webrtc_connection=webrtc_connection)
-        vision_logger = VisionLogger(webrtc_connection=webrtc_connection)
+        assistant_observer = AssistantResponseObserver(webrtc_connection=webrtc_connection)
+        tts_state_observer = TTSStateObserver(webrtc_connection=webrtc_connection)
+        vision_observer = VisionObserver(webrtc_connection=webrtc_connection)
 
-        # Create 3 separate MetricsLogger instances (one per pipeline position)
-        metrics_logger_stt = MetricsLogger(webrtc_connection=webrtc_connection)
-        metrics_logger_llm = MetricsLogger(webrtc_connection=webrtc_connection)
-        metrics_logger_tts = MetricsLogger(webrtc_connection=webrtc_connection)
+        # Create MetricsObserver (non-intrusive monitoring outside pipeline)
+        metrics_observer = MetricsObserver(webrtc_connection=webrtc_connection)
 
-        turn_logger = TurnDetectionLogger()
+        # Turn tracking observer (for debugging turn detection)
+        turn_observer = TurnTrackingObserver()
+
+        @turn_observer.event_handler("on_turn_started")
+        async def on_turn_started(*args, **kwargs):
+            turn_number = args[1] if len(args) > 1 else kwargs.get('turn_number', 0)
+            logger.info(f"🗣️  [TurnObserver] Turn STARTED: {turn_number}")
+            # Notify metrics observer of new turn
+            metrics_observer.start_turn(turn_number)
+
+        @turn_observer.event_handler("on_turn_ended")
+        async def on_turn_ended(*args, **kwargs):
+            turn_number = args[1] if len(args) > 1 else kwargs.get('turn_number', 0)
+            logger.info(f"🗣️  [TurnObserver] Turn ENDED: {turn_number}")
 
         # ====================================================================
         # PIPELINE ASSEMBLY
@@ -471,19 +439,15 @@ async def run_bot(webrtc_connection):
             pipecat_transport.input(),
             # emotional_monitor,  # Real-time emotional state monitoring
             stt,
-            metrics_logger_stt,  # Capture STT metrics
-            # turn_logger,
             pipeline_unifier,
             transcription_logger,
             context_aggregator.user(),
             memory_service,  # Mem0 memory service for automatic recall/storage
             # gating_layer,  # AI decision system (with emotional state integration)
             llm,
-            metrics_logger_llm,  # Capture LLM metrics
             assistant_logger,
             SilenceFilter(),
             tts,
-            metrics_logger_tts,  # Capture TTS metrics
             tts_state_broadcaster,
             pipecat_transport.output(),
             context_aggregator.assistant(),
@@ -501,12 +465,22 @@ async def run_bot(webrtc_connection):
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})
-                    # Send service configuration info
+
+                    # Send service configuration info with provider and model details
+                    llm_display = DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL
+
+                    if TTS_PROVIDER == "elevenlabs":
+                        tts_display = "ElevenLabs: eleven_flash_v2_5"
+                    else:
+                        tts_model = QWEN3_TTS_MODEL.split('/')[-1] if '/' in QWEN3_TTS_MODEL else QWEN3_TTS_MODEL
+                        tts_display = f"Qwen3-TTS: {tts_model}"
+
                     webrtc_connection.send_app_message({
                         "type": "service_info",
                         "stt": "Speechmatics",
-                        "llm": DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL,
-                        "tts": "ElevenLabs" if TTS_PROVIDER == "elevenlabs" else "Qwen3-TTS"
+                        "mem0": "Mem0 (v2 API)",
+                        "llm": f"DeepInfra: {llm_display}",
+                        "tts": tts_display
                     })
             except Exception:
                 pass
@@ -543,6 +517,7 @@ async def run_bot(webrtc_connection):
                 enable_usage_metrics=True,        # Enable LLM/TTS usage metrics
                 report_only_initial_ttfb=False,   # Report all TTFB measurements
             ),
+            observers=[turn_observer, metrics_observer],  # Non-intrusive monitoring
         )
         task_ref["task"] = task
         runner = PipelineRunner(handle_sigint=False)

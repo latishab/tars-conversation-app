@@ -6,13 +6,17 @@ export interface MetricsDataPoint {
   turn_number: number
   timestamp: number
   stt_ttfb_ms?: number
+  mem0_latency_ms?: number
   llm_ttfb_ms?: number
   tts_ttfb_ms?: number
+  turn_detection_ms?: number
+  vision_latency_ms?: number
   total_ms?: number
 }
 
 export interface ServiceInfo {
   stt: string
+  mem0: string
   llm: string
   tts: string
 }
@@ -32,39 +36,31 @@ const STORAGE_KEY = 'tars-metrics'
 const SERVICE_INFO_KEY = 'tars-service-info'
 
 export function MetricsProvider({ children }: { children: React.ReactNode }) {
-  const [metrics, setMetrics] = useState<MetricsDataPoint[]>(() => {
-    // Initialize from localStorage if available
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY)
-        if (stored) {
-          return JSON.parse(stored)
-        }
-      } catch (e) {
-        console.error('Failed to load metrics from localStorage:', e)
-      }
-    }
-    return []
-  })
+  const [metrics, setMetrics] = useState<MetricsDataPoint[]>([])
+  const [serviceInfo, setServiceInfoState] = useState<ServiceInfo | null>(null)
+  const [isHydrated, setIsHydrated] = useState(false)
 
-  const [serviceInfo, setServiceInfoState] = useState<ServiceInfo | null>(() => {
-    // Initialize from localStorage if available
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(SERVICE_INFO_KEY)
-        if (stored) {
-          return JSON.parse(stored)
-        }
-      } catch (e) {
-        console.error('Failed to load service info from localStorage:', e)
+  // Load from localStorage after hydration
+  useEffect(() => {
+    try {
+      const storedMetrics = localStorage.getItem(STORAGE_KEY)
+      if (storedMetrics) {
+        setMetrics(JSON.parse(storedMetrics))
       }
+
+      const storedServiceInfo = localStorage.getItem(SERVICE_INFO_KEY)
+      if (storedServiceInfo) {
+        setServiceInfoState(JSON.parse(storedServiceInfo))
+      }
+    } catch (e) {
+      console.error('Failed to load from localStorage:', e)
     }
-    return null
-  })
+    setIsHydrated(true)
+  }, [])
 
   // Debounce localStorage writes to prevent rapid updates
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (!isHydrated) return
 
     const timeoutId = setTimeout(() => {
       try {
@@ -75,11 +71,11 @@ export function MetricsProvider({ children }: { children: React.ReactNode }) {
     }, 500) // Wait 500ms after last change before saving
 
     return () => clearTimeout(timeoutId)
-  }, [metrics])
+  }, [metrics, isHydrated])
 
   // Listen for storage changes from other tabs
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (!isHydrated) return
 
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY && e.newValue) {
@@ -95,7 +91,7 @@ export function MetricsProvider({ children }: { children: React.ReactNode }) {
 
     window.addEventListener('storage', handleStorageChange)
     return () => window.removeEventListener('storage', handleStorageChange)
-  }, [])
+  }, [isHydrated])
 
   const addMetric = useCallback((newMetric: MetricsDataPoint) => {
     setMetrics((prev) => {

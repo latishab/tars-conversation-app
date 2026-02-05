@@ -246,14 +246,19 @@ export default function Home() {
             turn_number: data.turn_number,
             timestamp: data.timestamp,
             stt_ttfb_ms: data.stt_ttfb_ms,
+            mem0_latency_ms: data.mem0_latency_ms,
             llm_ttfb_ms: data.llm_ttfb_ms,
             tts_ttfb_ms: data.tts_ttfb_ms,
+            turn_detection_ms: data.turn_detection_ms,
+            vision_latency_ms: data.vision_latency_ms,
             total_ms: data.total_ms,
           })
         } else if (data.type === 'service_info') {
           // Store service configuration
+          console.log('📊 [WebRTC] Received service_info:', data)
           setServiceInfo({
             stt: data.stt,
+            mem0: data.mem0,
             llm: data.llm,
             tts: data.tts,
           })
