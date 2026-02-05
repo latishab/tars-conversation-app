@@ -440,15 +440,12 @@ async def run_bot(webrtc_connection):
             # emotional_monitor,  # Real-time emotional state monitoring
             stt,
             pipeline_unifier,
-            transcription_logger,
             context_aggregator.user(),
             memory_service,  # Mem0 memory service for automatic recall/storage
             # gating_layer,  # AI decision system (with emotional state integration)
             llm,
-            assistant_logger,
             SilenceFilter(),
             tts,
-            tts_state_broadcaster,
             pipecat_transport.output(),
             context_aggregator.assistant(),
         ])
@@ -517,7 +514,14 @@ async def run_bot(webrtc_connection):
                 enable_usage_metrics=True,        # Enable LLM/TTS usage metrics
                 report_only_initial_ttfb=False,   # Report all TTFB measurements
             ),
-            observers=[turn_observer, metrics_observer],  # Non-intrusive monitoring
+            observers=[
+                turn_observer,
+                metrics_observer,
+                transcription_observer,
+                assistant_observer,
+                tts_state_observer,
+                vision_observer,
+            ],  # Non-intrusive monitoring
         )
         task_ref["task"] = task
         runner = PipelineRunner(handle_sigint=False)
