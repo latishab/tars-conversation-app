@@ -59,7 +59,8 @@ from config import (
     SPEECHMATICS_API_KEY,
     ELEVENLABS_API_KEY,
     DEEPINFRA_API_KEY,
-    TTS_PROVIDER,
+    TTS_PROVIDER,  # Only used for startup validation
+    get_fresh_config,
 )
 
 # Remove default loguru handler and set up custom logging
@@ -149,14 +150,84 @@ async def ice_candidate(request: SmallWebRTCPatchRequest):
 
 @app.get("/api/status")
 async def status():
-    """Health check endpoint."""
+    """Health check endpoint with fresh config values."""
+    # Get current config from config.ini
+    current_config = get_fresh_config()
+    current_tts = current_config['TTS_PROVIDER']
+    current_model = current_config['DEEPINFRA_MODEL']
+
     return {
         "status": "ok",
-        "tts_provider": TTS_PROVIDER,
+        "tts_provider": current_tts,
+        "llm_model": current_model,
         "speechmatics_configured": bool(SPEECHMATICS_API_KEY),
-        "elevenlabs_configured": bool(ELEVENLABS_API_KEY) if TTS_PROVIDER == "elevenlabs" else None,
+        "elevenlabs_configured": bool(ELEVENLABS_API_KEY) if current_tts == "elevenlabs" else None,
         "deepinfra_configured": bool(DEEPINFRA_API_KEY),
-        "qwen3_tts_configured": True if TTS_PROVIDER == "qwen3" else None,
+        "qwen3_tts_configured": True if current_tts == "qwen3" else None,
+    }
+
+
+@app.get("/api/config")
+async def get_config():
+    """Get current configuration from config.ini."""
+    import configparser
+    from pathlib import Path
+
+    config = configparser.ConfigParser()
+    config_path = Path("config.ini")
+
+    if not config_path.exists():
+        return {"error": "config.ini not found"}
+
+    config.read(config_path)
+
+    return {
+        "llm": {
+            "model": config.get("LLM", "model", fallback="Qwen/Qwen3-235B-A22B-Instruct-2507")
+        },
+        "tts": {
+            "provider": config.get("TTS", "provider", fallback="qwen3"),
+            "qwen3_model": config.get("TTS", "qwen3_model", fallback="Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
+            "qwen3_device": config.get("TTS", "qwen3_device", fallback="mps"),
+            "qwen3_ref_audio": config.get("TTS", "qwen3_ref_audio", fallback="tars-clean-compressed.mp3"),
+        }
+    }
+
+
+@app.post("/api/config")
+async def update_config(request: dict):
+    """Update configuration in config.ini."""
+    import configparser
+    from pathlib import Path
+
+    config = configparser.ConfigParser()
+    config_path = Path("config.ini")
+
+    if not config_path.exists():
+        return {"error": "config.ini not found"}
+
+    config.read(config_path)
+
+    # Update LLM config
+    if "llm_model" in request:
+        if not config.has_section("LLM"):
+            config.add_section("LLM")
+        config.set("LLM", "model", request["llm_model"])
+
+    # Update TTS config
+    if "tts_provider" in request:
+        if not config.has_section("TTS"):
+            config.add_section("TTS")
+        config.set("TTS", "provider", request["tts_provider"])
+
+    # Write back to file
+    with open(config_path, "w") as f:
+        config.write(f)
+
+    return {
+        "success": True,
+        "message": "Configuration updated. Please restart the service for changes to take effect.",
+        "restart_required": True
     }
 
 

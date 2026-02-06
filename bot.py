@@ -29,11 +29,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams
 )
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
+from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.speechmatics.stt import SpeechmaticsSTTService, TurnDetectionMode
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
-from pipecat.services.mem0.memory import Mem0MemoryService
+from services.memory_chromadb import ChromaDBMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -46,16 +47,8 @@ from config import (
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
-    DEEPINFRA_MODEL,
-    DEEPINFRA_GATING_MODEL,
     MEM0_API_KEY,
-    TTS_PROVIDER,
-    QWEN3_TTS_MODEL,
-    QWEN3_TTS_DEVICE,
-    QWEN3_TTS_REF_AUDIO,
-    EMOTIONAL_MONITORING_ENABLED,
-    EMOTIONAL_SAMPLING_INTERVAL,
-    EMOTIONAL_INTERVENTION_THRESHOLD,
+    get_fresh_config,
 )
 from services.tts_factory import create_tts_service
 from processors import (
@@ -158,6 +151,20 @@ async def _cleanup_services(service_refs: dict):
 async def run_bot(webrtc_connection):
     """Initialize and run the TARS bot pipeline."""
     logger.info("Starting bot pipeline for WebRTC connection...")
+
+    # Load fresh configuration for this connection (allows runtime config updates)
+    runtime_config = get_fresh_config()
+    DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
+    DEEPINFRA_GATING_MODEL = runtime_config['DEEPINFRA_GATING_MODEL']
+    TTS_PROVIDER = runtime_config['TTS_PROVIDER']
+    QWEN3_TTS_MODEL = runtime_config['QWEN3_TTS_MODEL']
+    QWEN3_TTS_DEVICE = runtime_config['QWEN3_TTS_DEVICE']
+    QWEN3_TTS_REF_AUDIO = runtime_config['QWEN3_TTS_REF_AUDIO']
+    EMOTIONAL_MONITORING_ENABLED = runtime_config['EMOTIONAL_MONITORING_ENABLED']
+    EMOTIONAL_SAMPLING_INTERVAL = runtime_config['EMOTIONAL_SAMPLING_INTERVAL']
+    EMOTIONAL_INTERVENTION_THRESHOLD = runtime_config['EMOTIONAL_INTERVENTION_THRESHOLD']
+
+    logger.info(f"📋 Runtime config loaded - LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}, Emotional: {EMOTIONAL_MONITORING_ENABLED}")
 
     # Session initialization
     session_id = str(uuid.uuid4())[:8]
@@ -288,12 +295,10 @@ async def run_bot(webrtc_connection):
                     pipeline_unifier.target_user_id = new_id
                     logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
 
-                    # Update Mem0 service with new user_id and run_id
+                    # Update memory service with new user_id
                     if memory_service:
-                        new_run_id = new_id.split('_')[-1]  # Extract the identifier part
                         memory_service.user_id = new_id
-                        memory_service.run_id = new_run_id
-                        logger.info(f"✓ Updated Mem0 service user_id to: {new_id}, run_id to: {new_run_id}")
+                        logger.info(f"✓ Updated memory service user_id to: {new_id}")
 
                     # Notify frontend of identity change
                     try:
@@ -360,27 +365,22 @@ async def run_bot(webrtc_connection):
         # MEMORY SERVICE
         # ====================================================================
 
-        logger.info("Initializing Mem0 memory service...")
+        # Memory service: ChromaDB (local, fast) instead of Mem0 (cloud, slow)
+        logger.info("Initializing ChromaDB memory service...")
         memory_service = None
         try:
-            memory_service = Mem0MemoryService(
-                api_key=MEM0_API_KEY,
+            memory_service = ChromaDBMemoryService(
                 user_id=client_id,
                 agent_id="tars_agent",
-                run_id=session_id,
-                params=Mem0MemoryService.InputParams(
-                    search_limit=10,
-                    search_threshold=0.3,
-                    api_version="v2",
-                    system_prompt="Based on previous conversations, I recall: \n\n",
-                    add_as_system_message=True,
-                    position=1,
-                ),
+                search_limit=5,
+                search_threshold=0.5,
+                system_prompt_prefix="Based on previous conversations, I recall:\n\n",
             )
-            logger.info(f"✓ Mem0 memory service initialized for {client_id}")
+            logger.info(f"✓ ChromaDB memory service initialized for {client_id}")
         except Exception as e:
-            logger.error(f"Failed to initialize Mem0 service: {e}")
-            return
+            logger.error(f"Failed to initialize ChromaDB service: {e}")
+            logger.info("  Continuing without memory service...")
+            memory_service = None  # Continue without memory if it fails
 
         # ====================================================================
         # CONTEXT AGGREGATOR & PERSONA STORAGE
@@ -441,7 +441,7 @@ async def run_bot(webrtc_connection):
             stt,
             pipeline_unifier,
             context_aggregator.user(),
-            memory_service,  # Mem0 memory service for automatic recall/storage
+            memory_service,  # ChromaDB memory service for automatic recall/storage
             # gating_layer,  # AI decision system (with emotional state integration)
             llm,
             SilenceFilter(),
@@ -475,12 +475,13 @@ async def run_bot(webrtc_connection):
                     webrtc_connection.send_app_message({
                         "type": "service_info",
                         "stt": "Speechmatics",
-                        "mem0": "Mem0 (v2 API)",
+                        "memory": "ChromaDB (local)",
                         "llm": f"DeepInfra: {llm_display}",
                         "tts": tts_display
                     })
-            except Exception:
-                pass
+                    logger.info(f"📊 Sent service info to frontend: STT=Speechmatics, LLM={llm_display}, TTS={tts_display}")
+            except Exception as e:
+                logger.error(f"❌ Error sending service info: {e}")
 
             if task_ref["task"]:
                 verbosity = persona_params.get("verbosity", 10) if persona_params else 10
@@ -507,6 +508,8 @@ async def run_bot(webrtc_connection):
         # ====================================================================
 
         # Enable built-in Pipecat metrics for latency tracking
+        user_bot_latency_observer = UserBotLatencyLogObserver()
+
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -521,6 +524,7 @@ async def run_bot(webrtc_connection):
                 assistant_observer,
                 tts_state_observer,
                 vision_observer,
+                user_bot_latency_observer,        # Measures total user→bot response time
             ],  # Non-intrusive monitoring
         )
         task_ref["task"] = task

@@ -2,7 +2,7 @@
 
 from loguru import logger
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from services.qwen_tts_service import Qwen3TTSService
+from services.tts_qwen import Qwen3TTSService
 
 
 def create_tts_service(

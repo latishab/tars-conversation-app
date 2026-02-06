@@ -1,5 +1,6 @@
 """Observer for logging transcriptions and sending to frontend."""
 
+import time
 from loguru import logger
 from pipecat.frames.frames import TranscriptionFrame, InterimTranscriptionFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
@@ -12,13 +13,25 @@ class TranscriptionObserver(BaseObserver):
         super().__init__()
         self.webrtc_connection = webrtc_connection
         self.client_state = client_state or {}
+        self._last_transcription = None  # Track last transcription to avoid duplicates
+        self._last_transcription_time = 0  # Timestamp of last transcription
 
     async def on_push_frame(self, data: FramePushed):
         """Watch frames as they're pushed through the pipeline."""
         frame = data.frame
+        current_time = time.time()
 
         # --- (Logging Logic) ---
         if isinstance(frame, TranscriptionFrame):
+            # Deduplicate: Skip if same text within 200ms (different user_ids)
+            time_diff = current_time - self._last_transcription_time
+            if self._last_transcription == frame.text and time_diff < 0.2:
+                logger.debug(f"🔇 Skipping duplicate transcription: '{frame.text}' (last seen {time_diff*1000:.0f}ms ago)")
+                return
+
+            self._last_transcription = frame.text
+            self._last_transcription_time = current_time
+
             raw_id = getattr(frame, 'user_id', None)
             display_id = raw_id if (raw_id and raw_id != "S1") else self.client_state.get("client_id", "guest")
 
@@ -32,7 +45,7 @@ class TranscriptionObserver(BaseObserver):
             raw_id = getattr(frame, 'user_id', None)
             display_id = raw_id if (raw_id and raw_id != "S1") else self.client_state.get("client_id", "guest")
 
-            # Update Frontend
+            # Update Frontend (don't deduplicate partials as they change frequently)
             if self.webrtc_connection:
                 self._send_to_frontend("partial", frame.text, display_id)
 

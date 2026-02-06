@@ -9,6 +9,8 @@ import { Separator } from './components/ui/separator'
 import { Progress } from './components/ui/progress'
 import { Crossword } from './components/Crossword'
 import { useMetrics } from './lib/MetricsContext'
+import { ModelSelector } from './components/ModelSelector'
+import { TTSSelector } from './components/TTSSelector'
 
 interface TranscriptionEntry {
   text: string
@@ -386,6 +388,14 @@ export default function Home() {
               >
                 📊 View Metrics
               </Button>
+              <ModelSelector onModelChange={(modelId) => {
+                localStorage.setItem('selected-llm-model', modelId)
+                console.log('Model selected:', modelId)
+              }} />
+              <TTSSelector onProviderChange={(providerId) => {
+                localStorage.setItem('selected-tts-provider', providerId)
+                console.log('TTS provider selected:', providerId)
+              }} />
             </div>
             {isListening && (
               <div className="flex items-center gap-2 text-green-600 font-medium">

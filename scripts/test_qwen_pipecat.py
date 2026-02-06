@@ -6,7 +6,7 @@ Test Qwen3-TTS Pipecat service integration
 import asyncio
 import soundfile as sf
 import numpy as np
-from services.qwen_tts_service import Qwen3TTSService
+from services.tts_qwen import Qwen3TTSService
 from loguru import logger
 import sys
 
