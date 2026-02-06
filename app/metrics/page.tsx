@@ -95,7 +95,7 @@ export default function MetricsPage() {
           <div>
             <h1 className="text-4xl font-bold text-gray-900">Real-Time Latency Dashboard</h1>
             <p className="text-lg text-gray-600 mt-2">
-              TTFB metrics for STT, LLM, and TTS services
+              TTFB metrics from Pipecat's built-in instrumentation
             </p>
             {serviceInfo && (
               <div className="flex gap-3 mt-3">
@@ -168,11 +168,11 @@ export default function MetricsPage() {
             </CardContent>
           </Card>
 
-          {/* Memory Card */}
+          {/* Mem0 Card */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-600">
-                Memory Latency
+                Mem0 Latency
               </CardTitle>
               {serviceInfo && (
                 <p className="text-xs text-gray-500 mt-1">
@@ -378,7 +378,7 @@ export default function MetricsPage() {
                     strokeWidth={2}
                     dot={{ r: 4 }}
                     connectNulls
-                    name="Memory"
+                    name="Mem0"
                   />
                   <Line
                     type="monotone"
@@ -441,7 +441,7 @@ export default function MetricsPage() {
                       <th className="pb-2 font-semibold text-gray-700">Turn #</th>
                       <th className="pb-2 font-semibold text-gray-700">Timestamp</th>
                       <th className="pb-2 font-semibold text-blue-600">STT (ms)</th>
-                      <th className="pb-2 font-semibold text-indigo-600">Memory (ms)</th>
+                      <th className="pb-2 font-semibold text-indigo-600">Mem0 (ms)</th>
                       <th className="pb-2 font-semibold text-purple-600">LLM (ms)</th>
                       <th className="pb-2 font-semibold text-green-600">TTS (ms)</th>
                       <th className="pb-2 font-semibold text-pink-600">Vision (ms)</th>

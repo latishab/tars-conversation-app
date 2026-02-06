@@ -35,14 +35,17 @@ cp env.example .env.local
 # Edit .env.local with your API keys
 ```
 
-Required keys:
-- `SPEECHMATICS_API_KEY`
-- `DEEPINFRA_API_KEY`
-- `TTS_PROVIDER=qwen3` (or `elevenlabs`)
+**API Keys** (in `.env.local`):
+- `SPEECHMATICS_API_KEY` - Required
+- `DEEPINFRA_API_KEY` - Required
+- `ELEVENLABS_API_KEY` - Optional (if using ElevenLabs TTS)
+- `MEM0_API_KEY` - Optional (for long-term memory)
 
-Optional:
-- `ELEVENLABS_API_KEY` (if using cloud TTS)
-- `MEM0_API_KEY` (for memory)
+**Settings** (in `config.ini`):
+- LLM model selection
+- TTS provider (qwen3 or elevenlabs)
+
+The `config.ini` file is auto-created and can be edited via the web UI!
 
 ### 3. Run
 
@@ -76,10 +79,11 @@ tars-omni/
 │   ├── gating.py         # Intervention decision system
 │   ├── visual_observer.py    # Vision analysis
 │   └── filters.py        # Audio filtering
-├── services/              # AI services (TTS/STT/LLM)
-│   └── qwen_tts_service.py   # Local voice cloning
+├── services/              # AI services (TTS/STT/LLM/Memory)
+│   ├── tts_qwen.py       # Local voice cloning (Qwen3-TTS)
+│   ├── tts_factory.py    # TTS service factory
+│   └── memory_chromadb.py # Semantic memory (ChromaDB)
 ├── modules/               # LLM tools/functions
-├── memory/                # Mem0 integration
 └── scripts/               # Utilities
 ```
 
@@ -101,7 +105,26 @@ tars-omni/
 - `processors/` = Data processing
 - `loggers.py` = Monitoring/observability
 
-## TTS Configuration
+## Model & TTS Configuration
+
+### Web UI Configuration (Recommended)
+
+You can change both the LLM model and TTS provider directly from the web interface:
+
+1. Open http://localhost:3000
+2. Click **🤖 Model Selector** to choose your LLM:
+   - GPT-OSS-20B (default, fast, ~800ms-1s)
+   - Llama-3.3-70B Turbo (~1-2s)
+   - Qwen3-235B (high quality, ~2-3s)
+   - Nemotron-3-30B (~1-1.5s)
+   - Llama-4-Scout-17B (very fast, ~600-900ms)
+   - Llama-3.2-3B (fastest, ~300-500ms)
+3. Click **🎤 TTS Selector** to choose your TTS provider:
+   - Qwen3-TTS (local, free, voice cloning)
+   - ElevenLabs (cloud, high quality)
+4. **No restart needed!** Settings apply to new connections automatically.
+
+Settings are saved to `config.ini` and take effect immediately for new sessions.
 
 ### Qwen3-TTS (Default - Local & Free)
 
@@ -112,19 +135,27 @@ Best for Apple Silicon Macs. Voice cloning with `tars-clean-compressed.mp3`.
 - Generation: 2.5-3x real-time
 - Memory: ~2-3GB
 
-```env
-TTS_PROVIDER=qwen3
-QWEN3_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-Base
-QWEN3_TTS_DEVICE=mps
-QWEN3_TTS_REF_AUDIO=tars-clean-compressed.mp3
+```ini
+# config.ini
+[TTS]
+provider = qwen3
+qwen3_model = Qwen/Qwen3-TTS-12Hz-0.6B-Base
+qwen3_device = mps
+qwen3_ref_audio = tars-clean-compressed.mp3
 ```
 
 ### ElevenLabs (Cloud)
 
 Better quality, requires API key and credits.
 
+```ini
+# config.ini
+[TTS]
+provider = elevenlabs
+```
+
+Add API key to `.env.local`:
 ```env
-TTS_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=your_key
 ```
 
@@ -160,18 +191,36 @@ python test_emotional_monitor.py           # Emotional state detection
 python test_gating_emotional_integration.py # Gating + emotions integration
 ```
 
-### Switching TTS Providers
+### Switching Models/TTS/Settings
 
-Edit `.env.local`:
-```env
-TTS_PROVIDER=elevenlabs  # or qwen3
+**Via Web UI** (Recommended):
+1. Use the Model/TTS selector buttons in the interface
+2. Changes apply immediately to new connections (no restart needed!)
+
+**Via config.ini** (Manual):
+Edit `config.ini` and changes will apply to new WebRTC connections automatically:
+```ini
+[LLM]
+model = meta-llama/Llama-3.3-70B-Instruct-Turbo
+gating_model = meta-llama/Llama-3.2-3B-Instruct
+
+[TTS]
+provider = elevenlabs
+
+[Emotional]
+enabled = true
+sampling_interval = 3.0
+intervention_threshold = 2
 ```
+
+Active connections keep their original settings. New connections use the updated config.
 
 ### Voice Cloning
 
-Place audio file in root, update `.env.local`:
-```env
-QWEN3_TTS_REF_AUDIO=your-voice.mp3
+Place audio file in root, update `config.ini`:
+```ini
+[TTS]
+qwen3_ref_audio = your-voice.mp3
 ```
 
 ### Emotional Monitoring (Integrated with Gating)
@@ -253,6 +302,8 @@ TARS: "Hmm... flying mammal, starts with 'B'. Three letters."
 - `POST /api/offer` - WebRTC offer
 - `PATCH /api/offer` - ICE candidates
 - `GET /api/status` - Health check
+- `GET /api/config` - Get current configuration
+- `POST /api/config` - Update configuration (model/TTS)
 
 **Frontend (Port 3000)**:
 - `/` - Main UI
