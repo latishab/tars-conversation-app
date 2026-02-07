@@ -72,10 +72,10 @@ cp env.example .env.local
 model = openai/gpt-oss-20b
 
 [STT]
-provider = speechmatics  # or deepgram
+provider = deepgram  # or speechmatics
 
 [TTS]
-provider = qwen3  # or elevenlabs
+provider = elevenlabs  # or qwen3
 ```
 
 ### 3. Run
@@ -89,41 +89,6 @@ npm run dev
 ```
 
 Open http://localhost:3000
-
-## Configuration
-
-### STT Providers
-
-**Speechmatics** (default):
-- Requires `SPEECHMATICS_API_KEY`
-- Built-in SMART_TURN detection
-
-**Deepgram**:
-- Requires `DEEPGRAM_API_KEY`
-- Nova-2 model with smart formatting
-
-Switch in `config.ini`:
-```ini
-[STT]
-provider = deepgram
-```
-
-### TTS Providers
-
-**Qwen3-TTS** (default):
-- Local, free, voice cloning
-- Best for Apple Silicon Macs
-- 3 seconds of reference audio
-
-**ElevenLabs**:
-- Cloud-based, high quality
-- Requires API key and credits
-
-Switch in `config.ini`:
-```ini
-[TTS]
-provider = elevenlabs
-```
 
 ## Contributing
 
