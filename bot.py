@@ -412,6 +412,7 @@ async def run_bot(webrtc_connection):
             context,
             user_params=user_params
         )
+
         
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params

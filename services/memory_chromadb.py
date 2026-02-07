@@ -65,16 +65,18 @@ class ChromaDBMemoryService(FrameProcessor):
 
             # Debug: Log all frame types to understand what's flowing through
             frame_type = type(frame).__name__
+            direction_name = "DOWNSTREAM" if direction == FrameDirection.DOWNSTREAM else "UPSTREAM"
 
-            # Log every 50th frame to verify it's being called
-            if self._frame_count % 50 == 0:
+            # Log LLM-related frames to debug
+            if 'LLM' in frame_type or 'Messages' in frame_type or 'Context' in frame_type:
+                logger.info(f"🔍 [ChromaDB] >>> RECEIVED: {frame_type} | Direction: {direction_name} | Count: {self._frame_count}")
+
+            # Log every 100th frame to verify it's being called
+            if self._frame_count % 100 == 0:
                 logger.info(f"🔍 [ChromaDB] Processed {self._frame_count} frames so far (latest: {frame_type})")
 
-            if frame_type == 'LLMMessagesFrame':  # Only log the frame type we care about
-                logger.info(f"🧠 [ChromaDB] ✓✓✓ Received {frame_type} ✓✓✓")
-
             if isinstance(frame, LLMMessagesFrame):
-                logger.info(f"🧠 [ChromaDB] ✓ Processing LLMMessagesFrame")
+                logger.info(f"🧠 [ChromaDB] ✓✓✓ PROCESSING LLMMessagesFrame ✓✓✓")
                 # Get the last user message
                 messages = frame.messages
                 user_message = None
