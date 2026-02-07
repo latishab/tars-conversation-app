@@ -6,7 +6,7 @@ export interface MetricsDataPoint {
   turn_number: number
   timestamp: number
   stt_ttfb_ms?: number
-  mem0_latency_ms?: number
+  memory_latency_ms?: number  // Renamed from mem0_latency_ms
   llm_ttfb_ms?: number
   tts_ttfb_ms?: number
   turn_detection_ms?: number
@@ -16,7 +16,7 @@ export interface MetricsDataPoint {
 
 export interface ServiceInfo {
   stt: string
-  mem0: string
+  memory: string
   llm: string
   tts: string
 }

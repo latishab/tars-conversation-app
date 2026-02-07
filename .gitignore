@@ -19,6 +19,7 @@
 /__pycache__/
 /observers/__pycache__
 /services/__pycache__
+/services/factories/__pycache__
 
 # production
 /build

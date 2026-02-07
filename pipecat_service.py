@@ -57,8 +57,10 @@ from config import (
     PIPECAT_HOST,
     PIPECAT_PORT,
     SPEECHMATICS_API_KEY,
+    DEEPGRAM_API_KEY,
     ELEVENLABS_API_KEY,
     DEEPINFRA_API_KEY,
+    STT_PROVIDER,
     TTS_PROVIDER,  # Only used for startup validation
     get_fresh_config,
 )
@@ -87,12 +89,15 @@ except:
 async def lifespan(app: FastAPI):
     """Handle app lifespan events."""
     logger.info(f"Starting Pipecat service on http://{PIPECAT_HOST}:{PIPECAT_PORT}...")
+    logger.info(f"STT Provider: {STT_PROVIDER}")
     logger.info(f"TTS Provider: {TTS_PROVIDER}")
 
-    # Check required API keys based on TTS provider
+    # Check required API keys based on STT and TTS providers
     missing_keys = []
-    if not SPEECHMATICS_API_KEY:
+    if STT_PROVIDER == "speechmatics" and not SPEECHMATICS_API_KEY:
         missing_keys.append("SPEECHMATICS_API_KEY")
+    if STT_PROVIDER == "deepgram" and not DEEPGRAM_API_KEY:
+        missing_keys.append("DEEPGRAM_API_KEY")
     if not DEEPINFRA_API_KEY:
         missing_keys.append("DEEPINFRA_API_KEY")
     if TTS_PROVIDER == "elevenlabs" and not ELEVENLABS_API_KEY:
@@ -153,14 +158,17 @@ async def status():
     """Health check endpoint with fresh config values."""
     # Get current config from config.ini
     current_config = get_fresh_config()
+    current_stt = current_config['STT_PROVIDER']
     current_tts = current_config['TTS_PROVIDER']
     current_model = current_config['DEEPINFRA_MODEL']
 
     return {
         "status": "ok",
+        "stt_provider": current_stt,
         "tts_provider": current_tts,
         "llm_model": current_model,
-        "speechmatics_configured": bool(SPEECHMATICS_API_KEY),
+        "speechmatics_configured": bool(SPEECHMATICS_API_KEY) if current_stt == "speechmatics" else None,
+        "deepgram_configured": bool(DEEPGRAM_API_KEY) if current_stt == "deepgram" else None,
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY) if current_tts == "elevenlabs" else None,
         "deepinfra_configured": bool(DEEPINFRA_API_KEY),
         "qwen3_tts_configured": True if current_tts == "qwen3" else None,
@@ -184,6 +192,9 @@ async def get_config():
     return {
         "llm": {
             "model": config.get("LLM", "model", fallback="Qwen/Qwen3-235B-A22B-Instruct-2507")
+        },
+        "stt": {
+            "provider": config.get("STT", "provider", fallback="speechmatics")
         },
         "tts": {
             "provider": config.get("TTS", "provider", fallback="qwen3"),
@@ -213,6 +224,12 @@ async def update_config(request: dict):
         if not config.has_section("LLM"):
             config.add_section("LLM")
         config.set("LLM", "model", request["llm_model"])
+
+    # Update STT config
+    if "stt_provider" in request:
+        if not config.has_section("STT"):
+            config.add_section("STT")
+        config.set("STT", "provider", request["stt_provider"])
 
     # Update TTS config
     if "tts_provider" in request:

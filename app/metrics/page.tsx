@@ -38,7 +38,7 @@ export default function MetricsPage() {
   }, [serviceInfo])
 
   // Calculate statistics for each metric type (memoized to prevent recalculation on every render)
-  const { sttStats, mem0Stats, llmStats, ttsStats, visionStats, totalStats } = useMemo(() => {
+  const { sttStats, memoryStats, llmStats, ttsStats, visionStats, totalStats } = useMemo(() => {
     const calculateStats = (key: keyof MetricsDataPoint): StatsData => {
       const values = metrics
         .map((m) => m[key])
@@ -58,7 +58,7 @@ export default function MetricsPage() {
 
     return {
       sttStats: calculateStats('stt_ttfb_ms'),
-      mem0Stats: calculateStats('mem0_latency_ms'),
+      memoryStats: calculateStats('memory_latency_ms'),
       llmStats: calculateStats('llm_ttfb_ms'),
       ttsStats: calculateStats('tts_ttfb_ms'),
       visionStats: calculateStats('vision_latency_ms'),
@@ -71,7 +71,7 @@ export default function MetricsPage() {
     metrics.map((m) => ({
       turn: m.turn_number,
       STT: m.stt_ttfb_ms || null,
-      Memory: m.mem0_latency_ms || null,
+      Memory: m.memory_latency_ms || null,
       LLM: m.llm_ttfb_ms || null,
       TTS: m.tts_ttfb_ms || null,
       Vision: m.vision_latency_ms || null,
@@ -103,7 +103,7 @@ export default function MetricsPage() {
                   STT: <span className="font-semibold">{serviceInfo.stt}</span>
                 </Badge>
                 <Badge variant="secondary" className="text-base px-3 py-1">
-                  Memory: <span className="font-semibold">{serviceInfo.mem0}</span>
+                  Memory: <span className="font-semibold">{serviceInfo.memory}</span>
                 </Badge>
                 <Badge variant="secondary" className="text-base px-3 py-1">
                   LLM: <span className="font-semibold">{serviceInfo.llm}</span>
@@ -168,34 +168,34 @@ export default function MetricsPage() {
             </CardContent>
           </Card>
 
-          {/* Mem0 Card */}
+          {/* Memory Card */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-600">
-                Mem0 Latency
+                Memory Latency
               </CardTitle>
               {serviceInfo && (
                 <p className="text-xs text-gray-500 mt-1">
-                  {serviceInfo.mem0}
+                  {serviceInfo.memory}
                 </p>
               )}
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-indigo-600">
-                {formatMs(mem0Stats.current)}
+                {formatMs(memoryStats.current)}
               </div>
               <div className="mt-2 space-y-1 text-xs text-gray-500">
                 <div className="flex justify-between">
                   <span>Avg:</span>
-                  <span>{formatMs(mem0Stats.avg)}</span>
+                  <span>{formatMs(memoryStats.avg)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Min:</span>
-                  <span>{formatMs(mem0Stats.min)}</span>
+                  <span>{formatMs(memoryStats.min)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Max:</span>
-                  <span>{formatMs(mem0Stats.max)}</span>
+                  <span>{formatMs(memoryStats.max)}</span>
                 </div>
               </div>
             </CardContent>
@@ -378,7 +378,7 @@ export default function MetricsPage() {
                     strokeWidth={2}
                     dot={{ r: 4 }}
                     connectNulls
-                    name="Mem0"
+                    name="Memory"
                   />
                   <Line
                     type="monotone"
@@ -441,7 +441,7 @@ export default function MetricsPage() {
                       <th className="pb-2 font-semibold text-gray-700">Turn #</th>
                       <th className="pb-2 font-semibold text-gray-700">Timestamp</th>
                       <th className="pb-2 font-semibold text-blue-600">STT (ms)</th>
-                      <th className="pb-2 font-semibold text-indigo-600">Mem0 (ms)</th>
+                      <th className="pb-2 font-semibold text-indigo-600">Memory (ms)</th>
                       <th className="pb-2 font-semibold text-purple-600">LLM (ms)</th>
                       <th className="pb-2 font-semibold text-green-600">TTS (ms)</th>
                       <th className="pb-2 font-semibold text-pink-600">Vision (ms)</th>
@@ -459,7 +459,7 @@ export default function MetricsPage() {
                           {formatMs(metric.stt_ttfb_ms)}
                         </td>
                         <td className="py-2 font-mono text-indigo-600">
-                          {formatMs(metric.mem0_latency_ms)}
+                          {formatMs(metric.memory_latency_ms)}
                         </td>
                         <td className="py-2 font-mono text-purple-600">
                           {formatMs(metric.llm_ttfb_ms)}
