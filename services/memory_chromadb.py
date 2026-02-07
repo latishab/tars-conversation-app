@@ -2,8 +2,10 @@
 
 import time
 from loguru import logger
-from pipecat.frames.frames import Frame, LLMMessagesFrame, MetricsFrame
+from pipecat.frames.frames import Frame, LLMMessagesFrame, LLMContextFrame, MetricsFrame
 from pipecat.metrics.metrics import TTFBMetricsData
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext, OpenAILLMContextFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from sentence_transformers import SentenceTransformer
 import chromadb
@@ -75,13 +77,24 @@ class ChromaDBMemoryService(FrameProcessor):
             if self._frame_count % 100 == 0:
                 logger.info(f"🔍 [ChromaDB] Processed {self._frame_count} frames so far (latest: {frame_type})")
 
-            if isinstance(frame, LLMMessagesFrame):
+            # Handle both LLMContextFrame and LLMMessagesFrame (like Mem0 does)
+            context = None
+            messages = None
+
+            if isinstance(frame, (LLMContextFrame, OpenAILLMContextFrame)):
+                logger.info(f"🧠 [ChromaDB] ✓✓✓ PROCESSING LLMContextFrame ✓✓✓")
+                context = frame.context
+            elif isinstance(frame, LLMMessagesFrame):
                 logger.info(f"🧠 [ChromaDB] ✓✓✓ PROCESSING LLMMessagesFrame ✓✓✓")
-                # Get the last user message
                 messages = frame.messages
+                context = LLMContext(messages)
+
+            if context:
+                # Get the latest user message
+                context_messages = context.get_messages()
                 user_message = None
-                for msg in reversed(messages):
-                    if msg.get("role") == "user":
+                for msg in reversed(context_messages):
+                    if msg.get("role") == "user" and isinstance(msg.get("content"), str):
                         user_message = msg.get("content", "")
                         break
 
@@ -100,32 +113,23 @@ class ChromaDBMemoryService(FrameProcessor):
                     await self.push_frame(metrics_frame, direction)
 
                     if memories:
-                        # Inject memories into system message
+                        # Inject memories into context
                         memory_text = self.system_prompt_prefix + "\n".join(memories)
-
-                        # Find system message or create one
-                        has_system = False
-                        for msg in messages:
-                            if msg.get("role") == "system":
-                                # Append to existing system message
-                                msg["content"] += "\n\n" + memory_text
-                                has_system = True
-                                break
-
-                        if not has_system:
-                            # Insert new system message at the beginning
-                            messages.insert(0, {
-                                "role": "system",
-                                "content": memory_text
-                            })
-
+                        context.add_message({"role": "system", "content": memory_text})
                         logger.info(f"📚 Retrieved {len(memories)} memories in {search_latency_ms:.0f}ms")
 
                     # Store current conversation turn
                     await self._store_memory(user_message)
 
-            # Pass frame through
-            await self.push_frame(frame, direction)
+                # If we received an LLMMessagesFrame, create a new one with the enhanced messages
+                if messages is not None:
+                    await self.push_frame(LLMMessagesFrame(context.get_messages()), direction)
+                else:
+                    # Otherwise, pass the enhanced context frame downstream
+                    await self.push_frame(frame, direction)
+            else:
+                # For non-context frames, just pass them through
+                await self.push_frame(frame, direction)
 
         except Exception as e:
             logger.error(f"❌ [ChromaDB] Error in process_frame: {e}", exc_info=True)
