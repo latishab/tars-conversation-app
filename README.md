@@ -57,8 +57,11 @@ npm install
 ### 2. Configure Environment
 
 ```bash
+# Copy and edit environment file with your API keys
 cp env.example .env.local
-# Edit .env.local with your API keys
+
+# Copy and edit configuration file
+cp config.ini.example config.ini
 ```
 
 **Required API Keys** (in `.env.local`):
@@ -72,10 +75,10 @@ cp env.example .env.local
 model = openai/gpt-oss-20b
 
 [STT]
-provider = deepgram  # or speechmatics
+provider = speechmatics  # or deepgram, deepgram-flux
 
 [TTS]
-provider = elevenlabs  # or qwen3
+provider = qwen3  # or elevenlabs
 ```
 
 ### 3. Run
