@@ -73,7 +73,8 @@ MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 DEEPINFRA_MODEL = get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b")
 
 # STT Configuration (config.ini with .env fallback)
-STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "deepgram")
+# Options: "speechmatics", "deepgram", "deepgram-flux"
+STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "deepgram-flux")
 
 # TTS Configuration (config.ini with .env fallback)
 TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "qwen3")

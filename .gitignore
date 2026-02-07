@@ -25,6 +25,7 @@ __pycache__/
 /.models/
 /.claude/
 /chroma_memory/
+/deprecated/
 
 # debug
 npm-debug.log*

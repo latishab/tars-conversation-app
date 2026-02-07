@@ -28,6 +28,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
+from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.moondream.vision import MoondreamService
@@ -179,10 +180,14 @@ async def run_bot(webrtc_connection):
         # ====================================================================
         # TRANSPORT INITIALIZATION
         # ====================================================================
-        # Note: We're using STT provider's built-in turn detection,
-        # so we don't need external VAD or turn analyzers in the transport.
+        # Note: STT providers handle their own turn detection:
+        # - Speechmatics: SMART_TURN mode
+        # - Deepgram: endpointing parameter
+        # - Deepgram Flux: built-in turn detection with ExternalUserTurnStrategies
 
-        logger.info(f"Initializing transport (using {STT_PROVIDER} built-in turn detection)...")
+        uses_external_turn_detection = STT_PROVIDER == "deepgram-flux"
+        turn_mode = "external (Flux)" if uses_external_turn_detection else "built-in"
+        logger.info(f"Initializing transport with {STT_PROVIDER} turn detection ({turn_mode})...")
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -214,6 +219,12 @@ async def run_bot(webrtc_connection):
                 enable_diarization=False,
             )
             service_refs["stt"] = stt
+
+            # Log additional info for Deepgram Flux
+            if STT_PROVIDER == "deepgram-flux":
+                logger.info("✓ Deepgram Flux: Using external turn detection (EOT signals)")
+                logger.info("✓ Deepgram Flux: min_confidence=0.3 for transcription acceptance")
+
         except Exception as e:
             logger.error(f"Failed to initialize {STT_PROVIDER} STT: {e}", exc_info=True)
             return
@@ -383,9 +394,20 @@ async def run_bot(webrtc_connection):
         # CONTEXT AGGREGATOR & PERSONA STORAGE
         # ====================================================================
 
-        user_params = LLMUserAggregatorParams(
-            user_turn_stop_timeout=1.5
-        )
+        # Configure user turn strategies based on STT provider
+        if uses_external_turn_detection:
+            # Deepgram Flux has built-in turn detection, use external strategies
+            logger.info("Configuring ExternalUserTurnStrategies for Deepgram Flux")
+            user_params = LLMUserAggregatorParams(
+                user_turn_stop_timeout=1.5,
+                user_turn_strategies=ExternalUserTurnStrategies()
+            )
+        else:
+            # Other STT providers use internal turn detection
+            user_params = LLMUserAggregatorParams(
+                user_turn_stop_timeout=1.5
+            )
+
         context_aggregator = LLMContextAggregatorPair(
             context,
             user_params=user_params
@@ -469,14 +491,21 @@ async def run_bot(webrtc_connection):
                         tts_model = QWEN3_TTS_MODEL.split('/')[-1] if '/' in QWEN3_TTS_MODEL else QWEN3_TTS_MODEL
                         tts_display = f"Qwen3-TTS: {tts_model}"
 
+                    # Format STT provider name for display
+                    stt_display = {
+                        "speechmatics": "Speechmatics",
+                        "deepgram": "Deepgram Nova-2",
+                        "deepgram-flux": "Deepgram Flux"
+                    }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
+
                     webrtc_connection.send_app_message({
                         "type": "service_info",
-                        "stt": STT_PROVIDER.capitalize(),
+                        "stt": stt_display,
                         "memory": "ChromaDB (local)",
                         "llm": f"DeepInfra: {llm_display}",
                         "tts": tts_display
                     })
-                    logger.info(f"📊 Sent service info to frontend: STT={STT_PROVIDER}, LLM={llm_display}, TTS={tts_display}")
+                    logger.info(f"📊 Sent service info to frontend: STT={stt_display}, LLM={llm_display}, TTS={tts_display}")
             except Exception as e:
                 logger.error(f"❌ Error sending service info: {e}")
 
