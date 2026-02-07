@@ -15,9 +15,9 @@ def create_stt_service(
     Create and configure STT service based on provider.
 
     Args:
-        provider: "speechmatics" or "deepgram"
+        provider: "speechmatics", "deepgram", or "deepgram-flux"
         speechmatics_api_key: Speechmatics API key (if using speechmatics)
-        deepgram_api_key: Deepgram API key (if using deepgram)
+        deepgram_api_key: Deepgram API key (if using deepgram/deepgram-flux)
         language: Language for transcription (default: English)
         enable_diarization: Enable speaker diarization (default: False)
 
@@ -77,8 +77,40 @@ def create_stt_service(
             )
             logger.info("✓ Deepgram STT service created")
 
+        elif provider == "deepgram-flux":
+            # Lazy import to avoid requiring package when not in use
+            from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
+
+            # Deepgram Flux with built-in turn detection
+            if not deepgram_api_key:
+                raise ValueError("deepgram_api_key is required for Deepgram Flux")
+
+            logger.info("Using Deepgram Flux STT with built-in turn detection")
+            # Flux has different parameters - uses EOT (End of Transcript) detection
+            # Default model is "flux-general-en" and encoding is "linear16"
+            stt_params = DeepgramFluxSTTService.InputParams(
+                min_confidence=0.3,  # Minimum confidence threshold for accepting transcriptions
+                # Optional: Configure end-of-turn detection thresholds
+                # eot_threshold: Confidence threshold for detecting end of turn (0.0-1.0)
+                # eot_timeout_ms: Max time to wait before forcing turn end
+                # eager_eot_threshold: More aggressive turn ending threshold
+            )
+
+            stt = DeepgramFluxSTTService(
+                api_key=deepgram_api_key,
+                model="flux-general-en",  # Flux model for general English
+                params=stt_params,
+            )
+
+            # Set up debug event handler for Flux updates
+            @stt.event_handler("on_update")
+            async def on_flux_update(stt_service, transcript):
+                logger.debug(f"[Deepgram Flux] Update: {transcript}")
+
+            logger.info("✓ Deepgram Flux STT service created with built-in turn detection")
+
         else:
-            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics' or 'deepgram'")
+            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', or 'deepgram-flux'")
 
         return stt
 
