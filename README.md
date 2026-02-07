@@ -1,51 +1,82 @@
 # TARS Omni - Real-time Voice AI
 
-Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics, Qwen3-TTS (or ElevenLabs), Qwen LLM, and Moondream.
+Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics/Deepgram, Qwen3-TTS/ElevenLabs, Qwen LLM, and Moondream.
 
 ## Features
 
-- 🎤 **Real-time Transcription** - Speechmatics with speaker diarization
-- 🔊 **Dual TTS** - Qwen3-TTS (local, free) or ElevenLabs (cloud)
-- 🤖 **LLM** - Qwen via DeepInfra
-- 👁️ **Vision** - Moondream image analysis
-- 🎯 **Smart Turn Detection** - VAD prevents interruptions
-- 🚦 **Gating Layer** - AI decides when to respond
-- 🌐 **WebRTC** - Peer-to-peer audio/video
-- 🧠 **Memory** - Optional Mem0 long-term memory
-- 🎙️ **Voice Cloning** - 3 seconds of audio with Qwen3-TTS
-- 😊 **Emotional Monitoring** - Real-time detection of confusion/hesitation/frustration
-- 🧩 **Interactive Crossword** - Built-in puzzle to test emotional monitoring (TARS knows the answers!)
+- **Real-time Transcription** - Speechmatics or Deepgram with smart turn detection
+- **Dual TTS Options** - Qwen3-TTS (local, free, voice cloning) or ElevenLabs (cloud)
+- **LLM Integration** - Qwen or other models via DeepInfra
+- **Vision Analysis** - Moondream for image understanding
+- **Smart Gating Layer** - AI-powered decision system for natural conversation flow
+- **WebRTC Transport** - Low-latency peer-to-peer audio/video
+- **Semantic Memory** - ChromaDB for conversation context and recall
+- **Emotional Monitoring** - Real-time detection of confusion, hesitation, and frustration
+- **Configurable** - Switch models and providers via web UI or config file
+
+## Project Structure
+
+```
+tars-omni/
+├── app/                    # Next.js frontend
+│   ├── api/               # API routes
+│   ├── components/        # React components
+│   └── page.tsx           # Main UI
+│
+├── pipecat_service.py     # FastAPI server
+├── bot.py                 # Pipeline orchestration
+│
+├── config/                # Environment config
+├── character/             # TARS personality
+├── processors/            # Frame processors
+│   ├── emotional_monitor.py  # Real-time emotion detection
+│   ├── gating.py         # Intervention decision system
+│   ├── visual_observer.py    # Vision analysis
+│   └── filters.py        # Audio filtering
+├── services/              # AI services
+│   ├── factories/        # Service factories (STT/TTS)
+│   ├── tts_qwen.py       # Local voice cloning
+│   └── memory_chromadb.py # Semantic memory
+├── modules/               # LLM tools/functions
+├── observers/             # Pipeline observers
+└── scripts/               # Utilities
+```
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-# Python
+# Python dependencies
 pip install -r requirements.txt
 
-# Node.js
+# Node.js dependencies
 npm install
 ```
 
-### 2. Configure
+### 2. Configure Environment
 
 ```bash
 cp env.example .env.local
 # Edit .env.local with your API keys
 ```
 
-**API Keys** (in `.env.local`):
-- `SPEECHMATICS_API_KEY` - Required
-- `DEEPINFRA_API_KEY` - Required
+**Required API Keys** (in `.env.local`):
+- `SPEECHMATICS_API_KEY` or `DEEPGRAM_API_KEY` - For speech-to-text
+- `DEEPINFRA_API_KEY` - For LLM
 - `ELEVENLABS_API_KEY` - Optional (if using ElevenLabs TTS)
-- `MEM0_API_KEY` - Optional (for long-term memory)
 
 **Settings** (in `config.ini`):
-- LLM model selection
-- TTS provider (qwen3 or elevenlabs)
+```ini
+[LLM]
+model = openai/gpt-oss-20b
 
-The `config.ini` file is auto-created and can be edited via the web UI!
+[STT]
+provider = speechmatics  # or deepgram
+
+[TTS]
+provider = qwen3  # or elevenlabs
+```
 
 ### 3. Run
 
@@ -59,256 +90,60 @@ npm run dev
 
 Open http://localhost:3000
 
-## Project Structure
+## Configuration
 
-```
-tars-omni/
-├── app/                    # Next.js frontend
-│   ├── api/               # API routes
-│   ├── components/        # React components
-│   └── page.tsx           # Main UI
-│
-├── pipecat_service.py     # FastAPI server
-├── bot.py                 # Pipeline orchestration
-├── loggers.py             # Monitoring processors
-│
-├── config/                # Environment config
-├── character/             # TARS personality
-├── processors/            # Frame processors
-│   ├── emotional_monitor.py  # Real-time emotion detection
-│   ├── gating.py         # Intervention decision system
-│   ├── visual_observer.py    # Vision analysis
-│   └── filters.py        # Audio filtering
-├── services/              # AI services (TTS/STT/LLM/Memory)
-│   ├── tts_qwen.py       # Local voice cloning (Qwen3-TTS)
-│   ├── tts_factory.py    # TTS service factory
-│   └── memory_chromadb.py # Semantic memory (ChromaDB)
-├── modules/               # LLM tools/functions
-└── scripts/               # Utilities
-```
+### STT Providers
 
-## Code Organization
+**Speechmatics** (default):
+- Requires `SPEECHMATICS_API_KEY`
+- Built-in SMART_TURN detection
 
-| Type | Location | Purpose |
-|------|----------|---------|
-| **AI Service** | `services/` | TTS/STT/LLM/Vision integrations |
-| **Processor** | `processors/` | Frame processing/filtering |
-| **Logger** | `loggers.py` | Monitoring/debugging |
-| **LLM Tool** | `modules/` | Functions the LLM can call |
-| **Config** | `config/` | Environment variables |
-| **Frontend** | `app/` | Next.js React app |
+**Deepgram**:
+- Requires `DEEPGRAM_API_KEY`
+- Nova-2 model with smart formatting
 
-**Key Distinctions**:
-- `services/` = AI engines (TTS, STT, LLM)
-- `modules/` = LLM-callable functions (backend Python)
-- `lib/` = Frontend utilities (TypeScript)
-- `processors/` = Data processing
-- `loggers.py` = Monitoring/observability
-
-## Model & TTS Configuration
-
-### Web UI Configuration (Recommended)
-
-You can change both the LLM model and TTS provider directly from the web interface:
-
-1. Open http://localhost:3000
-2. Click **🤖 Model Selector** to choose your LLM:
-   - GPT-OSS-20B (default, fast, ~800ms-1s)
-   - Llama-3.3-70B Turbo (~1-2s)
-   - Qwen3-235B (high quality, ~2-3s)
-   - Nemotron-3-30B (~1-1.5s)
-   - Llama-4-Scout-17B (very fast, ~600-900ms)
-   - Llama-3.2-3B (fastest, ~300-500ms)
-3. Click **🎤 TTS Selector** to choose your TTS provider:
-   - Qwen3-TTS (local, free, voice cloning)
-   - ElevenLabs (cloud, high quality)
-4. **No restart needed!** Settings apply to new connections automatically.
-
-Settings are saved to `config.ini` and take effect immediately for new sessions.
-
-### Qwen3-TTS (Default - Local & Free)
-
-Best for Apple Silicon Macs. Voice cloning with `tars-clean-compressed.mp3`.
-
-**M4 24GB Performance**:
-- First load: ~15-20s
-- Generation: 2.5-3x real-time
-- Memory: ~2-3GB
-
+Switch in `config.ini`:
 ```ini
-# config.ini
-[TTS]
-provider = qwen3
-qwen3_model = Qwen/Qwen3-TTS-12Hz-0.6B-Base
-qwen3_device = mps
-qwen3_ref_audio = tars-clean-compressed.mp3
+[STT]
+provider = deepgram
 ```
 
-### ElevenLabs (Cloud)
+### TTS Providers
 
-Better quality, requires API key and credits.
+**Qwen3-TTS** (default):
+- Local, free, voice cloning
+- Best for Apple Silicon Macs
+- 3 seconds of reference audio
 
+**ElevenLabs**:
+- Cloud-based, high quality
+- Requires API key and credits
+
+Switch in `config.ini`:
 ```ini
-# config.ini
 [TTS]
 provider = elevenlabs
 ```
 
-Add API key to `.env.local`:
-```env
-ELEVENLABS_API_KEY=your_key
-```
+## Contributing
 
-## How It Works
+Contributions are welcome! Please follow these guidelines:
 
-1. **Audio/Video Input** → Browser captures via WebRTC
-2. **Emotional Monitor** → Analyzes video for confusion/hesitation (every 3s)
-3. **VAD** → Detects when user stops speaking
-4. **STT** → Speechmatics transcribes with speaker labels
-5. **Gating** → AI decides if TARS should respond using:
-   - Emotional state (priority 1)
-   - Visual cues (priority 2)
-   - Transcription (priority 3)
-6. **LLM** → Qwen processes and generates response (if gating passes)
-7. **Vision** → Moondream analyzes images when requested
-8. **TTS** → Qwen3-TTS or ElevenLabs synthesizes speech
-9. **Audio Output** → Streamed back via WebRTC
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Make your changes
+4. Run tests if applicable
+5. Commit with clear messages
+6. Push to your fork
+7. Open a Pull Request
 
-## Tech Stack
+### Code Style
 
-**Frontend**: Next.js 16, React 19, Tailwind, shadcn/ui, WebRTC
-**Backend**: Python 3.12, FastAPI, Pipecat.ai, PyTorch
-**AI**: Speechmatics, Qwen3-TTS/ElevenLabs, Qwen LLM, Moondream
-
-## Development
-
-### Testing
-
-```bash
-python test_qwen_tts.py                    # Qwen3-TTS standalone
-python test_qwen_pipecat.py                # Qwen3-TTS Pipecat integration
-python test_emotional_monitor.py           # Emotional state detection
-python test_gating_emotional_integration.py # Gating + emotions integration
-```
-
-### Switching Models/TTS/Settings
-
-**Via Web UI** (Recommended):
-1. Use the Model/TTS selector buttons in the interface
-2. Changes apply immediately to new connections (no restart needed!)
-
-**Via config.ini** (Manual):
-Edit `config.ini` and changes will apply to new WebRTC connections automatically:
-```ini
-[LLM]
-model = meta-llama/Llama-3.3-70B-Instruct-Turbo
-gating_model = meta-llama/Llama-3.2-3B-Instruct
-
-[TTS]
-provider = elevenlabs
-
-[Emotional]
-enabled = true
-sampling_interval = 3.0
-intervention_threshold = 2
-```
-
-Active connections keep their original settings. New connections use the updated config.
-
-### Voice Cloning
-
-Place audio file in root, update `config.ini`:
-```ini
-[TTS]
-qwen3_ref_audio = your-voice.mp3
-```
-
-### Emotional Monitoring (Integrated with Gating)
-
-TARS continuously analyzes your video feed and **integrates emotional state into smart gating decisions**.
-
-**Detects**:
-- 😕 Confusion (puzzled expression, furrowed brow)
-- 🤔 Hesitation (pauses, uncertain gestures)
-- 😤 Frustration (tense posture, agitated movements)
-- 😊 Focus (engaged, attentive posture)
-
-**Configuration**:
-```env
-EMOTIONAL_MONITORING_ENABLED=true       # Enable/disable
-EMOTIONAL_SAMPLING_INTERVAL=3.0        # Analysis frequency (seconds)
-EMOTIONAL_INTERVENTION_THRESHOLD=2     # Consecutive states before flagging
-```
-
-**How it works (3-Signal Gating)**:
-1. **Emotional State** (Highest Priority)
-   - Confused/Hesitant/Frustrated → TARS always responds
-   - Focused → Less likely to interrupt
-2. **Vision** (Medium Priority)
-   - Looking at camera → More likely to respond
-3. **Transcription** (Base Signal)
-   - "TARS, ..." → Direct address detected
-
-**Decision Flow**:
-```
-Emotional State → Vision → Transcription → Decision
-     ↓               ↓          ↓              ↓
-  Confused?       Looking?   Addressing?    Respond?
-  → YES     →     BYPASS  →  BYPASS     →    YES
-  → Focused →     No      →  No         →    NO
-  → Neutral →     Yes     →  Yes        →    YES
-```
-
-**Benefits**:
-- Proactive help when you struggle (even without asking)
-- Respects focus time (won't interrupt when engaged)
-- Smarter than transcription-only gating
-
-**Disable**: Set `EMOTIONAL_MONITORING_ENABLED=false`
-
-### Interactive Crossword (Emotional Monitoring Test)
-
-Built-in crossword puzzle to test the emotional monitoring system in action!
-
-**How to use**:
-1. Start voice session
-2. Click "🧩 Show Crossword" button
-3. Work on the crossword puzzle
-4. TARS watches you via webcam
-5. When you look confused/stuck, TARS offers help!
-
-**TARS capabilities**:
-- Knows ALL the answers
-- Can give hints (first letter, word length, or full answer)
-- Watches your emotional state while you work
-- Proactively offers help when you struggle
-
-**Example interaction**:
-```
-You: [Looking puzzled at clue #3]
-TARS: "I notice you might be stuck. Need a hint for that one?"
-You: "Yeah, what's 3 down?"
-TARS: "Hmm... flying mammal, starts with 'B'. Three letters."
-```
-
-**Perfect for testing**:
-- Place TARS on right side of table (looking at you)
-- Do the crossword (challenging enough to get confused)
-- Experience proactive AI assistance based on your expressions!
-
-## API Endpoints
-
-**Backend (Port 7860)**:
-- `POST /api/offer` - WebRTC offer
-- `PATCH /api/offer` - ICE candidates
-- `GET /api/status` - Health check
-- `GET /api/config` - Get current configuration
-- `POST /api/config` - Update configuration (model/TTS)
-
-**Frontend (Port 3000)**:
-- `/` - Main UI
-- Proxies to backend
+- Python: Follow PEP 8
+- TypeScript: Use existing ESLint configuration
+- Add comments for complex logic
+- Update documentation for new features
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details
