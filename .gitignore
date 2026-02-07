@@ -29,6 +29,7 @@
 *.pem
 /.models/
 /.claude/
+/chroma_memory/
 
 # debug
 npm-debug.log*
