@@ -42,26 +42,26 @@ class MetricsObserver(BaseObserver):
         self._last_logged_turn = -1
         self._stt_measured_this_turn = False
         self._mem0_measured_this_turn = False
-        self._stt_start_time = None
+        # Use turn start time as STT baseline (when user starts speaking)
+        self._stt_start_time = time.time()
         self._mem0_start_time = None
-        logger.debug(f"🔄 Turn #{self._current_turn} started, resetting metrics")
+        logger.info(f"🔄 [MetricsObserver] Turn #{self._current_turn} started, STT timer initialized")
 
     async def on_push_frame(self, data: FramePushed):
         """Watch frames as they're pushed through the pipeline."""
         frame = data.frame
 
-        # Manual STT timing: Speechmatics doesn't emit MetricsFrame for transcriptions,
-        # so we measure from first audio input to transcription output
-        if isinstance(frame, UserAudioRawFrame):
-            if self._stt_start_time is None and not self._stt_measured_this_turn:
-                self._stt_start_time = time.time()
-
-        elif isinstance(frame, TranscriptionFrame):
-            if self._stt_start_time is not None and not self._stt_measured_this_turn:
+        # STT timing: Measure from turn start to first transcription
+        # (Turn start = when user begins speaking, detected by turn tracker)
+        if isinstance(frame, TranscriptionFrame) and not self._stt_measured_this_turn:
+            if self._stt_start_time is not None:
                 stt_latency_ms = (time.time() - self._stt_start_time) * 1000
                 self._current_metrics['stt_ttfb_ms'] = stt_latency_ms
                 self._stt_measured_this_turn = True
+                logger.info(f"✅ [MetricsObserver] STT latency: {stt_latency_ms:.0f}ms (turn start → transcription)")
                 self._send_to_frontend()
+            else:
+                logger.warning(f"⚠️  [MetricsObserver] TranscriptionFrame received but no turn start time!")
 
         # Capture MetricsFrame data from Pipecat's built-in metrics
         if isinstance(frame, MetricsFrame):
@@ -70,23 +70,29 @@ class MetricsObserver(BaseObserver):
                     if isinstance(metric_data, TTFBMetricsData):
                         processor = metric_data.processor
                         value_ms = metric_data.value * 1000  # Convert seconds to milliseconds
-
                         processor_lower = processor.lower()
 
                         # Check TTS first (contains "tts" in name)
                         if 'ttsservice' in processor_lower or 'elevenlabs' in processor_lower or 'qwen' in processor_lower:
-                            self._current_metrics['tts_ttfb_ms'] = value_ms
+                            if 'tts_ttfb_ms' not in self._current_metrics:  # Only log once per turn
+                                self._current_metrics['tts_ttfb_ms'] = value_ms
+                                logger.info(f"✅ [MetricsObserver] TTS latency: {value_ms:.0f}ms")
                         # Check LLM
                         elif 'llmservice' in processor_lower or 'openai' in processor_lower or 'deepinfra' in processor_lower:
-                            self._current_metrics['llm_ttfb_ms'] = value_ms
-                        # Check Mem0 (though it rarely emits MetricsFrame)
-                        elif 'mem0' in processor_lower or 'memory' in processor_lower:
-                            self._current_metrics['mem0_latency_ms'] = value_ms
+                            if 'llm_ttfb_ms' not in self._current_metrics:  # Only log once per turn
+                                self._current_metrics['llm_ttfb_ms'] = value_ms
+                                logger.info(f"✅ [MetricsObserver] LLM latency: {value_ms:.0f}ms")
+                        # Check Memory (ChromaDB)
+                        elif 'memory' in processor_lower or 'chromadb' in processor_lower:
+                            if 'memory_latency_ms' not in self._current_metrics:  # Only log once per turn
+                                self._current_metrics['memory_latency_ms'] = value_ms
+                                logger.info(f"✅ [MetricsObserver] Memory latency: {value_ms:.0f}ms")
 
                 # Calculate total latency and send if we have any metrics
                 if self._current_metrics:
                     total = sum([
                         self._current_metrics.get('stt_ttfb_ms', 0),
+                        self._current_metrics.get('memory_latency_ms', 0),
                         self._current_metrics.get('llm_ttfb_ms', 0),
                         self._current_metrics.get('tts_ttfb_ms', 0)
                     ])
@@ -107,7 +113,7 @@ class MetricsObserver(BaseObserver):
         current_metrics_key = (
             self._current_turn,
             self._current_metrics.get('stt_ttfb_ms'),
-            self._current_metrics.get('mem0_latency_ms'),
+            self._current_metrics.get('memory_latency_ms'),
             self._current_metrics.get('llm_ttfb_ms'),
             self._current_metrics.get('tts_ttfb_ms'),
             self._current_metrics.get('vision_latency_ms'),
@@ -135,7 +141,7 @@ class MetricsObserver(BaseObserver):
                     logger.info(
                         f"📊 Turn #{self._current_turn}: "
                         f"STT={fmt(self._current_metrics.get('stt_ttfb_ms'))}ms | "
-                        f"Mem0={fmt(self._current_metrics.get('mem0_latency_ms'))}ms | "
+                        f"Memory={fmt(self._current_metrics.get('memory_latency_ms'))}ms | "
                         f"LLM={fmt(self._current_metrics.get('llm_ttfb_ms'))}ms | "
                         f"TTS={fmt(self._current_metrics.get('tts_ttfb_ms'))}ms | "
                         f"Vision={fmt(self._current_metrics.get('vision_latency_ms'))}ms"

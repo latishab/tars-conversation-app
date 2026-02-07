@@ -2,7 +2,8 @@
 
 import time
 from loguru import logger
-from pipecat.frames.frames import Frame, LLMMessagesFrame
+from pipecat.frames.frames import Frame, LLMMessagesFrame, MetricsFrame
+from pipecat.metrics.metrics import TTFBMetricsData
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from sentence_transformers import SentenceTransformer
 import chromadb
@@ -48,54 +49,86 @@ class ChromaDBMemoryService(FrameProcessor):
         # Load embedding model (lightweight, ~80MB)
         logger.info("Loading sentence transformer model...")
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("✓ ChromaDB memory service initialized")
+
+        # Frame counter for debugging
+        self._frame_count = 0
+
+        logger.info("✓ ChromaDB memory service initialized and ready to process frames")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process frames and inject memories into LLM context."""
-        await super().process_frame(frame, direction)
+        try:
+            await super().process_frame(frame, direction)
 
-        if isinstance(frame, LLMMessagesFrame):
-            # Get the last user message
-            messages = frame.messages
-            user_message = None
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    user_message = msg.get("content", "")
-                    break
+            # Frame counter
+            self._frame_count += 1
 
-            if user_message:
-                # Search for relevant memories
-                start_time = time.time()
-                memories = await self._search_memories(user_message)
-                search_latency_ms = (time.time() - start_time) * 1000
+            # Debug: Log all frame types to understand what's flowing through
+            frame_type = type(frame).__name__
 
-                if memories:
-                    # Inject memories into system message
-                    memory_text = self.system_prompt_prefix + "\n".join(memories)
+            # Log every 50th frame to verify it's being called
+            if self._frame_count % 50 == 0:
+                logger.info(f"🔍 [ChromaDB] Processed {self._frame_count} frames so far (latest: {frame_type})")
 
-                    # Find system message or create one
-                    has_system = False
-                    for msg in messages:
-                        if msg.get("role") == "system":
-                            # Append to existing system message
-                            msg["content"] += "\n\n" + memory_text
-                            has_system = True
-                            break
+            if frame_type == 'LLMMessagesFrame':  # Only log the frame type we care about
+                logger.info(f"🧠 [ChromaDB] ✓✓✓ Received {frame_type} ✓✓✓")
 
-                    if not has_system:
-                        # Insert new system message at the beginning
-                        messages.insert(0, {
-                            "role": "system",
-                            "content": memory_text
-                        })
+            if isinstance(frame, LLMMessagesFrame):
+                logger.info(f"🧠 [ChromaDB] ✓ Processing LLMMessagesFrame")
+                # Get the last user message
+                messages = frame.messages
+                user_message = None
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        user_message = msg.get("content", "")
+                        break
 
-                    logger.debug(f"📚 Retrieved {len(memories)} memories in {search_latency_ms:.0f}ms")
+                if user_message:
+                    logger.info(f"🧠 [ChromaDB] Searching memories for: '{user_message[:50]}...'")
+                    # Search for relevant memories
+                    start_time = time.time()
+                    memories = await self._search_memories(user_message)
+                    search_latency_ms = (time.time() - start_time) * 1000
 
-                # Store current conversation turn
-                await self._store_memory(user_message)
+                    # Emit metrics for observer tracking
+                    logger.info(f"📊 [ChromaDB] Search completed in {search_latency_ms:.0f}ms, emitting MetricsFrame")
+                    metrics_frame = MetricsFrame(
+                        data=[TTFBMetricsData(processor="ChromaDBMemoryService", value=search_latency_ms / 1000)]
+                    )
+                    await self.push_frame(metrics_frame, direction)
 
-        # Pass frame through
-        await self.push_frame(frame, direction)
+                    if memories:
+                        # Inject memories into system message
+                        memory_text = self.system_prompt_prefix + "\n".join(memories)
+
+                        # Find system message or create one
+                        has_system = False
+                        for msg in messages:
+                            if msg.get("role") == "system":
+                                # Append to existing system message
+                                msg["content"] += "\n\n" + memory_text
+                                has_system = True
+                                break
+
+                        if not has_system:
+                            # Insert new system message at the beginning
+                            messages.insert(0, {
+                                "role": "system",
+                                "content": memory_text
+                            })
+
+                        logger.info(f"📚 Retrieved {len(memories)} memories in {search_latency_ms:.0f}ms")
+
+                    # Store current conversation turn
+                    await self._store_memory(user_message)
+
+            # Pass frame through
+            await self.push_frame(frame, direction)
+
+        except Exception as e:
+            logger.error(f"❌ [ChromaDB] Error in process_frame: {e}", exc_info=True)
+            # Still pass frame through even if we failed
+            await self.push_frame(frame, direction)
 
     async def _search_memories(self, query: str) -> list[str]:
         """Search for relevant memories based on semantic similarity."""

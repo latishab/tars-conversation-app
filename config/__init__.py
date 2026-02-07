@@ -32,6 +32,7 @@ def get_fresh_config():
     return {
         'DEEPINFRA_MODEL': get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b"),
         'DEEPINFRA_GATING_MODEL': get_config("LLM", "gating_model", "DEEPINFRA_GATING_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
+        'STT_PROVIDER': get_config("STT", "provider", "STT_PROVIDER", "speechmatics"),
         'TTS_PROVIDER': get_config("TTS", "provider", "TTS_PROVIDER", "qwen3"),
         'QWEN3_TTS_MODEL': get_config("TTS", "qwen3_model", "QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
         'QWEN3_TTS_DEVICE': get_config("TTS", "qwen3_device", "QWEN3_TTS_DEVICE", "mps"),
@@ -57,6 +58,7 @@ def get_config(section: str, key: str, env_key: str = None, default: str = "") -
 
 # API Keys (always from .env for security)
 SPEECHMATICS_API_KEY = os.getenv("SPEECHMATICS_API_KEY", "")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ry8mpwRw6nugb2qjP0tu")
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "")
@@ -69,6 +71,9 @@ MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 
 # LLM Configuration (config.ini with .env fallback)
 DEEPINFRA_MODEL = get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b")
+
+# STT Configuration (config.ini with .env fallback)
+STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "deepgram")
 
 # TTS Configuration (config.ini with .env fallback)
 TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "qwen3")

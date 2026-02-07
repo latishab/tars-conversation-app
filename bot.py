@@ -31,7 +31,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.moondream.vision import MoondreamService
-from pipecat.services.speechmatics.stt import SpeechmaticsSTTService, TurnDetectionMode
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
 from services.memory_chromadb import ChromaDBMemoryService
@@ -43,6 +42,7 @@ from loguru import logger
 
 from config import (
     SPEECHMATICS_API_KEY,
+    DEEPGRAM_API_KEY,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
@@ -50,7 +50,7 @@ from config import (
     MEM0_API_KEY,
     get_fresh_config,
 )
-from services.tts_factory import create_tts_service
+from services.factories import create_stt_service, create_tts_service
 from processors import (
     SilenceFilter,
     InputAudioFilter,
@@ -156,6 +156,7 @@ async def run_bot(webrtc_connection):
     runtime_config = get_fresh_config()
     DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
     DEEPINFRA_GATING_MODEL = runtime_config['DEEPINFRA_GATING_MODEL']
+    STT_PROVIDER = runtime_config['STT_PROVIDER']
     TTS_PROVIDER = runtime_config['TTS_PROVIDER']
     QWEN3_TTS_MODEL = runtime_config['QWEN3_TTS_MODEL']
     QWEN3_TTS_DEVICE = runtime_config['QWEN3_TTS_DEVICE']
@@ -164,7 +165,7 @@ async def run_bot(webrtc_connection):
     EMOTIONAL_SAMPLING_INTERVAL = runtime_config['EMOTIONAL_SAMPLING_INTERVAL']
     EMOTIONAL_INTERVENTION_THRESHOLD = runtime_config['EMOTIONAL_INTERVENTION_THRESHOLD']
 
-    logger.info(f"📋 Runtime config loaded - LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}, Emotional: {EMOTIONAL_MONITORING_ENABLED}")
+    logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}, Emotional: {EMOTIONAL_MONITORING_ENABLED}")
 
     # Session initialization
     session_id = str(uuid.uuid4())[:8]
@@ -178,10 +179,10 @@ async def run_bot(webrtc_connection):
         # ====================================================================
         # TRANSPORT INITIALIZATION
         # ====================================================================
-        # Note: We're using Speechmatics' built-in SMART_TURN mode for turn detection,
+        # Note: We're using STT provider's built-in turn detection,
         # so we don't need external VAD or turn analyzers in the transport.
 
-        logger.info("Initializing transport (using Speechmatics built-in turn detection)...")
+        logger.info(f"Initializing transport (using {STT_PROVIDER} built-in turn detection)...")
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -202,23 +203,19 @@ async def run_bot(webrtc_connection):
         # SPEECH-TO-TEXT SERVICE
         # ====================================================================
 
-        logger.info("Initializing Speechmatics STT...")
+        logger.info(f"Initializing {STT_PROVIDER} STT...")
         stt = None
         try:
-            stt_params = SpeechmaticsSTTService.InputParams(
+            stt = create_stt_service(
+                provider=STT_PROVIDER,
+                speechmatics_api_key=SPEECHMATICS_API_KEY,
+                deepgram_api_key=DEEPGRAM_API_KEY,
                 language=Language.EN,
                 enable_diarization=False,
-                turn_detection_mode=TurnDetectionMode.SMART_TURN,
-            )
-
-            stt = SpeechmaticsSTTService(
-                api_key=SPEECHMATICS_API_KEY,
-                params=stt_params,
             )
             service_refs["stt"] = stt
-            logger.info("✓ Speechmatics STT initialized with SMART_TURN mode")
         except Exception as e:
-            logger.error(f"Failed to initialize Speechmatics: {e}", exc_info=True)
+            logger.error(f"Failed to initialize {STT_PROVIDER} STT: {e}", exc_info=True)
             return
 
         # ====================================================================
@@ -474,12 +471,12 @@ async def run_bot(webrtc_connection):
 
                     webrtc_connection.send_app_message({
                         "type": "service_info",
-                        "stt": "Speechmatics",
+                        "stt": STT_PROVIDER.capitalize(),
                         "memory": "ChromaDB (local)",
                         "llm": f"DeepInfra: {llm_display}",
                         "tts": tts_display
                     })
-                    logger.info(f"📊 Sent service info to frontend: STT=Speechmatics, LLM={llm_display}, TTS={tts_display}")
+                    logger.info(f"📊 Sent service info to frontend: STT={STT_PROVIDER}, LLM={llm_display}, TTS={tts_display}")
             except Exception as e:
                 logger.error(f"❌ Error sending service info: {e}")
 
