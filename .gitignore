@@ -11,15 +11,10 @@
 /out/
 
 # cache
-/processors/__pycache__
-/memory/__pycache__
-/modules/__pycache__
-/character/__pycache__
-/config/__pycache__
-/__pycache__/
-/observers/__pycache__
-/services/__pycache__
-/services/factories/__pycache__
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
 # production
 /build
