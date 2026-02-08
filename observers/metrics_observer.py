@@ -60,13 +60,16 @@ class MetricsObserver(BaseObserver):
         """Watch frames as they're pushed through the pipeline."""
         frame = data.frame
 
-        # STT timing: Measure from turn start to first transcription
+        # STT timing: Measure from turn start to first transcription (manual fallback)
+        # Note: This includes speaking time + endpointing + transcription
+        # If the STT service emits MetricsFrame with TTFB, that will override this
         if isinstance(frame, TranscriptionFrame) and not self._stt_measured_this_turn:
             if self._stt_start_time is not None:
                 stt_latency_ms = (time.time() - self._stt_start_time) * 1000
                 self._current_metrics['stt_ttfb_ms'] = stt_latency_ms
                 self._stt_measured_this_turn = True
-                logger.info(f"✅ [MetricsObserver] STT latency: {stt_latency_ms:.0f}ms (turn start → transcription)")
+                logger.info(f"✅ [MetricsObserver] STT total latency: {stt_latency_ms:.0f}ms (turn start → transcription)")
+                logger.debug(f"   Note: Includes speaking time + processing. Use MetricsFrame TTFB for pure processing time.")
                 self._send_to_frontend()
 
         # Capture MetricsFrame data from Pipecat's built-in metrics
@@ -85,17 +88,18 @@ class MetricsObserver(BaseObserver):
                         if 'sttservice' in processor_lower or 'deepgram' in processor_lower or 'speechmatics' in processor_lower:
                             if 'stt_ttfb_ms' not in self._current_metrics:  # Only log once per turn
                                 self._current_metrics['stt_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] STT latency: {value_ms:.0f}ms (from {processor})")
+                                logger.info(f"✅ [MetricsObserver] STT TTFB: {value_ms:.0f}ms (from {processor})")
+                                logger.debug(f"   Note: TTFB = Time To First Byte (audio → first transcription)")
                         # Check TTS (contains "tts" in name)
                         elif 'ttsservice' in processor_lower or 'elevenlabs' in processor_lower or 'qwen' in processor_lower:
                             if 'tts_ttfb_ms' not in self._current_metrics:  # Only log once per turn
                                 self._current_metrics['tts_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] TTS latency: {value_ms:.0f}ms")
+                                logger.info(f"✅ [MetricsObserver] TTS TTFB: {value_ms:.0f}ms (text → first audio)")
                         # Check LLM
                         elif 'llmservice' in processor_lower or 'openai' in processor_lower or 'deepinfra' in processor_lower:
                             if 'llm_ttfb_ms' not in self._current_metrics:  # Only log once per turn
                                 self._current_metrics['llm_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] LLM latency: {value_ms:.0f}ms")
+                                logger.info(f"✅ [MetricsObserver] LLM TTFB: {value_ms:.0f}ms (prompt → first token)")
                         # Check Memory (HybridMemory, ChromaDB)
                         elif 'memory' in processor_lower or 'chromadb' in processor_lower or 'hybrid' in processor_lower:
                             if 'memory_latency_ms' not in self._current_metrics:  # Only log once per turn
