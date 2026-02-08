@@ -57,25 +57,27 @@ def create_stt_service(
             # Lazy import to avoid requiring package when not in use
             from pipecat.services.deepgram.stt import DeepgramSTTService
 
-            # Deepgram STT
+            # Deepgram STT with endpointing for turn detection
             if not deepgram_api_key:
                 raise ValueError("deepgram_api_key is required for Deepgram")
 
-            logger.info("Using Deepgram STT")
+            logger.info("Using Deepgram STT with endpointing-based turn detection")
             stt_params = DeepgramSTTService.InputParams(
                 language=language,
                 model="nova-2",  # Deepgram's latest model
                 interim_results=True,  # Enable interim transcription results
                 smart_format=True,  # Auto-format transcripts
                 punctuate=True,  # Add punctuation
-                endpointing=300,  # 300ms silence for endpoint detection
+                endpointing=300,  # 300ms silence to detect end of speech
+                vad_events=True,  # Enable VAD events for turn detection
             )
 
             stt = DeepgramSTTService(
                 api_key=deepgram_api_key,
                 params=stt_params,
             )
-            logger.info("✓ Deepgram STT service created")
+            logger.info("✓ Deepgram STT service created with 300ms endpointing")
+            logger.info("  VAD events enabled for turn detection")
 
         elif provider == "deepgram-flux":
             # Lazy import to avoid requiring package when not in use
@@ -108,6 +110,7 @@ def create_stt_service(
                 logger.debug(f"[Deepgram Flux] Update: {transcript}")
 
             logger.info("✓ Deepgram Flux STT service created with built-in turn detection")
+            logger.info("  Note: STT latency will be tracked via MetricsFrame if emitted by Flux")
 
         else:
             raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', or 'deepgram-flux'")
