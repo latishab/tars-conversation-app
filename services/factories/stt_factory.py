@@ -56,28 +56,33 @@ def create_stt_service(
         elif provider == "deepgram":
             # Lazy import to avoid requiring package when not in use
             from pipecat.services.deepgram.stt import DeepgramSTTService
+            from deepgram.clients.listen.v1.websocket.options import LiveOptions
 
-            # Deepgram STT with endpointing for turn detection
+            # Deepgram STT with server-side endpointing for turn detection
+            # Note: This uses Deepgram's server-side silence detection, not local smart turn
             if not deepgram_api_key:
                 raise ValueError("deepgram_api_key is required for Deepgram")
 
-            logger.info("Using Deepgram STT with endpointing-based turn detection")
-            stt_params = DeepgramSTTService.InputParams(
-                language=language,
+            logger.info("Using Deepgram STT with server-side endpointing")
+            live_options = LiveOptions(
+                language=language.value if hasattr(language, 'value') else str(language),
                 model="nova-2",  # Deepgram's latest model
                 interim_results=True,  # Enable interim transcription results
                 smart_format=True,  # Auto-format transcripts
                 punctuate=True,  # Add punctuation
-                endpointing=300,  # 300ms silence to detect end of speech
-                vad_events=True,  # Enable VAD events for turn detection
+                endpointing=300,  # 300ms silence to detect end of speech (server-side)
+                vad_events=True,  # Enable VAD events for speech detection
             )
 
             stt = DeepgramSTTService(
                 api_key=deepgram_api_key,
-                params=stt_params,
+                live_options=live_options,
+                stt_ttfb_timeout=5.0,  # TTFB timeout for transcription (seconds)
             )
-            logger.info("✓ Deepgram STT service created with 300ms endpointing")
-            logger.info("  VAD events enabled for turn detection")
+            logger.info("✓ Deepgram STT service created")
+            logger.info("  Turn detection: Server-side endpointing (300ms silence)")
+            logger.info("  VAD events: Enabled for speech detection")
+            logger.info("  TTFB timeout: 5.0s for transcription metrics")
 
         elif provider == "deepgram-flux":
             # Lazy import to avoid requiring package when not in use
