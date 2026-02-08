@@ -28,13 +28,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
-from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
-from services.memory_chromadb import ChromaDBMemoryService
+from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -182,12 +181,10 @@ async def run_bot(webrtc_connection):
         # ====================================================================
         # Note: STT providers handle their own turn detection:
         # - Speechmatics: SMART_TURN mode
-        # - Deepgram: endpointing parameter
-        # - Deepgram Flux: built-in turn detection with ExternalUserTurnStrategies
+        # - Deepgram: endpointing parameter (300ms silence detection)
+        # - Deepgram Flux: built-in turn detection with ExternalUserTurnStrategies (deprecated)
 
-        uses_external_turn_detection = STT_PROVIDER == "deepgram-flux"
-        turn_mode = "external (Flux)" if uses_external_turn_detection else "built-in"
-        logger.info(f"Initializing transport with {STT_PROVIDER} turn detection ({turn_mode})...")
+        logger.info(f"Initializing transport with {STT_PROVIDER} turn detection...")
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -220,10 +217,10 @@ async def run_bot(webrtc_connection):
             )
             service_refs["stt"] = stt
 
-            # Log additional info for Deepgram Flux
-            if STT_PROVIDER == "deepgram-flux":
-                logger.info("✓ Deepgram Flux: Using external turn detection (EOT signals)")
-                logger.info("✓ Deepgram Flux: min_confidence=0.3 for transcription acceptance")
+            # Log additional info for Deepgram
+            if STT_PROVIDER == "deepgram":
+                logger.info("✓ Deepgram: 300ms endpointing for turn detection")
+                logger.info("✓ Deepgram: VAD events enabled for speech detection")
 
         except Exception as e:
             logger.error(f"Failed to initialize {STT_PROVIDER} STT: {e}", exc_info=True)
@@ -373,20 +370,23 @@ async def run_bot(webrtc_connection):
         # MEMORY SERVICE
         # ====================================================================
 
-        # Memory service: ChromaDB (local, fast) instead of Mem0 (cloud, slow)
-        logger.info("Initializing ChromaDB memory service...")
+        # Memory service: Hybrid search combining vector similarity (70%) and BM25 keyword matching (30%)
+        # Optimized for voice AI with <50ms latency target
+        logger.info("Initializing hybrid memory service...")
         memory_service = None
         try:
-            memory_service = ChromaDBMemoryService(
+            memory_service = HybridMemoryService(
                 user_id=client_id,
-                agent_id="tars_agent",
-                search_limit=5,
-                search_threshold=0.5,
-                system_prompt_prefix="Based on previous conversations, I recall:\n\n",
+                db_path="./memory_data/memory.sqlite",
+                search_limit=3,
+                search_timeout_ms=100,  # Hybrid search needs ~60-80ms, allow buffer
+                vector_weight=0.7,      # 70% semantic similarity
+                bm25_weight=0.3,        # 30% keyword matching
+                system_prompt_prefix="From our conversations:\n",
             )
-            logger.info(f"✓ ChromaDB memory service initialized for {client_id}")
+            logger.info(f"✓ Hybrid memory service initialized for {client_id}")
         except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB service: {e}")
+            logger.error(f"Failed to initialize hybrid memory service: {e}")
             logger.info("  Continuing without memory service...")
             memory_service = None  # Continue without memory if it fails
 
@@ -394,19 +394,11 @@ async def run_bot(webrtc_connection):
         # CONTEXT AGGREGATOR & PERSONA STORAGE
         # ====================================================================
 
-        # Configure user turn strategies based on STT provider
-        if uses_external_turn_detection:
-            # Deepgram Flux has built-in turn detection, use external strategies
-            logger.info("Configuring ExternalUserTurnStrategies for Deepgram Flux")
-            user_params = LLMUserAggregatorParams(
-                user_turn_stop_timeout=1.5,
-                user_turn_strategies=ExternalUserTurnStrategies()
-            )
-        else:
-            # Other STT providers use internal turn detection
-            user_params = LLMUserAggregatorParams(
-                user_turn_stop_timeout=1.5
-            )
+        # Configure user turn aggregation
+        # STT services (Speechmatics, Deepgram) handle turn detection internally
+        user_params = LLMUserAggregatorParams(
+            user_turn_stop_timeout=1.5
+        )
 
         context_aggregator = LLMContextAggregatorPair(
             context,
@@ -432,7 +424,10 @@ async def run_bot(webrtc_connection):
         vision_observer = VisionObserver(webrtc_connection=webrtc_connection)
 
         # Create MetricsObserver (non-intrusive monitoring outside pipeline)
-        metrics_observer = MetricsObserver(webrtc_connection=webrtc_connection)
+        metrics_observer = MetricsObserver(
+            webrtc_connection=webrtc_connection,
+            stt_service=stt
+        )
 
         # Turn tracking observer (for debugging turn detection)
         turn_observer = TurnTrackingObserver()
@@ -461,7 +456,7 @@ async def run_bot(webrtc_connection):
             stt,
             pipeline_unifier,
             context_aggregator.user(),
-            memory_service,  # ChromaDB memory service for automatic recall/storage
+            memory_service,  # Hybrid memory (70% vector + 30% BM25) for automatic recall/storage
             # gating_layer,  # AI decision system (with emotional state integration)
             llm,
             SilenceFilter(),
@@ -495,14 +490,13 @@ async def run_bot(webrtc_connection):
                     # Format STT provider name for display
                     stt_display = {
                         "speechmatics": "Speechmatics",
-                        "deepgram": "Deepgram Nova-2",
-                        "deepgram-flux": "Deepgram Flux"
+                        "deepgram": "Deepgram Nova-2"
                     }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
 
                     webrtc_connection.send_app_message({
                         "type": "service_info",
                         "stt": stt_display,
-                        "memory": "ChromaDB (local)",
+                        "memory": "Hybrid Search (SQLite)",
                         "llm": f"DeepInfra: {llm_display}",
                         "tts": tts_display
                     })
