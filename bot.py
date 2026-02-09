@@ -65,7 +65,9 @@ from observers import (
     TTSStateObserver,
     VisionObserver,
     DebugObserver,
+    DisplayEventsObserver,
 )
+from services.tars_client import TARSClient
 from character.prompts import (
     load_persona_ini,
     load_tars_json,
@@ -75,9 +77,13 @@ from character.prompts import (
 from modules.module_tools import (
     fetch_user_image,
     adjust_persona_parameter,
+    execute_movement,
+    capture_camera_view,
     create_fetch_image_schema,
     create_adjust_persona_schema,
     create_identity_schema,
+    create_movement_schema,
+    create_camera_capture_schema,
     get_persona_storage,
 )
 from modules.module_crossword import (
@@ -142,6 +148,12 @@ async def _cleanup_services(service_refs: dict):
             logger.info("✓ TTS service cleaned up")
         except Exception:
             pass
+    if service_refs.get("tars_client"):
+        try:
+            await service_refs["tars_client"].disconnect()
+            logger.info("✓ TARS Display Client cleaned up")
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -164,6 +176,8 @@ async def run_bot(webrtc_connection):
     EMOTIONAL_MONITORING_ENABLED = runtime_config['EMOTIONAL_MONITORING_ENABLED']
     EMOTIONAL_SAMPLING_INTERVAL = runtime_config['EMOTIONAL_SAMPLING_INTERVAL']
     EMOTIONAL_INTERVENTION_THRESHOLD = runtime_config['EMOTIONAL_INTERVENTION_THRESHOLD']
+    TARS_DISPLAY_URL = runtime_config['TARS_DISPLAY_URL']
+    TARS_DISPLAY_ENABLED = runtime_config['TARS_DISPLAY_ENABLED']
 
     logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}, Emotional: {EMOTIONAL_MONITORING_ENABLED}")
 
@@ -173,7 +187,7 @@ async def run_bot(webrtc_connection):
     client_state = {"client_id": client_id}
     logger.info(f"Session started: {client_id}")
 
-    service_refs = {"stt": None, "tts": None}
+    service_refs = {"stt": None, "tts": None, "tars_client": None}
 
     try:
         # ====================================================================
@@ -267,6 +281,8 @@ async def run_bot(webrtc_connection):
             persona_tool = create_adjust_persona_schema()
             identity_tool = create_identity_schema()
             crossword_hint_tool = create_crossword_hint_schema()
+            movement_tool = create_movement_schema()
+            camera_capture_tool = create_camera_capture_schema()
 
             # Pass FunctionSchema objects directly to standard_tools
             tools = ToolsSchema(
@@ -274,7 +290,9 @@ async def run_bot(webrtc_connection):
                     fetch_image_tool,
                     persona_tool,
                     identity_tool,
-                    crossword_hint_tool
+                    crossword_hint_tool,
+                    movement_tool,
+                    camera_capture_tool,
                 ]
             )
             messages = [system_prompt]
@@ -283,6 +301,8 @@ async def run_bot(webrtc_connection):
             llm.register_function("fetch_user_image", fetch_user_image)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
             llm.register_function("get_crossword_hint", get_crossword_hint)
+            llm.register_function("execute_movement", execute_movement)
+            llm.register_function("capture_camera_view", capture_camera_view)
 
             pipeline_unifier = IdentityUnifier(client_id)
             async def wrapped_set_identity(params: FunctionCallParams):
@@ -340,8 +360,36 @@ async def run_bot(webrtc_connection):
             logger.error(f"Failed to initialize Moondream: {e}")
             return
 
+        # ====================================================================
+        # TARS DISPLAY CLIENT (Raspberry Pi)
+        # ====================================================================
+
+        logger.info("Initializing TARS Display Client...")
+        tars_client = None
+        if TARS_DISPLAY_ENABLED:
+            try:
+                tars_client = TARSClient(base_url=TARS_DISPLAY_URL, timeout=2.0)
+                await tars_client.connect()
+                service_refs["tars_client"] = tars_client
+                if tars_client.is_connected():
+                    logger.info(f"✓ TARS Display Client connected to {TARS_DISPLAY_URL}")
+                    # Set initial display mode to eyes
+                    await tars_client.set_display_mode("eyes")
+                    await tars_client.set_eye_state("idle")
+                else:
+                    logger.warning("⚠️ TARS Display Client not available - display features disabled")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize TARS Display Client: {e}")
+                tars_client = None
+        else:
+            logger.info("ℹ️  TARS Display disabled in config")
+
         logger.info("Initializing Visual Observer...")
-        visual_observer = VisualObserver(vision_client=moondream)
+        visual_observer = VisualObserver(
+            vision_client=moondream,
+            enable_face_detection=True,
+            tars_client=tars_client
+        )
         logger.info("✓ Visual Observer initialized")
 
         logger.info("Initializing Emotional State Monitor...")
@@ -422,6 +470,7 @@ async def run_bot(webrtc_connection):
         assistant_observer = AssistantResponseObserver(webrtc_connection=webrtc_connection)
         tts_state_observer = TTSStateObserver(webrtc_connection=webrtc_connection)
         vision_observer = VisionObserver(webrtc_connection=webrtc_connection)
+        display_events_observer = DisplayEventsObserver(tars_client=tars_client)
 
         # Create MetricsObserver (non-intrusive monitoring outside pipeline)
         metrics_observer = MetricsObserver(
@@ -545,6 +594,7 @@ async def run_bot(webrtc_connection):
                 assistant_observer,
                 tts_state_observer,
                 vision_observer,
+                display_events_observer,          # Send events to TARS display
                 user_bot_latency_observer,        # Measures total user→bot response time
             ],  # Non-intrusive monitoring
         )

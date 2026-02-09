@@ -1,6 +1,7 @@
 """LLM function tools and schemas for TARS bot."""
 
 import os
+import asyncio
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
@@ -192,4 +193,155 @@ def create_identity_schema():
             }
         },
         required=["name"],
+    )
+
+
+# ============== Hardware Control Tools ==============
+
+async def execute_movement(params: FunctionCallParams):
+    """Execute physical movement on TARS hardware."""
+    movements = params.arguments.get("movements", [])
+
+    if not movements:
+        await params.result_callback("No movements specified.")
+        return
+
+    try:
+        # Import here to avoid circular dependencies
+        from services.tars_client import get_tars_client
+
+        client = get_tars_client()
+
+        # Check if hardware is available
+        if not await client.is_available():
+            await params.result_callback(
+                "TARS hardware is not available. Unable to execute physical movements."
+            )
+            return
+
+        # Execute movements
+        result = await client.move(movements)
+
+        if result.get("status") == "ok":
+            logger.info(f"🚶 Movement executed: {movements}")
+            await params.result_callback(
+                f"Executed movements: {', '.join(movements)}. Movement complete."
+            )
+        else:
+            error = result.get("error", "unknown error")
+            logger.warning(f"Movement failed: {error}")
+            await params.result_callback(
+                f"Movement failed: {error}"
+            )
+
+    except Exception as e:
+        logger.error(f"Movement execution error: {e}", exc_info=True)
+        await params.result_callback(
+            f"Error executing movement: {str(e)}"
+        )
+
+
+def create_movement_schema() -> FunctionSchema:
+    """Create the execute_movement function schema."""
+    return FunctionSchema(
+        name="execute_movement",
+        description=(
+            "Execute physical movements on TARS hardware. Use this when the user asks you to move, "
+            "walk, turn, or perform physical actions. Available movements: "
+            "'forward' (single step forward), 'backward' (single step backward), "
+            "'walk_forward' (multiple steps forward), 'walk_backward' (multiple steps backward), "
+            "'left' (turn left), 'right' (turn right). "
+            "You can chain multiple movements together. "
+            "Examples: ['forward'], ['left', 'forward'], ['walk_forward'], etc. "
+            "ONLY call this when the user explicitly requests physical movement."
+        ),
+        properties={
+            "movements": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["forward", "backward", "walk_forward", "walk_backward", "left", "right"]
+                },
+                "description": "List of movements to execute in sequence",
+                "minItems": 1
+            }
+        },
+        required=["movements"],
+    )
+
+
+async def capture_camera_view(params: FunctionCallParams):
+    """Capture image from RPi camera and analyze with vision model."""
+    question = params.arguments.get("question", "What do you see?")
+
+    try:
+        # Import here to avoid circular dependencies
+        from services.tars_client import get_tars_client
+        import base64
+        from PIL import Image
+        import io
+
+        client = get_tars_client()
+
+        # Check if hardware is available
+        if not await client.is_available():
+            await params.result_callback(
+                "TARS hardware is not available. Cannot capture camera image."
+            )
+            return
+
+        # Capture image from RPi
+        logger.info(f"📷 Capturing camera view for question: {question}")
+        result = await client.capture_image()
+
+        if result.get("status") != "ok":
+            error = result.get("error", "unknown error")
+            logger.warning(f"Camera capture failed: {error}")
+            await params.result_callback(
+                f"Unable to capture camera image: {error}"
+            )
+            return
+
+        # Get base64 image
+        img_base64 = result.get("image")
+        if not img_base64:
+            await params.result_callback("Camera returned no image data.")
+            return
+
+        # Get vision client from params (this should be available in the LLM context)
+        # For now, we'll use a placeholder response
+        # TODO: Integrate with Moondream vision service
+
+        logger.info(f"✓ Camera image captured: {result.get('width')}x{result.get('height')}")
+        await params.result_callback(
+            f"Camera image captured successfully ({result.get('width')}x{result.get('height')}). "
+            f"Analyzing what's visible... [Vision analysis integration pending]"
+        )
+
+    except Exception as e:
+        logger.error(f"Camera capture error: {e}", exc_info=True)
+        await params.result_callback(
+            f"Error capturing camera view: {str(e)}"
+        )
+
+
+def create_camera_capture_schema() -> FunctionSchema:
+    """Create the capture_camera_view function schema."""
+    return FunctionSchema(
+        name="capture_camera_view",
+        description=(
+            "Capture an image from TARS' camera on the Raspberry Pi and analyze what's visible. "
+            "Use this when the user asks what TARS can see from its own perspective/camera, "
+            "such as 'What can you see from your camera?', 'Look around', 'What's in front of you?'. "
+            "This is DIFFERENT from fetch_user_image which captures from the user's camera during a video call. "
+            "ONLY call this for questions about TARS' physical camera view, not the user's camera feed."
+        ),
+        properties={
+            "question": {
+                "type": "string",
+                "description": "The specific question about what TARS should look for in its camera view",
+                "default": "What do you see?"
+            }
+        },
+        required=[],
     )
