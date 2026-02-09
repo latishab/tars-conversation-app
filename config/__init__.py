@@ -40,6 +40,8 @@ def get_fresh_config():
         'EMOTIONAL_MONITORING_ENABLED': get_config("Emotional", "enabled", "EMOTIONAL_MONITORING_ENABLED", "true").lower() == "true",
         'EMOTIONAL_SAMPLING_INTERVAL': float(get_config("Emotional", "sampling_interval", "EMOTIONAL_SAMPLING_INTERVAL", "3.0")),
         'EMOTIONAL_INTERVENTION_THRESHOLD': int(get_config("Emotional", "intervention_threshold", "EMOTIONAL_INTERVENTION_THRESHOLD", "2")),
+        'TARS_DISPLAY_URL': get_config("Display", "tars_url", "TARS_DISPLAY_URL", "http://100.64.0.0:8001"),
+        'TARS_DISPLAY_ENABLED': get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", "false").lower() == "true",
     }
 
 # Initial load
@@ -89,4 +91,8 @@ DEEPINFRA_GATING_MODEL = get_config("LLM", "gating_model", "DEEPINFRA_GATING_MOD
 EMOTIONAL_MONITORING_ENABLED = get_config("Emotional", "enabled", "EMOTIONAL_MONITORING_ENABLED", "true").lower() == "true"
 EMOTIONAL_SAMPLING_INTERVAL = float(get_config("Emotional", "sampling_interval", "EMOTIONAL_SAMPLING_INTERVAL", "3.0"))
 EMOTIONAL_INTERVENTION_THRESHOLD = int(get_config("Emotional", "intervention_threshold", "EMOTIONAL_INTERVENTION_THRESHOLD", "2"))
+
+# TARS Display (Raspberry Pi) Configuration
+TARS_DISPLAY_URL = get_config("Display", "tars_url", "TARS_DISPLAY_URL", "http://100.64.0.0:8001")
+TARS_DISPLAY_ENABLED = get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", "false").lower() == "true"
 

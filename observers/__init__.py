@@ -6,6 +6,7 @@ from .assistant_observer import AssistantResponseObserver
 from .tts_state_observer import TTSStateObserver
 from .vision_observer import VisionObserver
 from .debug_observer import DebugObserver
+from .display_events_observer import DisplayEventsObserver
 
 __all__ = [
     "MetricsObserver",
@@ -14,4 +15,5 @@ __all__ = [
     "TTSStateObserver",
     "VisionObserver",
     "DebugObserver",
+    "DisplayEventsObserver",
 ]

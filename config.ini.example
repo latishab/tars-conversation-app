@@ -32,3 +32,10 @@ enabled = true
 sampling_interval = 3.0
 # How many consecutive negative states before intervention
 intervention_threshold = 2
+
+[Display]
+# Enable TARS Raspberry Pi display integration
+enabled = false
+# URL of TARS display API (Tailscale or local network IP)
+# Default: http://100.64.0.0:8001 (Tailscale IP)
+tars_url = http://100.64.0.0:8001
