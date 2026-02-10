@@ -2,8 +2,13 @@
 
 Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics/Deepgram, Qwen3-TTS/ElevenLabs, Qwen LLM, and Moondream.
 
+**NEW**: ✅ Robot Mode - Connect to Raspberry Pi TARS robot via WebRTC for hardware interaction! (Phase 1 Complete)
+
 ## Features
 
+- **Dual Mode Operation**
+  - **Browser Mode** - Real-time voice AI in your browser
+  - **Robot Mode** - Connect to Raspberry Pi TARS robot via WebRTC ✅ *(Phase 1 Complete)*
 - **Real-time Transcription** - Speechmatics or Deepgram with smart turn detection
 - **Dual TTS Options** - Qwen3-TTS (local, free, voice cloning) or ElevenLabs (cloud)
 - **LLM Integration** - Qwen or other models via DeepInfra
@@ -12,6 +17,7 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 - **WebRTC Transport** - Low-latency peer-to-peer audio/video
 - **Semantic Memory** - ChromaDB for conversation context and recall
 - **Emotional Monitoring** - Real-time detection of confusion, hesitation, and frustration
+- **Robot Control** - Movement, camera, and display integration *(Robot Mode)*
 - **Configurable** - Switch models and providers via web UI or config file
 
 ## Project Structure
@@ -23,8 +29,14 @@ tars-omni/
 │   ├── components/        # React components
 │   └── page.tsx           # Main UI
 │
-├── pipecat_service.py     # FastAPI server
+├── pipecat_service.py     # FastAPI server (Browser Mode)
+├── tars_bot.py            # Robot Mode entry point ✨ NEW
 ├── bot.py                 # Pipeline orchestration
+│
+├── transport/             # WebRTC transport layer ✨ NEW
+│   ├── aiortc_client.py  # WebRTC client for RPi
+│   ├── audio_bridge.py   # Audio format conversion
+│   └── state_sync.py     # DataChannel state sync
 │
 ├── config/                # Environment config
 ├── character/             # TARS personality
@@ -36,9 +48,12 @@ tars-omni/
 ├── services/              # AI services
 │   ├── factories/        # Service factories (STT/TTS)
 │   ├── tts_qwen.py       # Local voice cloning
-│   └── memory_chromadb.py # Semantic memory
+│   ├── memory_chromadb.py # Semantic memory
+│   └── tars_client.py    # RPi HTTP client
 ├── modules/               # LLM tools/functions
 ├── observers/             # Pipeline observers
+│   ├── state_observer.py # WebRTC state sync ✨ NEW
+│   └── ...
 └── scripts/               # Utilities
 ```
 
@@ -83,6 +98,8 @@ provider = qwen3  # or elevenlabs
 
 ### 3. Run
 
+#### Browser Mode (Default)
+
 ```bash
 # Terminal 1: Backend
 npm run dev:backend
@@ -92,6 +109,40 @@ npm run dev
 ```
 
 Open http://localhost:3000
+
+#### Robot Mode (New - Requires Raspberry Pi TARS)
+
+**Prerequisites:**
+- Raspberry Pi TARS robot running (see [tars repository](https://github.com/your-org/tars))
+- Network connection to RPi (LAN or Tailscale)
+
+**Configuration:**
+Edit `config.ini`:
+```ini
+[Connection]
+mode = robot
+rpi_url = http://<your-rpi-ip>:8001
+auto_connect = true
+```
+
+**Run:**
+```bash
+# Test connection first (optional)
+python test_webrtc_connection.py
+
+# Start robot mode
+python tars_bot.py
+
+# Or use the helper script
+./start_robot_mode.sh
+```
+
+**Status**: ✅ Phase 1 complete - Full audio bridge integrated and ready to test!
+
+For full robot mode documentation, see:
+- `TARS_ARCHITECTURE_PLAN_V6.md` - Complete architecture
+- `IMPLEMENTATION_SUMMARY.md` - Current implementation status
+- `PHASE1_IMPLEMENTATION.md` - Phase 1 details
 
 ## Contributing
 
