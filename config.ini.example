@@ -33,9 +33,20 @@ sampling_interval = 3.0
 # How many consecutive negative states before intervention
 intervention_threshold = 2
 
+[Connection]
+# Transport mode: "robot" (aiortc WebRTC to RPi) or "browser" (SmallWebRTC for browser)
+mode = robot
+# Raspberry Pi WebRTC server URL (Tailscale or local network IP)
+rpi_url = http://100.64.0.2:8001
+# Auto-connect to RPi on startup (only for robot mode)
+auto_connect = true
+# Delay between reconnection attempts (seconds)
+reconnect_delay = 5
+# Maximum reconnection attempts (0 = infinite)
+max_reconnect_attempts = 0
+
 [Display]
-# Enable TARS Raspberry Pi display integration
-enabled = false
+# Enable TARS Raspberry Pi display integration (HTTP commands)
+enabled = true
 # URL of TARS display API (Tailscale or local network IP)
-# Default: http://100.64.0.0:8001 (Tailscale IP)
-tars_url = http://100.64.0.0:8001
+tars_url = http://100.64.0.2:8001
