@@ -22,41 +22,28 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 
 ```
 tars-omni/
-├── app/                    # Next.js frontend
-│   ├── api/               # API routes
-│   ├── components/        # React components
-│   └── page.tsx           # Main UI
+├── web/                    # Next.js web UI
+│   ├── app/               # Next.js app router
+│   ├── package.json       # Node dependencies
+│   └── README.md          # Web UI docs
 │
-├── pipecat_service.py     # FastAPI server (Browser Mode)
-├── tars_bot.py            # Robot Mode entry point
-├── bot.py                 # Pipeline orchestration
+├── src/                    # Python source code
+│   ├── tools/             # LLM callable functions
+│   ├── services/          # Backend services (STT, TTS, memory, robot)
+│   ├── processors/        # Pipeline frame processors
+│   ├── observers/         # Pipeline observers
+│   ├── transport/         # WebRTC transport layer
+│   ├── character/         # TARS personality
+│   ├── config/            # Configuration management
+│   └── README.md          # Source code docs
 │
-├── transport/             # WebRTC transport layer
-│   ├── aiortc_client.py  # WebRTC client for RPi
-│   ├── audio_bridge.py   # Audio format conversion
-│   └── state_sync.py     # DataChannel state sync
+├── bot.py                 # Entry point: Browser mode
+├── tars_bot.py            # Entry point: Robot mode
+├── pipecat_service.py     # Entry point: FastAPI backend
 │
-├── config/                # Environment config
-├── character/             # TARS personality
-├── processors/            # Frame processors
-│   ├── emotional_monitor.py  # Real-time emotion detection
-│   ├── gating.py         # Intervention decision system
-│   ├── visual_observer.py    # Vision analysis
-│   └── filters.py        # Audio filtering
-├── services/              # AI services
-│   ├── factories/        # Service factories (STT/TTS)
-│   ├── tts_qwen.py       # Local voice cloning
-│   ├── memory_chromadb.py # Semantic memory
-│   └── tars_robot.py     # gRPC robot control
-├── tools/                 # LLM callable functions
-│   ├── robot.py          # Robot hardware control
-│   ├── persona.py        # Identity and personality
-│   ├── vision.py         # Vision analysis
-│   └── crossword.py      # Game-specific utilities
-├── observers/             # Pipeline observers
-│   ├── state_observer.py # WebRTC state sync
-│   └── ...
-└── scripts/               # Utilities
+├── config.ini             # User configuration
+├── requirements.txt       # Python dependencies
+└── README.md              # This file
 ```
 
 ## Quick Start
@@ -68,10 +55,10 @@ tars-omni/
 pip install -r requirements.txt
 
 # Install TARS SDK (for robot mode)
-pip install -e ../tars
+pip install git+https://github.com/latishab/tars.git
 
-# Node.js dependencies
-npm install
+# Node.js dependencies (from web/ directory)
+cd web && npm install && cd ..
 ```
 
 ### 2. Configure Environment
@@ -106,10 +93,11 @@ provider = qwen3  # or elevenlabs
 #### Browser Mode
 
 ```bash
-# Terminal 1: Backend
-npm run dev:backend
+# Terminal 1: Start Python backend
+python pipecat_service.py
 
-# Terminal 2: Frontend
+# Terminal 2: Start Next.js frontend
+cd web
 npm run dev
 ```
 

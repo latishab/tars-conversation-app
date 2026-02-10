@@ -23,7 +23,7 @@ try:
     TARS_SDK_AVAILABLE = True
 except ImportError:
     TARS_SDK_AVAILABLE = False
-    logger.warning("TARS SDK not available - install with: pip install -e ../tars")
+    logger.warning("TARS SDK not available - install with: pip install git+https://github.com/latishab/tars.git")
 
 
 # Singleton client
