@@ -8,8 +8,14 @@ Architecture:
 - RPi WebRTC Server (aiortc) ← MacBook WebRTC Client (aiortc)
 - Audio: RPi mic → Pipeline → RPi speaker
 - State: DataChannel for real-time sync
-- Commands: HTTP REST for robot control
+- Commands: gRPC for robot control
 """
+
+import sys
+from pathlib import Path
+
+# Add src/ to Python path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import asyncio
 import os
@@ -37,16 +43,19 @@ from config import (
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
     RPI_URL,
+    RPI_GRPC,
     AUTO_CONNECT,
     RECONNECT_DELAY,
     MAX_RECONNECT_ATTEMPTS,
     get_fresh_config,
+    detect_deployment_mode,
+    get_robot_grpc_address,
 )
 
 from transport import AiortcRPiClient, AudioBridge, StateSync
 from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service
-from services.tars_client import TARSClient
+from services import tars_robot
 from processors import SilenceFilter
 from observers import StateObserver
 from character.prompts import (
@@ -55,7 +64,7 @@ from character.prompts import (
     build_tars_system_prompt,
     get_introduction_instruction,
 )
-from modules.module_tools import (
+from tools import (
     fetch_user_image,
     adjust_persona_parameter,
     execute_movement,
@@ -86,11 +95,17 @@ async def run_robot_bot():
     TARS_DISPLAY_URL = runtime_config['TARS_DISPLAY_URL']
     TARS_DISPLAY_ENABLED = runtime_config['TARS_DISPLAY_ENABLED']
 
+    # Detect deployment mode
+    deployment_mode = detect_deployment_mode()
+    robot_grpc_address = get_robot_grpc_address()
+
     logger.info(f"📋 Configuration:")
+    logger.info(f"   Deployment: {deployment_mode}")
     logger.info(f"   STT: {STT_PROVIDER}")
     logger.info(f"   LLM: {DEEPINFRA_MODEL}")
     logger.info(f"   TTS: {TTS_PROVIDER}")
-    logger.info(f"   RPi: {RPI_URL}")
+    logger.info(f"   RPi HTTP: {RPI_URL}")
+    logger.info(f"   RPi gRPC: {robot_grpc_address}")
     logger.info(f"   Display: {TARS_DISPLAY_URL} ({'enabled' if TARS_DISPLAY_ENABLED else 'disabled'})")
 
     # Session initialization
@@ -99,7 +114,7 @@ async def run_robot_bot():
     client_state = {"client_id": client_id}
     logger.info(f"📱 Session: {client_id}")
 
-    service_refs = {"stt": None, "tts": None, "tars_client": None, "aiortc_client": None}
+    service_refs = {"stt": None, "tts": None, "robot_client": None, "aiortc_client": None}
 
     try:
         # ====================================================================
@@ -263,26 +278,24 @@ async def run_robot_bot():
         logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
 
         # ====================================================================
-        # TARS DISPLAY CLIENT (HTTP commands)
+        # TARS ROBOT CLIENT (gRPC commands)
         # ====================================================================
 
-        logger.info("📺 Initializing TARS Display Client...")
-        tars_client = None
+        logger.info("🤖 Initializing TARS Robot Client (gRPC)...")
+        robot_client = None
         if TARS_DISPLAY_ENABLED:
             try:
-                tars_client = TARSClient(base_url=TARS_DISPLAY_URL, timeout=2.0)
-                await tars_client.connect()
-                service_refs["tars_client"] = tars_client
-                if tars_client.is_connected():
-                    logger.info(f"✓ TARS Display Client connected")
-                    await tars_client.set_display_mode("eyes")
-                    await tars_client.set_eye_state("idle")
+                robot_client = tars_robot.get_robot_client(address=robot_grpc_address)
+                service_refs["robot_client"] = robot_client
+                if robot_client and tars_robot.is_robot_available():
+                    logger.info(f"✓ TARS Robot Client connected via gRPC at {robot_grpc_address}")
+                    tars_robot.set_eye_state("idle")
                 else:
-                    logger.warning("⚠️ TARS Display not available")
+                    logger.warning("⚠️ TARS Robot not available")
             except Exception as e:
-                logger.warning(f"⚠️ Could not initialize TARS Display: {e}")
+                logger.warning(f"⚠️ Could not initialize TARS Robot: {e}")
         else:
-            logger.info("ℹ️  TARS Display disabled")
+            logger.info("ℹ️  TARS Robot control disabled")
 
         # ====================================================================
         # CONTEXT AGGREGATOR
@@ -405,9 +418,9 @@ async def run_robot_bot():
                 await service_refs["tts"].close()
             except:
                 pass
-        if service_refs.get("tars_client"):
+        if service_refs.get("robot_client"):
             try:
-                await service_refs["tars_client"].disconnect()
+                tars_robot.close_robot_client()
             except:
                 pass
         logger.info("✓ Cleanup complete")
