@@ -1,4 +1,8 @@
-"""Observer for sending pipeline events to TARS Raspberry Pi display."""
+"""Observer for sending pipeline events to TARS Raspberry Pi display.
+
+NOTE: This observer is deprecated. Display control is now handled via gRPC
+in robot mode (tars_bot.py). Browser mode does not support display control.
+"""
 
 import asyncio
 import time
@@ -20,19 +24,17 @@ class DisplayEventsObserver(BaseObserver):
     """
     Observes pipeline events and sends display updates to TARS Raspberry Pi.
 
-    Handles:
-    - User/bot speaking state changes
-    - Audio levels for visualization
-    - Emotional state changes (if available)
+    DEPRECATED: Display control moved to gRPC in robot mode.
+    This observer is kept for compatibility but does nothing.
     """
 
     def __init__(self, tars_client=None):
         super().__init__()
-        self.tars_client = tars_client
+        self.tars_client = None
         self._user_speaking = False
         self._bot_speaking = False
         self._last_audio_update = 0
-        self._audio_update_interval = 0.05  # Update audio levels every 50ms
+        self._audio_update_interval = 0.05
 
     async def on_push_frame(self, data: FramePushed):
         """Watch frames as they're pushed through the pipeline."""
@@ -40,59 +42,37 @@ class DisplayEventsObserver(BaseObserver):
 
         # User started speaking
         if isinstance(frame, UserStartedSpeakingFrame):
-            logger.info("👂 User started speaking - updating display")
+            logger.debug("User started speaking")
             self._user_speaking = True
-            if self.tars_client and self.tars_client.is_connected():
-                asyncio.create_task(self.tars_client.set_eye_state("listening"))
 
         # User stopped speaking
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            logger.info("🤔 User stopped speaking - thinking state")
+            logger.debug("User stopped speaking")
             self._user_speaking = False
-            if self.tars_client and self.tars_client.is_connected():
-                asyncio.create_task(self.tars_client.set_eye_state("thinking"))
 
         # Bot started speaking
         elif isinstance(frame, BotStartedSpeakingFrame):
-            logger.info("🗣️ Bot started speaking - updating display")
+            logger.debug("Bot started speaking")
             self._bot_speaking = True
-            if self.tars_client and self.tars_client.is_connected():
-                asyncio.create_task(self.tars_client.set_eye_state("speaking"))
 
         # Bot stopped speaking
         elif isinstance(frame, BotStoppedSpeakingFrame):
-            logger.info("🤐 Bot stopped speaking - idle state")
+            logger.debug("Bot stopped speaking")
             self._bot_speaking = False
-            if self.tars_client and self.tars_client.is_connected():
-                asyncio.create_task(self.tars_client.set_eye_state("idle"))
 
         # TTS audio frames - measure audio level for display visualization
         elif isinstance(frame, TTSAudioRawFrame):
             current_time = time.time()
             if current_time - self._last_audio_update > self._audio_update_interval:
                 self._last_audio_update = current_time
-
-                # Calculate RMS audio level
                 level = self._calculate_audio_level(frame.audio)
-
-                if self.tars_client and self.tars_client.is_connected():
-                    asyncio.create_task(
-                        self.tars_client.set_audio_level(level, "speaker")
-                    )
 
         # User audio frames - measure user audio level
         elif isinstance(frame, AudioRawFrame) and self._user_speaking:
             current_time = time.time()
             if current_time - self._last_audio_update > self._audio_update_interval:
                 self._last_audio_update = current_time
-
-                # Calculate RMS audio level
                 level = self._calculate_audio_level(frame.audio)
-
-                if self.tars_client and self.tars_client.is_connected():
-                    asyncio.create_task(
-                        self.tars_client.set_audio_level(level, "mic")
-                    )
 
     def _calculate_audio_level(self, audio_data: bytes) -> float:
         """

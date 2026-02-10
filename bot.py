@@ -1,5 +1,11 @@
 """Bot pipeline setup and execution."""
 
+import sys
+from pathlib import Path
+
+# Add src/ to Python path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 import asyncio
 import json
 import os
@@ -67,14 +73,13 @@ from observers import (
     DebugObserver,
     DisplayEventsObserver,
 )
-from services.tars_client import TARSClient
 from character.prompts import (
     load_persona_ini,
     load_tars_json,
     build_tars_system_prompt,
     get_introduction_instruction,
 )
-from modules.module_tools import (
+from tools import (
     fetch_user_image,
     adjust_persona_parameter,
     execute_movement,
@@ -85,8 +90,6 @@ from modules.module_tools import (
     create_movement_schema,
     create_camera_capture_schema,
     get_persona_storage,
-)
-from modules.module_crossword import (
     get_crossword_hint,
     create_crossword_hint_schema,
 )
@@ -148,12 +151,6 @@ async def _cleanup_services(service_refs: dict):
             logger.info("✓ TTS service cleaned up")
         except Exception:
             pass
-    if service_refs.get("tars_client"):
-        try:
-            await service_refs["tars_client"].disconnect()
-            logger.info("✓ TARS Display Client cleaned up")
-        except Exception:
-            pass
 
 
 # ============================================================================
@@ -187,7 +184,7 @@ async def run_bot(webrtc_connection):
     client_state = {"client_id": client_id}
     logger.info(f"Session started: {client_id}")
 
-    service_refs = {"stt": None, "tts": None, "tars_client": None}
+    service_refs = {"stt": None, "tts": None}
 
     try:
         # ====================================================================
@@ -361,28 +358,11 @@ async def run_bot(webrtc_connection):
             return
 
         # ====================================================================
-        # TARS DISPLAY CLIENT (Raspberry Pi)
+        # TARS DISPLAY - Note: Display control via gRPC in robot mode only
         # ====================================================================
 
-        logger.info("Initializing TARS Display Client...")
+        logger.info("TARS Display features available in robot mode (tars_bot.py)")
         tars_client = None
-        if TARS_DISPLAY_ENABLED:
-            try:
-                tars_client = TARSClient(base_url=TARS_DISPLAY_URL, timeout=2.0)
-                await tars_client.connect()
-                service_refs["tars_client"] = tars_client
-                if tars_client.is_connected():
-                    logger.info(f"✓ TARS Display Client connected to {TARS_DISPLAY_URL}")
-                    # Set initial display mode to eyes
-                    await tars_client.set_display_mode("eyes")
-                    await tars_client.set_eye_state("idle")
-                else:
-                    logger.warning("⚠️ TARS Display Client not available - display features disabled")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not initialize TARS Display Client: {e}")
-                tars_client = None
-        else:
-            logger.info("ℹ️  TARS Display disabled in config")
 
         logger.info("Initializing Visual Observer...")
         visual_observer = VisualObserver(

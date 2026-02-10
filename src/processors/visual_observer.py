@@ -42,7 +42,7 @@ class VisualObserver(FrameProcessor):
         self._enable_display = enable_display
         self._enable_face_detection = enable_face_detection
         self._webrtc_connection = webrtc_connection
-        self._tars_client = tars_client
+        self._tars_client = None  # Deprecated: Display control via gRPC in robot mode
         self._display_window_name = "TARS Visual Observer"
 
         # Face detection setup
@@ -308,18 +308,6 @@ class VisualObserver(FrameProcessor):
                 # Send face position event to WebRTC frontend
                 self.send_display_event(faces)
 
-                # Send face position to TARS Raspberry Pi display
-                if self._tars_client and self._tars_client.is_connected():
-                    asyncio.create_task(
-                        self._tars_client.set_face_position(
-                            x=face_center_x,
-                            y=face_center_y,
-                            width=frame_width,
-                            height=frame_height,
-                            detected=True
-                        )
-                    )
-
                 # Optionally send face position to text frame for LLM context
                 # This can be used for "user is looking at you" type feedback
                 # Uncomment if you want the LLM to know about face position
@@ -328,18 +316,10 @@ class VisualObserver(FrameProcessor):
             else:
                 # No faces detected
                 if self._face_count > 0:
-                    logger.debug("👤 No faces detected")
+                    logger.debug("No faces detected")
                     self._face_count = 0
                     # Send "no face" event to WebRTC
                     self.send_display_event([])
-
-                    # Send "face lost" event to TARS display
-                    if self._tars_client and self._tars_client.is_connected():
-                        asyncio.create_task(
-                            self._tars_client.set_face_position(
-                                x=0, y=0, width=1, height=1, detected=False
-                            )
-                        )
 
                 # Display frame without annotations
                 self.display_frame(image_bgr)

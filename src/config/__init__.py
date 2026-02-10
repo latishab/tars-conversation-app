@@ -44,9 +44,12 @@ def get_fresh_config():
         'TARS_DISPLAY_ENABLED': get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", "false").lower() == "true",
         'CONNECTION_MODE': get_config("Connection", "mode", "CONNECTION_MODE", "robot"),
         'RPI_URL': get_config("Connection", "rpi_url", "RPI_URL", "http://100.64.0.2:8001"),
+        'RPI_GRPC': get_config("Connection", "rpi_grpc", "RPI_GRPC", "100.64.0.2:50051"),
         'AUTO_CONNECT': get_config("Connection", "auto_connect", "AUTO_CONNECT", "true").lower() == "true",
         'RECONNECT_DELAY': int(get_config("Connection", "reconnect_delay", "RECONNECT_DELAY", "5")),
         'MAX_RECONNECT_ATTEMPTS': int(get_config("Connection", "max_reconnect_attempts", "MAX_RECONNECT_ATTEMPTS", "0")),
+        'DEPLOYMENT_MODE': detect_deployment_mode(),
+        'ROBOT_GRPC_ADDRESS': get_robot_grpc_address(),
     }
 
 # Initial load
@@ -104,7 +107,46 @@ TARS_DISPLAY_ENABLED = get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", 
 # Connection Mode Configuration
 CONNECTION_MODE = get_config("Connection", "mode", "CONNECTION_MODE", "robot")
 RPI_URL = get_config("Connection", "rpi_url", "RPI_URL", "http://100.64.0.2:8001")
+RPI_GRPC = get_config("Connection", "rpi_grpc", "RPI_GRPC", "100.64.0.2:50051")
 AUTO_CONNECT = get_config("Connection", "auto_connect", "AUTO_CONNECT", "true").lower() == "true"
 RECONNECT_DELAY = int(get_config("Connection", "reconnect_delay", "RECONNECT_DELAY", "5"))
 MAX_RECONNECT_ATTEMPTS = int(get_config("Connection", "max_reconnect_attempts", "MAX_RECONNECT_ATTEMPTS", "0"))
+
+
+def is_raspberry_pi() -> bool:
+    """Detect if running on Raspberry Pi."""
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            cpuinfo = f.read()
+            return "Raspberry Pi" in cpuinfo
+    except:
+        return False
+
+
+def detect_deployment_mode() -> str:
+    """
+    Detect deployment mode: 'local' or 'remote'.
+
+    Local: tars-omni running on Raspberry Pi itself
+    Remote: tars-omni running on Mac/other computer
+
+    Returns:
+        'local' or 'remote'
+    """
+    return "local" if is_raspberry_pi() else "remote"
+
+
+def get_robot_grpc_address() -> str:
+    """
+    Get appropriate gRPC address based on deployment mode.
+
+    Returns:
+        'localhost:50051' for local mode
+        RPI_GRPC from config for remote mode
+    """
+    mode = detect_deployment_mode()
+    if mode == "local":
+        return "localhost:50051"
+    else:
+        return RPI_GRPC
 
