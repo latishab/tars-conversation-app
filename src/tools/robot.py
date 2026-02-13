@@ -5,6 +5,20 @@ from pipecat.services.llm_service import FunctionCallParams
 from loguru import logger
 
 
+# Displacement movements that require explicit user request
+DISPLACEMENT_MOVEMENTS = {
+    "step_forward", "walk_forward", "step_backward", "walk_backward",
+    "turn_left", "turn_right", "turn_left_slow", "turn_right_slow"
+}
+
+
+def classify_movements(movements: list[str]) -> tuple[list[str], list[str]]:
+    """Classify movements into displacement and safe categories."""
+    displacement = [m for m in movements if m in DISPLACEMENT_MOVEMENTS]
+    safe = [m for m in movements if m not in DISPLACEMENT_MOVEMENTS]
+    return displacement, safe
+
+
 async def execute_movement(params: FunctionCallParams):
     """Execute physical movement on TARS hardware."""
     movements = params.arguments.get("movements", [])
@@ -13,10 +27,26 @@ async def execute_movement(params: FunctionCallParams):
         await params.result_callback("No movements specified.")
         return
 
+    # Classify and guard
+    displacement, safe = classify_movements(movements)
+
+    if displacement:
+        logger.warning(f"Blocked displacement: {displacement}")
+        await params.result_callback(
+            f"Cannot execute displacement ({', '.join(displacement)}) "
+            "unless user explicitly requests. Use do_gesture() instead."
+        )
+        return
+
+    # Execute safe movements
+    if not safe:
+        await params.result_callback("No valid movements.")
+        return
+
     try:
         from services import tars_robot
 
-        result = await tars_robot.execute_movement(movements)
+        result = await tars_robot.execute_movement(safe)
         await params.result_callback(result)
 
     except Exception as e:
@@ -75,20 +105,22 @@ def create_movement_schema() -> FunctionSchema:
     return FunctionSchema(
         name="execute_movement",
         description=(
-            "Execute physical movements on TARS hardware. Use this when the user asks you to move, "
-            "walk, turn, or perform physical actions. Available movements: "
+            "Execute DISPLACEMENT movements on TARS hardware. "
+            "IMPORTANT: Use ONLY when user explicitly requests to move TARS' position - "
+            "walking, turning, stepping forward/backward. "
+            "For gestures (wave, bow, tilt), use do_gesture() instead. "
+            "Available displacement movements: "
             "step_forward, walk_forward, step_backward, walk_backward, "
-            "turn_left, turn_right, turn_left_slow, turn_right_slow, "
-            "wave_left, wave_right, bow, pose, tilt_left, tilt_right. "
-            "You can provide multiple movements in sequence. "
-            "Examples: ['wave_right'], ['turn_left', 'step_forward'], ['walk_forward']. "
-            "ONLY call this when the user explicitly requests physical movement."
+            "turn_left, turn_right, turn_left_slow, turn_right_slow. "
+            "Examples: User says 'walk forward' → ['walk_forward'], "
+            "User says 'turn around' → ['turn_left', 'turn_left']. "
+            "Do NOT use for gestures or expressions."
         ),
         properties={
             "movements": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of movements to execute in sequence",
+                "description": "List of displacement movements to execute in sequence",
                 "minItems": 1
             }
         },

@@ -11,7 +11,7 @@ gating_model = meta-llama/Llama-3.2-3B-Instruct
 # - speechmatics: Speechmatics with SMART_TURN detection
 # - deepgram: Deepgram Nova-2 with endpoint detection
 # - deepgram-flux: Deepgram Flux with built-in turn detection (recommended)
-provider = speechmatics
+provider = deepgram-flux
 
 [TTS]
 # Available providers: elevenlabs, qwen3
@@ -37,7 +37,7 @@ intervention_threshold = 2
 # Transport mode: "robot" (aiortc WebRTC to RPi) or "browser" (SmallWebRTC for browser)
 mode = robot
 # Raspberry Pi WebRTC server URL (Tailscale or local network IP)
-rpi_url = http://100.64.0.2:8001
+rpi_url = http://100.115.193.41:8001
 # Auto-connect to RPi on startup (only for robot mode)
 auto_connect = true
 # Delay between reconnection attempts (seconds)
@@ -49,4 +49,4 @@ max_reconnect_attempts = 0
 # Enable TARS Raspberry Pi display integration (HTTP commands)
 enabled = true
 # URL of TARS display API (Tailscale or local network IP)
-tars_url = http://100.64.0.2:8001
+tars_url = http://100.115.193.41:8001

@@ -25,6 +25,15 @@ from .crossword import (
     create_crossword_hint_schema,
 )
 
+from .expressions import (
+    set_emotion,
+    do_gesture,
+    create_emotion_schema,
+    create_gesture_schema,
+    set_rate_limiter,
+    ExpressionRateLimiter,
+)
+
 __all__ = [
     # Robot tools
     "execute_movement",
@@ -43,4 +52,11 @@ __all__ = [
     # Crossword tools
     "get_crossword_hint",
     "create_crossword_hint_schema",
+    # Expression tools
+    "set_emotion",
+    "do_gesture",
+    "create_emotion_schema",
+    "create_gesture_schema",
+    "set_rate_limiter",
+    "ExpressionRateLimiter",
 ]

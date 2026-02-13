@@ -35,7 +35,7 @@ def get_robot_client(address: Optional[str] = None) -> Optional[TarsClient]:
     Get singleton TARS robot client.
 
     Args:
-        address: gRPC server address (e.g., "100.64.0.2:50051")
+        address: gRPC server address (e.g., "100.115.193.41:50051")
                  If None, uses TARS_GRPC_ADDRESS env var or localhost:50051
 
     Returns:
@@ -86,11 +86,11 @@ async def execute_movement(movements: List[str]) -> str:
         results = []
         for movement in movements:
             result = client.move(movement)
-            if result["success"]:
-                results.append(f"{movement} (took {result['duration']:.2f}s)")
+            if result.success:
+                results.append(f"{movement} (took {result.duration:.2f}s)")
             else:
-                results.append(f"{movement} FAILED: {result['error']}")
-                logger.error(f"Movement '{movement}' failed: {result['error']}")
+                results.append(f"{movement} FAILED: {result.error}")
+                logger.error(f"Movement '{movement}' failed: {result.error}")
 
         if all("FAILED" not in r for r in results):
             logger.info(f"Movements executed: {', '.join(movements)}")
@@ -157,23 +157,29 @@ async def capture_camera_view() -> Dict[str, Any]:
 # ============== Helper Functions ==============
 
 
-def set_emotion(emotion: str):
+async def set_emotion(emotion: str) -> str:
     """
     Set robot facial emotion.
 
     Args:
         emotion: Emotion name ("happy", "sad", "angry", "surprised", "neutral")
+
+    Returns:
+        Human-readable result string
     """
     client = get_robot_client()
     if client is None:
         logger.warning("Cannot set emotion - robot not available")
-        return
+        return "TARS robot not available. Cannot set emotion."
 
     try:
         client.set_emotion(emotion)
         logger.debug(f"Emotion set to: {emotion}")
+        return f"Emotion set to {emotion}"
     except Exception as e:
-        logger.error(f"Set emotion error: {e}")
+        error_msg = f"Set emotion error: {e}"
+        logger.error(error_msg)
+        return error_msg
 
 
 def set_eye_state(state: str):

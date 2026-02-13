@@ -8,6 +8,7 @@ Observes Pipecat pipeline events and sends state updates to RPi via DataChannel:
 - Transcripts → text display
 """
 
+import asyncio
 from typing import Optional
 from loguru import logger
 
@@ -44,6 +45,8 @@ class StateObserver(BaseObserver):
         super().__init__()
         self.state_sync = state_sync
         self._current_state = "idle"
+        self._idle_delay = 0.5
+        self._idle_task = None
 
     def set_state_sync(self, state_sync: StateSync):
         """Set StateSync instance."""
@@ -52,6 +55,9 @@ class StateObserver(BaseObserver):
     async def on_transcription(self, *args, **kwargs):
         """Handle transcription events (user speaking)."""
         try:
+            # Cancel pending idle timer
+            self.cancel_idle_timer()
+
             # Extract frame from args
             frame = args[0] if args else None
 
@@ -74,6 +80,9 @@ class StateObserver(BaseObserver):
     async def on_llm_full_response_start(self, *args, **kwargs):
         """Handle LLM response start (thinking)."""
         try:
+            # Cancel pending idle timer
+            self.cancel_idle_timer()
+
             if self.state_sync:
                 self._update_state("thinking")
             logger.debug("🧠 LLM thinking started")
@@ -99,14 +108,24 @@ class StateObserver(BaseObserver):
             logger.error(f"❌ Error in TTS start observer: {e}")
 
     async def on_tts_stopped(self, *args, **kwargs):
-        """Handle TTS stop (return to idle)."""
+        """Handle TTS stop (return to idle after delay)."""
         try:
             if self.state_sync:
-                self._update_state("idle")
                 self.state_sync.send_tts_state(False)
-            logger.debug("🔇 TTS stopped")
+
+                # Cancel existing idle timer
+                if self._idle_task and not self._idle_task.done():
+                    self._idle_task.cancel()
+
+                # Set idle after delay
+                async def delayed_idle():
+                    await asyncio.sleep(self._idle_delay)
+                    self._update_state("idle")
+
+                self._idle_task = asyncio.create_task(delayed_idle())
+                logger.debug("TTS stopped, idle in 0.5s")
         except Exception as e:
-            logger.error(f"❌ Error in TTS stop observer: {e}")
+            logger.error(f"Error in TTS stop observer: {e}")
 
     async def on_user_transcript(self, *args, **kwargs):
         """Handle complete user transcript."""
@@ -127,6 +146,12 @@ class StateObserver(BaseObserver):
                 self.state_sync.send_transcript("assistant", text)
         except Exception as e:
             logger.error(f"❌ Error in bot transcript observer: {e}")
+
+    def cancel_idle_timer(self):
+        """Cancel pending idle timer."""
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+            self._idle_task = None
 
     def _update_state(self, new_state: str):
         """

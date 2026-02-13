@@ -37,7 +37,7 @@ class AiortcRPiClient:
 
     def __init__(
         self,
-        rpi_url: str = "http://100.64.0.2:8001",
+        rpi_url: str = "http://100.115.193.41:8001",
         auto_reconnect: bool = True,
         reconnect_delay: int = 5,
         max_reconnect_attempts: int = 0,  # 0 = infinite
@@ -131,6 +131,9 @@ class AiortcRPiClient:
             def on_message(message):
                 if self._on_data_channel_message_callback:
                     self._on_data_channel_message_callback(message)
+
+            # Add transceiver to receive audio from RPi
+            self._pc.addTransceiver("audio", direction="recvonly")
 
             # Create offer
             offer = await self._pc.createOffer()
