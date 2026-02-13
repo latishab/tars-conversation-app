@@ -10,7 +10,6 @@ Tests TARS physical movements and gestures.
 **Tests:**
 - `side_side` - Side-to-side head movement
 - `wave_right` - Right arm wave gesture
-- `bow` - Bow gesture
 
 **Usage:**
 ```bash

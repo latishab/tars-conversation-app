@@ -23,9 +23,5 @@ async def test_gestures():
     result = await execute_movement(["wave_right"])
     print(f"Result: {result}")
 
-    print("\nTest 3: bow gesture...")
-    result = await execute_movement(["bow"])
-    print(f"Result: {result}")
-
 if __name__ == "__main__":
     asyncio.run(test_gestures())
