@@ -75,6 +75,12 @@ from tools import (
     create_movement_schema,
     create_camera_capture_schema,
     get_persona_storage,
+    set_emotion,
+    do_gesture,
+    create_emotion_schema,
+    create_gesture_schema,
+    set_rate_limiter,
+    ExpressionRateLimiter,
 )
 
 
@@ -255,6 +261,14 @@ async def run_robot_bot():
         tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
         system_prompt = build_tars_system_prompt(persona_params, tars_data)
 
+        # Initialize expression rate limiter
+        rate_limiter = ExpressionRateLimiter(
+            min_emotion_interval=5.0,
+            min_gesture_interval=30.0,
+            max_gestures_per_session=3
+        )
+        set_rate_limiter(rate_limiter)
+
         # Create tool schemas
         tools = ToolsSchema(
             standard_tools=[
@@ -263,6 +277,8 @@ async def run_robot_bot():
                 create_identity_schema(),
                 create_movement_schema(),
                 create_camera_capture_schema(),
+                create_emotion_schema(),
+                create_gesture_schema(),
             ]
         )
 
@@ -274,6 +290,8 @@ async def run_robot_bot():
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
         llm.register_function("execute_movement", execute_movement)
         llm.register_function("capture_camera_view", capture_camera_view)
+        llm.register_function("set_emotion", set_emotion)
+        llm.register_function("do_gesture", do_gesture)
 
         logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
 
