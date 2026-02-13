@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 def test_audio_via_ssh():
     """Test Pi speaker and microphone directly via SSH."""
