@@ -8,8 +8,8 @@
   "custom_app_url": "http://localhost:7860",
   "icon": "assets/tars-icon.png",
   "huggingface_space": "latishab/tars-conversation-app",
-  "install_script": "install.sh",
-  "uninstall_script": "uninstall.sh",
+  "install_script": "scripts/install.sh",
+  "uninstall_script": "scripts/uninstall.sh",
   "dependencies": {
     "python": ">=3.10",
     "system": [

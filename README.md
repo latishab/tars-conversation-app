@@ -255,19 +255,6 @@ Communication channels (Robot Mode):
 | Commands | gRPC | Hardware control | ~5-10ms |
 | State | DataChannel | Battery, movement status | ~10ms |
 
-## Testing
-
-```bash
-# Test Gradio integration
-python tests/gradio/test_gradio.py
-
-# Test gesture recognition (robot mode)
-python tests/test_gesture.py
-
-# Test hardware connection (robot mode, from RPi)
-ssh tars-pi "cd ~/tars && python tests/test_hardware.py"
-```
-
 ## Development
 
 See [docs/DEVELOPING_APPS.md](docs/DEVELOPING_APPS.md) for comprehensive guide on creating TARS SDK apps.

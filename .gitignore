@@ -46,3 +46,8 @@ config.ini
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.hf-upload-test.txt
+
+# HuggingFace publishing
+publish-to-hf.sh
+.hf-*
