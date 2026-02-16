@@ -4,6 +4,7 @@ emoji: 🤖
 colorFrom: blue
 colorTo: purple
 sdk: static
+short_description: Real-time AI voice assistant for TARS
 pinned: false
 ---
 
