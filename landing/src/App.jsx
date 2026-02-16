@@ -117,7 +117,12 @@ function App() {
 
       {/* Features Grid */}
       <section id="features" className="container mx-auto px-4 py-16 bg-gray-50">
-        <h3 className="text-3xl font-bold text-center mb-12">Features</h3>
+        <div className="text-center mb-12 max-w-3xl mx-auto">
+          <h3 className="text-3xl font-bold mb-4">Everything You Need</h3>
+          <p className="text-lg text-muted-foreground">
+            Complete voice AI system built for conversational robotics. Connects speech recognition, language models, and robot hardware into one seamless pipeline.
+          </p>
+        </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {features.map((feature, idx) => (
             <Card key={idx} className="hover:shadow-lg transition-shadow">

@@ -89,11 +89,11 @@ if [ "$CONFIG_CREATED" = true ] || [ "$ENV_CREATED" = true ]; then
     [ "$ENV_CREATED" = true ] && echo "   - Add API keys to: $APP_DIR/.env.local"
     [ "$CONFIG_CREATED" = true ] && echo "   - Configure settings: $APP_DIR/config.ini"
     echo "2. Activate environment: source $APP_DIR/venv/bin/activate"
-    echo "3. Run the app: python $APP_DIR/tars_bot.py"
+    echo "3. Run the app: python $APP_DIR/src/tars_bot.py"
 else
     echo "1. Activate environment: source $APP_DIR/venv/bin/activate"
-    echo "2. Run the app: python $APP_DIR/tars_bot.py"
+    echo "2. Run the app: python $APP_DIR/src/tars_bot.py"
 fi
 echo
-echo "For browser mode: python $APP_DIR/bot.py"
+echo "For browser mode: python $APP_DIR/src/bot.py"
 echo "For dashboard: python $APP_DIR/ui/app.py"

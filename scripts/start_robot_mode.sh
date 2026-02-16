@@ -58,8 +58,8 @@ if [ -d ".venv" ]; then
 fi
 
 # Check if tars_bot.py exists
-if [ ! -f "tars_bot.py" ]; then
-    echo "❌ Error: tars_bot.py not found"
+if [ ! -f "src/tars_bot.py" ]; then
+    echo "❌ Error: src/tars_bot.py not found"
     exit 1
 fi
 
@@ -84,5 +84,5 @@ else
     echo "⚠️  Note: Audio bridge integration is in progress"
     echo "   See IMPLEMENTATION_SUMMARY.md for current status"
     echo ""
-    python tars_bot.py
+    python src/tars_bot.py
 fi

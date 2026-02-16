@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 # Add src/ to Python path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add src directory to Python path for imports
+src_dir = Path(__file__).parent
+sys.path.insert(0, str(src_dir))
 
 try:
     import certifi

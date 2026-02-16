@@ -337,13 +337,13 @@ with gr.Blocks(
             gr.Markdown("""
 **To connect to TARS:**
 
-1. Ensure bot pipeline is running: `python bot.py`
+1. Ensure bot pipeline is running: `python src/src/bot.py`
 2. Open WebRTC client in browser
 3. Pipeline will connect automatically
 
 **Endpoints:**
 - WebRTC Signaling: Handled by SmallWebRTC transport
-- Health Check: Check bot.py logs for status
+- Health Check: Check src/bot.py logs for status
 
 **Architecture:**
 - Pipecat pipeline with STT, LLM, TTS

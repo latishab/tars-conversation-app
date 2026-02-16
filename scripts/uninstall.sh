@@ -10,9 +10,9 @@ echo
 
 # Stop running processes
 echo "Stopping running processes..."
-pkill -f "python.*tars_bot.py" || true
-pkill -f "python.*bot.py" || true
-pkill -f "python.*pipecat_service.py" || true
+pkill -f "python.*src/tars_bot.py" || true
+pkill -f "python.*src/bot.py" || true
+pkill -f "python.*src/pipecat_service.py" || true
 pkill -f "python.*ui/app.py" || true
 sleep 1
 echo "Processes stopped"

@@ -96,7 +96,7 @@ from huggingface_hub import HfApi
 token = os.environ["HF_TOKEN"]
 api = HfApi(token=token)
 
-# Delete publish-to-hf.sh from Space if it exists
+# Delete unnecessary files from Space if they exist
 try:
     print("Removing publish-to-hf.sh from Space...")
     api.delete_file(
@@ -107,7 +107,20 @@ try:
     )
     print("✓ Removed publish-to-hf.sh")
 except Exception as e:
-    print(f"Note: publish-to-hf.sh not found in Space (this is fine)")
+    print(f"Note: publish-to-hf.sh not found (this is fine)")
+
+# Delete dist/ folder if it exists
+try:
+    print("Removing dist/ folder from Space...")
+    api.delete_folder(
+        path_in_repo="dist",
+        repo_id="latishab/tars-conversation-app",
+        repo_type="space",
+        commit_message="Remove dist folder from Space"
+    )
+    print("✓ Removed dist/ folder")
+except Exception as e:
+    print(f"Note: dist/ folder not found (this is fine)")
 
 print("\nUploading files...")
 
