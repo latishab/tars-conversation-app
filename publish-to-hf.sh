@@ -72,6 +72,11 @@ api.upload_folder(
         "*.log",
         "tests", "tests/*",
         "scripts", "scripts/*",
+        "publish-to-hf.sh",  # Publishing script
+        "preview-landing.sh",  # Dev preview script
+        "test-dashboard.sh",  # Dev test script
+        "start_robot_mode.sh",  # Robot-specific script
+        "IMPLEMENTATION_SUMMARY.md",  # Dev documentation
     ],
     commit_message="TARS Conversation App - Professional React landing page"
 )
