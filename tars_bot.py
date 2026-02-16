@@ -56,6 +56,7 @@ from transport import AiortcRPiClient, AudioBridge, StateSync
 from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service
 from services import tars_robot
+from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
 from processors import SilenceFilter
 from observers import StateObserver
 from character.prompts import (
@@ -106,6 +107,7 @@ async def run_robot_bot():
     robot_grpc_address = get_robot_grpc_address()
 
     logger.info(f"📋 Configuration:")
+    logger.info(f"   Client: v{CLIENT_VERSION}")
     logger.info(f"   Deployment: {deployment_mode}")
     logger.info(f"   STT: {STT_PROVIDER}")
     logger.info(f"   LLM: {DEEPINFRA_MODEL}")
@@ -308,6 +310,11 @@ async def run_robot_bot():
                 if robot_client and tars_robot.is_robot_available():
                     logger.info(f"✓ TARS Robot Client connected via gRPC at {robot_grpc_address}")
                     tars_robot.set_eye_state("idle")
+
+                    # Check daemon version
+                    logger.info("Checking TARS daemon version...")
+                    update_checker = TarsUpdateChecker(robot_client)
+                    await update_checker.check_on_connect()
                 else:
                     logger.warning("⚠️ TARS Robot not available")
             except Exception as e:
