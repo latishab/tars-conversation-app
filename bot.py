@@ -93,6 +93,7 @@ from tools import (
     get_crossword_hint,
     create_crossword_hint_schema,
 )
+from shared_state import metrics_store
 
 
 # ============================================================================
@@ -522,12 +523,20 @@ async def run_bot(webrtc_connection):
                         "deepgram": "Deepgram Nova-2"
                     }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
 
-                    webrtc_connection.send_app_message({
-                        "type": "service_info",
+                    service_info = {
                         "stt": stt_display,
                         "memory": "Hybrid Search (SQLite)",
                         "llm": f"DeepInfra: {llm_display}",
                         "tts": tts_display
+                    }
+
+                    # Store in shared state for Gradio UI
+                    metrics_store.set_service_info(service_info)
+
+                    # Send via WebRTC
+                    webrtc_connection.send_app_message({
+                        "type": "service_info",
+                        **service_info
                     })
                     logger.info(f"📊 Sent service info to frontend: STT={stt_display}, LLM={llm_display}, TTS={tts_display}")
             except Exception as e:

@@ -1,10 +1,15 @@
 """Observer for logging TARS assistant responses and forwarding to frontend."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import re
 import time
 from loguru import logger
 from pipecat.frames.frames import LLMTextFrame, TTSTextFrame, TTSStoppedFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
+from src.shared_state import metrics_store
 
 
 class AssistantResponseObserver(BaseObserver):
@@ -112,6 +117,10 @@ class AssistantResponseObserver(BaseObserver):
         self._last_sentence_time = current_time
 
         logger.info(f"🗣️ TARS: {sentence}")
+
+        # Store in shared state for Gradio UI
+        metrics_store.add_transcription("assistant", sentence)
+
         self._send_to_frontend(sentence)
 
     def _send_to_frontend(self, text: str):

@@ -1,10 +1,15 @@
 """Non-intrusive metrics observer for latency tracking."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import time
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.frames.frames import MetricsFrame, UserAudioRawFrame, TranscriptionFrame, UserStartedSpeakingFrame
 from pipecat.metrics.metrics import TTFBMetricsData
 from loguru import logger
+from src.shared_state import metrics_store
 
 
 class MetricsObserver(BaseObserver):
@@ -125,10 +130,7 @@ class MetricsObserver(BaseObserver):
                 logger.error(f"Error processing MetricsFrame: {e}", exc_info=True)
 
     def _send_to_frontend(self):
-        """Send metrics to frontend via WebRTC data channel."""
-        if not self.webrtc_connection:
-            return
-
+        """Send metrics to frontend via WebRTC data channel and store locally for Gradio UI."""
         # Check if metrics have changed since last send (deduplication)
         current_metrics_key = (
             self._current_turn,
@@ -142,40 +144,53 @@ class MetricsObserver(BaseObserver):
         if current_metrics_key == self._last_sent_metrics:
             return
 
-        try:
-            if self.webrtc_connection.is_connected():
-                message = {
-                    "type": "metrics",
-                    "turn_number": self._current_turn,
-                    "timestamp": int(time.time() * 1000),
-                    **self._current_metrics
-                }
-                logger.debug(f"📤 [MetricsObserver] Sending metrics: {message}")
-                self.webrtc_connection.send_app_message(message)
+        # Store in shared state for Gradio UI
+        metrics_store.add_metric({
+            "turn_number": self._current_turn,
+            "timestamp": int(time.time() * 1000),
+            "stt_ttfb_ms": self._current_metrics.get('stt_ttfb_ms'),
+            "memory_latency_ms": self._current_metrics.get('memory_latency_ms'),
+            "llm_ttfb_ms": self._current_metrics.get('llm_ttfb_ms'),
+            "tts_ttfb_ms": self._current_metrics.get('tts_ttfb_ms'),
+            "vision_latency_ms": self._current_metrics.get('vision_latency_ms'),
+            "total_ms": self._current_metrics.get('total_ms'),
+        })
 
-                # Log summary once per turn
-                if self._last_logged_turn != self._current_turn:
-                    def fmt(val):
-                        return f"{val:.0f}ms" if isinstance(val, (int, float)) else "N/A"
+        # Send via WebRTC if connection exists
+        if self.webrtc_connection:
+            try:
+                if self.webrtc_connection.is_connected():
+                    message = {
+                        "type": "metrics",
+                        "turn_number": self._current_turn,
+                        "timestamp": int(time.time() * 1000),
+                        **self._current_metrics
+                    }
+                    logger.debug(f"📤 [MetricsObserver] Sending metrics: {message}")
+                    self.webrtc_connection.send_app_message(message)
+            except Exception as exc:
+                logger.error(f"❌ [MetricsObserver] Failed to send metrics via WebRTC: {exc}")
 
-                    # Build metrics summary
-                    metrics_parts = []
-                    if 'stt_ttfb_ms' in self._current_metrics:
-                        metrics_parts.append(f"STT={fmt(self._current_metrics.get('stt_ttfb_ms'))}")
-                    if 'memory_latency_ms' in self._current_metrics:
-                        metrics_parts.append(f"Memory={fmt(self._current_metrics.get('memory_latency_ms'))}")
-                    if 'llm_ttfb_ms' in self._current_metrics:
-                        metrics_parts.append(f"LLM={fmt(self._current_metrics.get('llm_ttfb_ms'))}")
-                    if 'tts_ttfb_ms' in self._current_metrics:
-                        metrics_parts.append(f"TTS={fmt(self._current_metrics.get('tts_ttfb_ms'))}")
-                    if 'vision_latency_ms' in self._current_metrics:
-                        metrics_parts.append(f"Vision={fmt(self._current_metrics.get('vision_latency_ms'))}")
+        # Log summary once per turn
+        if self._last_logged_turn != self._current_turn:
+            def fmt(val):
+                return f"{val:.0f}ms" if isinstance(val, (int, float)) else "N/A"
 
-                    if metrics_parts:
-                        logger.info(f"📊 Turn #{self._current_turn}: " + " | ".join(metrics_parts))
-                    self._last_logged_turn = self._current_turn
+            # Build metrics summary
+            metrics_parts = []
+            if 'stt_ttfb_ms' in self._current_metrics:
+                metrics_parts.append(f"STT={fmt(self._current_metrics.get('stt_ttfb_ms'))}")
+            if 'memory_latency_ms' in self._current_metrics:
+                metrics_parts.append(f"Memory={fmt(self._current_metrics.get('memory_latency_ms'))}")
+            if 'llm_ttfb_ms' in self._current_metrics:
+                metrics_parts.append(f"LLM={fmt(self._current_metrics.get('llm_ttfb_ms'))}")
+            if 'tts_ttfb_ms' in self._current_metrics:
+                metrics_parts.append(f"TTS={fmt(self._current_metrics.get('tts_ttfb_ms'))}")
+            if 'vision_latency_ms' in self._current_metrics:
+                metrics_parts.append(f"Vision={fmt(self._current_metrics.get('vision_latency_ms'))}")
 
-                self._last_sent_metrics = current_metrics_key
+            if metrics_parts:
+                logger.info(f"📊 Turn #{self._current_turn}: " + " | ".join(metrics_parts))
+            self._last_logged_turn = self._current_turn
 
-        except Exception as exc:
-            logger.error(f"❌ [MetricsObserver] Failed to send metrics: {exc}")
+        self._last_sent_metrics = current_metrics_key
