@@ -37,7 +37,7 @@ fi
 
 echo
 echo "Building React landing page..."
-cd space-landing
+cd landing
 npm run build
 cd ..
 
@@ -65,7 +65,7 @@ rsync -av \
     --exclude='config.ini' \
     --exclude='.claude' \
     --exclude='.DS_Store' \
-    --exclude='space-landing' \
+    --exclude='landing' \
     --exclude='dist' \
     --exclude='node_modules' \
     --exclude='*.log' \
@@ -79,6 +79,8 @@ rsync -av \
 cp dist/index.html "$STAGING_DIR/"
 cp dist/vite.svg "$STAGING_DIR/"
 cp -r dist/assets "$STAGING_DIR/"
+
+# Note: assets/ folder is already copied by rsync above
 
 echo "✓ Staging directory prepared"
 echo

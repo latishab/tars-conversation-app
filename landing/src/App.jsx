@@ -7,33 +7,33 @@ function App() {
   const features = [
     {
       icon: <Mic className="w-6 h-6" />,
-      title: "Real-time Voice",
-      description: "WebRTC audio streaming with Speechmatics or Deepgram transcription for natural conversations"
+      title: "Natural Conversations",
+      description: "Talk naturally with TARS using real-time voice transcription and low-latency responses via WebRTC"
     },
     {
       icon: <Brain className="w-6 h-6" />,
-      title: "Smart Memory",
-      description: "Hybrid vector + BM25 search with ChromaDB for contextual conversation recall"
+      title: "Remembers Context",
+      description: "TARS recalls past conversations using hybrid memory search, making interactions more personalized"
     },
     {
       icon: <Eye className="w-6 h-6" />,
-      title: "Vision Analysis",
-      description: "Real-time image understanding with Moondream for visual context awareness"
+      title: "Sees and Understands",
+      description: "Show TARS images or let it see through the robot camera for visual understanding with Moondream"
     },
     {
       icon: <Activity className="w-6 h-6" />,
-      title: "Live Dashboard",
-      description: "Gradio interface with TTFB metrics, latency charts, and conversation transcription"
+      title: "Monitor Performance",
+      description: "Track conversation quality with live metrics dashboard showing latency and service health"
     },
     {
       icon: <Bot className="w-6 h-6" />,
-      title: "Emotional AI",
-      description: "Realtime emotion monitoring detecting confusion, hesitation, and frustration patterns"
+      title: "Emotionally Aware",
+      description: "TARS detects when you're confused or frustrated and adapts its responses accordingly"
     },
     {
       icon: <Bot className="w-6 h-6" />,
-      title: "Robot Control",
-      description: "gRPC commands for gestures, eye expressions, and physical movements"
+      title: "Full Robot Control",
+      description: "TARS can move its eyes, perform gestures, and control hardware via low-latency gRPC commands"
     }
   ]
 
@@ -89,9 +89,10 @@ function App() {
               </p>
 
               <div className="flex gap-4 flex-wrap">
-                <Button size="lg">
-                  <Download className="w-5 h-5" />
-                  Install on TARS Robot
+                <Button size="lg" asChild>
+                  <a href="#features">
+                    Explore Features
+                  </a>
                 </Button>
                 <Button size="lg" variant="outline" asChild>
                   <a href="https://github.com/latishab/tars-conversation-app" target="_blank" rel="noopener noreferrer">
@@ -105,7 +106,7 @@ function App() {
             {/* Right: Image */}
             <div className="flex justify-center">
               <img
-                src="/tars-sleepy.jpg"
+                src="/assets/tars-sleepy.JPG"
                 alt="TARS Robot"
                 className="rounded-lg border shadow-lg w-full max-w-md"
               />
@@ -115,7 +116,7 @@ function App() {
       </section>
 
       {/* Features Grid */}
-      <section className="container mx-auto px-4 py-16 bg-gray-50">
+      <section id="features" className="container mx-auto px-4 py-16 bg-gray-50">
         <h3 className="text-3xl font-bold text-center mb-12">Features</h3>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {features.map((feature, idx) => (
@@ -178,16 +179,24 @@ function App() {
           {/* Tech Stack */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-2xl">Tech Stack</CardTitle>
-              <CardDescription>Built with modern AI and robotics tools</CardDescription>
+              <CardTitle className="text-2xl">Ready for Your Setup</CardTitle>
+              <CardDescription>Works with local or cloud AI services. Flexible deployment options for your needs.</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {techStack.map((tech, idx) => (
-                  <Badge key={idx} variant="secondary" className="text-sm px-3 py-1">
-                    {tech}
-                  </Badge>
-                ))}
+            <CardContent className="space-y-4">
+              <div>
+                <h4 className="font-semibold mb-2 text-sm">Powered by:</h4>
+                <div className="flex flex-wrap gap-2">
+                  {techStack.map((tech, idx) => (
+                    <Badge key={idx} variant="secondary" className="text-sm px-3 py-1">
+                      {tech}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                <p>• Choose between Speechmatics or Deepgram for speech recognition</p>
+                <p>• Use local Qwen3-TTS or cloud ElevenLabs for voice synthesis</p>
+                <p>• Runs on Raspberry Pi or any Linux machine with gRPC access</p>
               </div>
             </CardContent>
           </Card>
