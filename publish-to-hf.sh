@@ -36,11 +36,57 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
+echo "Building React landing page..."
+cd space-landing
+npm run build
+cd ..
+
+echo "✓ Build complete"
+echo
+echo "Preparing files for upload..."
+
+# Create staging directory
+STAGING_DIR=".hf-staging"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+
+# Copy app files
+rsync -av \
+    --exclude='.git' \
+    --exclude='venv' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='.pytest_cache' \
+    --exclude='.models' \
+    --exclude='chroma_memory' \
+    --exclude='memory_data' \
+    --exclude='.env' \
+    --exclude='.env.local' \
+    --exclude='config.ini' \
+    --exclude='.claude' \
+    --exclude='.DS_Store' \
+    --exclude='space-landing' \
+    --exclude='dist' \
+    --exclude='node_modules' \
+    --exclude='*.log' \
+    --exclude='tests' \
+    --exclude='publish-to-hf.sh' \
+    --exclude='test-dashboard.sh' \
+    --exclude='.hf-*' \
+    . "$STAGING_DIR/"
+
+# Copy built landing page to root of staging
+cp dist/index.html "$STAGING_DIR/"
+cp dist/vite.svg "$STAGING_DIR/"
+cp -r dist/assets "$STAGING_DIR/"
+
+echo "✓ Staging directory prepared"
+echo
 echo "Uploading to latishab/tars-conversation-app..."
 echo
 
 # Upload
-python3 << 'EOFUPLOAD'
+python3 << EOFUPLOAD
 import os
 from pathlib import Path
 from huggingface_hub import HfApi
@@ -48,48 +94,36 @@ from huggingface_hub import HfApi
 token = os.environ["HF_TOKEN"]
 api = HfApi(token=token)
 
-print("Uploading files...")
+# Delete publish-to-hf.sh from Space if it exists
+try:
+    print("Removing publish-to-hf.sh from Space...")
+    api.delete_file(
+        path_in_repo="publish-to-hf.sh",
+        repo_id="latishab/tars-conversation-app",
+        repo_type="space",
+        commit_message="Remove publish script from Space"
+    )
+    print("✓ Removed publish-to-hf.sh")
+except Exception as e:
+    print(f"Note: publish-to-hf.sh not found in Space (this is fine)")
+
+print("\nUploading files...")
 
 api.upload_folder(
-    folder_path=".",
+    folder_path="$STAGING_DIR",
     repo_id="latishab/tars-conversation-app",
     repo_type="space",
-    ignore_patterns=[
-        ".git", ".git/*",
-        "venv", "venv/*",
-        "__pycache__", "**/__pycache__",
-        "*.pyc", "**/*.pyc",
-        ".pytest_cache",
-        ".models", ".models/*",
-        "chroma_memory", "chroma_memory/*",
-        "memory_data", "memory_data/*",
-        ".env", ".env.local", ".env.*",
-        "config.ini",
-        ".claude", ".claude/*",
-        ".DS_Store", "**/.DS_Store",
-        "space-landing", "space-landing/*",  # Source files (we use dist/)
-        "node_modules", "**/node_modules",
-        "*.log",
-        "tests", "tests/*",
-        "publish-to-hf.sh",  # Publishing script
-        "test-dashboard.sh",  # Dev test script
-        "IMPLEMENTATION_SUMMARY.md",  # Dev documentation
-        ".hf-*",  # HF temp files
-    ],
-    commit_message="TARS Conversation App - Professional React landing page"
+    commit_message="Update: Professional React landing page"
 )
 
 print("\n✅ Published successfully!")
 print("\nSpace URL: https://huggingface.co/spaces/latishab/tars-conversation-app")
-print("\nNext steps:")
-print("1. Visit the Space URL to verify it's working")
-print("2. Test installation on TARS robot:")
-print("   - Open dashboard at http://your-pi:8000")
-print("   - Go to App Store tab")
-print("   - Enter Space ID: latishab/tars-conversation-app")
-print("   - Click 'Install from HuggingFace'")
-print("3. Click Start and verify Gradio dashboard at :7860")
 EOFUPLOAD
 
 echo
-echo "Done!"
+echo "Cleaning up staging directory..."
+rm -rf "$STAGING_DIR"
+
+echo "✓ Cleanup complete"
+echo
+echo "Done! Visit the Space URL to see your landing page."

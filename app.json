@@ -1,0 +1,55 @@
+{
+  "name": "tars-conversation-app",
+  "version": "1.0.0",
+  "description": "Real-time conversational AI with WebRTC, memory, and vision",
+  "author": "TARS Project",
+  "repository": "https://github.com/latishab/tars-conversation-app.git",
+  "main": "tars_bot.py",
+  "install_script": "install.sh",
+  "uninstall_script": "uninstall.sh",
+  "dependencies": {
+    "python": ">=3.10",
+    "system": [
+      "portaudio19-dev",
+      "ffmpeg",
+      "build-essential",
+      "python3-dev"
+    ]
+  },
+  "environment": [
+    "DEEPINFRA_API_KEY",
+    "SPEECHMATICS_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "ELEVENLABS_API_KEY"
+  ],
+  "configuration": {
+    "file": "config.ini",
+    "example": "config.ini.example",
+    "env_file": ".env.local",
+    "env_example": "env.example"
+  },
+  "ports": {
+    "grpc": 50051,
+    "http": 8765,
+    "fastapi": 8080
+  },
+  "modes": [
+    {
+      "name": "robot",
+      "description": "Connect to Pi hardware via gRPC",
+      "command": "python tars_bot.py"
+    },
+    {
+      "name": "browser",
+      "description": "Browser-based WebRTC mode",
+      "command": "python bot.py"
+    }
+  ],
+  "services": {
+    "dashboard": {
+      "enabled": true,
+      "command": "python ui/app.py",
+      "port": 7860
+    }
+  }
+}
