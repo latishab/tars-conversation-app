@@ -19,6 +19,7 @@ __pycache__/
 # production
 /build
 /dist
+publish-to-hf.sh
 
 # misc
 .DS_Store
