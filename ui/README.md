@@ -39,7 +39,7 @@ Then open http://localhost:7861
 
 Terminal 1:
 ```bash
-python bot.py
+python src/src/bot.py
 ```
 
 Terminal 2:
@@ -52,7 +52,7 @@ python ui/app.py
 The UI reads from `src/shared_state.py`, which is populated by observers in the Pipecat pipeline:
 
 ```
-bot.py (Pipecat Pipeline)
+src/bot.py (Pipecat Pipeline)
     ↓
 src/observers/ (metrics, transcription, assistant)
     ↓
@@ -123,7 +123,7 @@ python tests/gradio/test_gradio.py
 ## Troubleshooting
 
 ### No data showing
-- Ensure bot.py is running
+- Ensure src/bot.py is running
 - Check that WebRTC client is connected
 - Verify at least one conversation turn has completed
 
@@ -133,7 +133,7 @@ pip install gradio plotly
 ```
 
 ### Charts not updating
-- Check that observers are enabled in bot.py
+- Check that observers are enabled in src/bot.py
 - Verify shared_state.py is being imported correctly
 - Check console for errors
 

@@ -15,8 +15,8 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 ## Features
 
 - **Dual Operation Modes**
-  - **WebRTC Mode** (`bot.py`) - Browser-based voice AI with real-time metrics dashboard
-  - **Robot Mode** (`tars_bot.py`) - Connect to Raspberry Pi TARS robot via WebRTC and gRPC
+  - **WebRTC Mode** (`src/bot.py`) - Browser-based voice AI with real-time metrics dashboard
+  - **Robot Mode** (`src/tars_bot.py`) - Connect to Raspberry Pi TARS robot via WebRTC and gRPC
 - **Real-time Transcription** - Speechmatics or Deepgram with smart turn detection
 - **Dual TTS Options** - Qwen3-TTS (local, free, voice cloning) or ElevenLabs (cloud)
 - **LLM Integration** - Any model via DeepInfra
@@ -32,9 +32,9 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 
 ```
 tars-conversation-app/
-├── bot.py                      # WebRTC mode - Browser voice AI
-├── tars_bot.py                 # Robot mode - Raspberry Pi hardware
-├── pipecat_service.py          # FastAPI backend (WebRTC signaling)
+├── src/bot.py                      # WebRTC mode - Browser voice AI
+├── src/tars_bot.py                 # Robot mode - Raspberry Pi hardware
+├── src/pipecat_service.py          # FastAPI backend (WebRTC signaling)
 ├── config.py                   # Configuration management
 ├── config.ini                  # User configuration file
 ├── requirements.txt            # Python dependencies
@@ -62,14 +62,14 @@ tars-conversation-app/
 
 ## Operation Modes
 
-### WebRTC Mode (`bot.py`)
+### WebRTC Mode (`src/bot.py`)
 - **Use case**: Browser-based voice AI conversations
 - **Transport**: SmallWebRTC (browser ↔ Pipecat)
 - **Features**: Full pipeline with STT, LLM, TTS, Memory
 - **UI**: Gradio dashboard for metrics and transcription
 - **Best for**: Development, testing, remote conversations
 
-### Robot Mode (`tars_bot.py`)
+### Robot Mode (`src/tars_bot.py`)
 - **Use case**: Physical TARS robot on Raspberry Pi
 - **Transport**: aiortc (RPi ↔ Pipecat) + gRPC (commands)
 - **Features**: Same pipeline + robot control (eyes, gestures, movement)
@@ -159,7 +159,7 @@ type = hybrid  # SQLite-based hybrid search (vector + BM25)
 
 **Terminal 1: Python backend**
 ```bash
-python pipecat_service.py
+python src/pipecat_service.py
 ```
 
 **Terminal 2: Gradio UI (optional)**
@@ -197,7 +197,7 @@ Deployment detection:
 
 Run:
 ```bash
-python tars_bot.py
+python src/tars_bot.py
 ```
 
 ## Gradio Dashboard
@@ -268,7 +268,7 @@ See [docs/DEVELOPING_APPS.md](docs/DEVELOPING_APPS.md) for comprehensive guide o
 ### Adding Tools
 1. Create function in `src/tools/`
 2. Create schema with `create_*_schema()`
-3. Register in `bot.py` or `tars_bot.py`
+3. Register in `src/bot.py` or `src/tars_bot.py`
 4. LLM can now call your tool
 
 ### Modifying UI
@@ -287,7 +287,7 @@ Removes virtual environment and optionally data/config files.
 ## Troubleshooting
 
 ### No metrics in Gradio UI
-- Ensure bot is running (`bot.py` or `tars_bot.py`)
+- Ensure bot is running (`src/bot.py` or `src/tars_bot.py`)
 - Check WebRTC client is connected
 - Verify at least one conversation turn completed
 
