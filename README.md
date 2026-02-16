@@ -2,11 +2,6 @@
 
 Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics/Deepgram, Qwen3-TTS/ElevenLabs, DeepInfra LLM, and Moondream.
 
-**Note:** To align with the project purpose, consider renaming this folder from `tars-omni` to `tars-conversation-app`:
-```bash
-cd .. && mv tars-omni tars-conversation-app && cd tars-conversation-app
-```
-
 ## Features
 
 - **Dual Operation Modes**
