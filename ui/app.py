@@ -1,5 +1,6 @@
 """Gradio UI for TARS Conversation App - Real-time TTFB metrics dashboard."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -8,9 +9,44 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import gradio as gr
 import plotly.graph_objects as go
-from src.shared_state import metrics_store
 from typing import List
 import statistics
+
+# Check if running on HuggingFace Space
+IS_HF_SPACE = os.getenv("SPACE_ID") is not None
+
+# Import metrics_store only if not in HF Space mode
+if not IS_HF_SPACE:
+    from src.shared_state import metrics_store
+else:
+    # Demo mode - use mock data
+    class MockMetricsStore:
+        """Mock metrics store for HuggingFace Space demo mode."""
+
+        def get_service_info(self):
+            return {
+                'stt': 'Deepgram (demo)',
+                'memory': 'Hybrid Memory (demo)',
+                'llm': 'Llama-3.3-70B (demo)',
+                'tts': 'ElevenLabs (demo)'
+            }
+
+        def get_metrics(self):
+            # Return empty list - demo mode shows static info
+            return []
+
+        def get_transcriptions(self):
+            return [
+                {"role": "user", "text": "Hello TARS, how are you?"},
+                {"role": "assistant", "text": "I'm doing well! How can I help you today?"},
+                {"role": "user", "text": "Tell me about yourself"},
+                {"role": "assistant", "text": "I'm TARS, a conversational AI assistant running on a Raspberry Pi robot. I can see, hear, and respond to you in real-time."}
+            ]
+
+        def clear_metrics(self):
+            pass
+
+    metrics_store = MockMetricsStore()
 
 
 # === Helper Functions ===
@@ -231,7 +267,16 @@ with gr.Blocks(
 ) as demo:
 
     gr.Markdown("# TARS Conversation App")
-    gr.Markdown("Real-time TTFB metrics from Pipecat pipeline")
+
+    if IS_HF_SPACE:
+        gr.Markdown("""
+> **Demo Mode** - This is a preview of the TARS Conversation App dashboard.
+> To use the full app with real-time metrics, install it on your TARS robot via the App Store.
+>
+> **Installation:** Open TARS dashboard → App Store → Enter `latishab/tars-conversation-app` → Install
+""")
+    else:
+        gr.Markdown("Real-time TTFB metrics from Pipecat pipeline")
 
     # Service info and turn count
     with gr.Row():

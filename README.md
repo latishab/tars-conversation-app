@@ -1,3 +1,14 @@
+---
+title: TARS Conversation App
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "4.0.0"
+app_file: ui/app.py
+pinned: false
+---
+
 # TARS Conversation App
 
 Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics/Deepgram, Qwen3-TTS/ElevenLabs, DeepInfra LLM, and Moondream.
@@ -68,7 +79,42 @@ tars-conversation-app/
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Installation on TARS Robot (Recommended)
+
+Install directly from HuggingFace Space via the TARS dashboard:
+
+1. Open TARS dashboard at `http://your-pi:8000`
+2. Go to **App Store** tab
+3. Enter Space ID: `latishab/tars-conversation-app`
+4. Click **Install from HuggingFace**
+5. Configure API keys in `.env.local`
+6. Click **Start**
+7. Access metrics dashboard at `http://your-pi:7860`
+
+The app will:
+- Auto-install dependencies
+- Set up virtual environment
+- Configure for robot mode
+- Start Gradio dashboard
+
+### Easy Installation (Manual)
+
+For first-time setup on Raspberry Pi:
+
+```bash
+# Clone and install
+git clone https://github.com/latishab/tars-conversation-app.git
+cd tars-conversation-app
+bash install.sh
+```
+
+The installer handles:
+- System dependencies (portaudio, ffmpeg)
+- Python virtual environment
+- All Python packages
+- Configuration file setup
+
+### Manual Installation
 
 ```bash
 # Python dependencies
@@ -226,6 +272,8 @@ ssh tars-pi "cd ~/tars && python tests/test_hardware.py"
 
 ## Development
 
+See [docs/DEVELOPING_APPS.md](docs/DEVELOPING_APPS.md) for comprehensive guide on creating TARS SDK apps.
+
 ### Adding Metrics
 1. Emit `MetricsFrame` in your service/processor
 2. `MetricsObserver` will capture it automatically
@@ -241,6 +289,14 @@ ssh tars-pi "cd ~/tars && python tests/test_hardware.py"
 1. Edit `ui/app.py`
 2. Gradio hot-reloads automatically
 3. Access `metrics_store` for data
+
+### Uninstalling
+
+```bash
+bash uninstall.sh
+```
+
+Removes virtual environment and optionally data/config files.
 
 ## Troubleshooting
 

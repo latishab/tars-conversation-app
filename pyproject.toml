@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tars-conversation-app"
+version = "1.0.0"
+description = "Real-time conversational AI with WebRTC, memory, and vision for TARS robots"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "TARS Project"}
+]
+
+dependencies = [
+    "tars-sdk>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/latishab/tars-conversation-app"
+Repository = "https://github.com/latishab/tars-conversation-app.git"
+Documentation = "https://github.com/latishab/tars-conversation-app#readme"
+
+[tool.setuptools.packages.find]
+include = ["tars_conversation_app", "tars_conversation_app.*", "src", "src.*", "ui", "ui.*"]
