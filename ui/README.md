@@ -2,6 +2,40 @@
 
 Real-time dashboard for monitoring TARS conversation metrics and transcriptions.
 
+## Integrated Gradio UI (Recommended)
+
+Launch the integrated UI alongside the pipeline:
+
+```bash
+python src/tars_bot.py --gradio
+```
+
+Opens at http://localhost:7860 with:
+- Live conversation transcript
+- Real-time metrics (STT/LLM/TTS latency)
+- Connection status
+- Pipeline state indicator
+
+### Options
+
+```bash
+# Custom port
+python src/tars_bot.py --gradio --gradio-port 8080
+
+# Debug logging
+python src/tars_bot.py --gradio --debug
+```
+
+## Standalone Dashboard (Deprecated)
+
+The standalone `ui/app.py` is deprecated. Use the integrated UI above instead.
+
+For legacy compatibility, you can still run:
+
+```bash
+python ui/app.py  # Shows deprecation warning
+```
+
 ## Features
 
 ### Latency Dashboard

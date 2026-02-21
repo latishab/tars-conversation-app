@@ -16,12 +16,14 @@ from pathlib import Path
 
 # Add src/ to Python path
 # Add src directory to Python path for imports
-src_dir = Path(__file__).parent
+src_dir = Path(__file__).parent.resolve()
 sys.path.insert(0, str(src_dir))
 
 import asyncio
 import os
 import uuid
+import argparse
+import threading
 from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
@@ -87,8 +89,12 @@ from tools import (
 )
 
 
-async def run_robot_bot():
-    """Run TARS bot in robot mode (connected to RPi via aiortc)."""
+async def run_robot_bot(ui=None):
+    """Run TARS bot in robot mode (connected to RPi via aiortc).
+
+    Args:
+        ui: Optional TarsGradioUI instance for live updates
+    """
     logger.info("=" * 80)
     logger.info("🤖 Starting TARS in Robot Mode")
     logger.info("=" * 80)
@@ -117,6 +123,34 @@ async def run_robot_bot():
     logger.info(f"   RPi HTTP: {RPI_URL}")
     logger.info(f"   RPi gRPC: {robot_grpc_address}")
     logger.info(f"   Display: {TARS_DISPLAY_URL} ({'enabled' if TARS_DISPLAY_ENABLED else 'disabled'})")
+
+    # Store service info for UI
+    from shared_state import metrics_store
+
+    # Format LLM display name
+    llm_display = DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL
+
+    # Format TTS display name
+    if TTS_PROVIDER == "elevenlabs":
+        tts_display = "ElevenLabs: eleven_flash_v2_5"
+    else:
+        tts_model = QWEN3_TTS_MODEL.split('/')[-1] if '/' in QWEN3_TTS_MODEL else QWEN3_TTS_MODEL
+        tts_display = f"Qwen3-TTS: {tts_model}"
+
+    # Format STT display name
+    stt_display = {
+        "speechmatics": "Speechmatics",
+        "deepgram": "Deepgram Nova-2",
+        "deepgram-flux": "Deepgram Flux"
+    }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
+
+    service_info = {
+        "stt": stt_display,
+        "llm": f"DeepInfra: {llm_display}",
+        "tts": tts_display
+    }
+    metrics_store.set_service_info(service_info)
+    logger.info(f"📊 Service info: STT={stt_display}, LLM={llm_display}, TTS={tts_display}")
 
     # Session initialization
     session_id = str(uuid.uuid4())[:8]
@@ -170,6 +204,8 @@ async def run_robot_bot():
             connected = await aiortc_client.connect()
             if not connected:
                 logger.error("❌ Failed to connect to RPi. Exiting.")
+                from shared_state import metrics_store
+                metrics_store.set_pipeline_status("disconnected")
                 return
         else:
             logger.info("⏸️  Auto-connect disabled. Waiting for manual connection.")
@@ -188,6 +224,11 @@ async def run_robot_bot():
             return
 
         logger.info("✓ Received audio track from RPi")
+
+        # Set pipeline status to idle after successful connection
+        from shared_state import metrics_store
+        metrics_store.set_pipeline_status("idle")
+        logger.info("📊 Pipeline status set to idle")
 
         # ====================================================================
         # AUDIO BRIDGE SETUP
@@ -454,4 +495,81 @@ async def run_robot_bot():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_robot_bot())
+    parser = argparse.ArgumentParser(
+        description="TARS Conversation App - Robot Mode",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--gradio",
+        action="store_true",
+        help="Launch Gradio web UI at http://localhost:7860"
+    )
+    parser.add_argument(
+        "--gradio-port",
+        type=int,
+        default=7860,
+        help="Gradio UI port (default: 7860)"
+    )
+    parser.add_argument(
+        "--local-audio",
+        action="store_true",
+        help="Use local mic/speaker instead of robot (not implemented yet)"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging"
+    )
+
+    args = parser.parse_args()
+
+    # Set log level
+    if args.debug:
+        logger.remove()
+        logger.add(sys.stderr, level="DEBUG")
+
+    # Check for unsupported options
+    if args.local_audio:
+        logger.error("--local-audio not implemented yet. Use robot mode only.")
+        sys.exit(1)
+
+    # Launch UI if requested
+    if args.gradio:
+        # Ensure src directory is first in path to avoid conflicts with root ui/ directory
+        src_dir_str = str(Path(__file__).parent.resolve())
+        if src_dir_str in sys.path:
+            sys.path.remove(src_dir_str)
+        sys.path.insert(0, src_dir_str)
+        from ui.gradio_app import TarsGradioUI
+
+        ui = TarsGradioUI()
+
+        # Launch Gradio in background daemon thread
+        # Note: Gradio's launch() is blocking, but runs its own uvicorn server
+        # Running in daemon thread allows main asyncio loop to continue
+        ui_thread = threading.Thread(
+            target=lambda: ui.launch(port=args.gradio_port, share=False),
+            daemon=True,
+            name="GradioUI"
+        )
+        ui_thread.start()
+        logger.info(f"🌐 Gradio UI starting at http://localhost:{args.gradio_port}")
+
+        # Give UI time to start
+        import time
+        time.sleep(1)
+
+    # Set audio mode in shared state
+    from shared_state import metrics_store
+    metrics_store.set_audio_mode("Robot (WebRTC to Pi)")
+    metrics_store.set_daemon_address(f"{RPI_URL} / gRPC: {get_robot_grpc_address()}")
+
+    # Run pipeline
+    try:
+        asyncio.run(run_robot_bot())
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    except Exception as e:
+        logger.error(f"Pipeline error: {e}", exc_info=True)
+        metrics_store.set_pipeline_status("error")
+        raise

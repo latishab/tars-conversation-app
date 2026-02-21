@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from collections import deque
 import threading
 import time
+from loguru import logger
 
 
 @dataclass
@@ -27,6 +28,12 @@ class MetricsStore:
     service_info: Optional[Dict] = None
     transcriptions: deque = field(default_factory=lambda: deque(maxlen=50))
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    # Pipeline status fields
+    pipeline_status: str = "disconnected"
+    daemon_address: str = "N/A"
+    audio_mode: str = "robot"
+    _status_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def add_metric(self, metric: dict):
         """Add a new metric entry."""
@@ -66,6 +73,30 @@ class MetricsStore:
         """Clear all stored metrics."""
         with self.lock:
             self.metrics.clear()
+
+    def set_pipeline_status(self, status: str):
+        """Set pipeline status (idle/listening/thinking/speaking/disconnected/error)."""
+        with self._status_lock:
+            valid_states = {"idle", "listening", "thinking", "speaking", "disconnected", "error"}
+            if status in valid_states:
+                self.pipeline_status = status
+            else:
+                logger.warning(f"Invalid pipeline status: {status}")
+
+    def get_pipeline_status(self) -> str:
+        """Get current pipeline status."""
+        with self._status_lock:
+            return self.pipeline_status
+
+    def set_daemon_address(self, address: str):
+        """Set daemon connection address."""
+        with self.lock:
+            self.daemon_address = address
+
+    def set_audio_mode(self, mode: str):
+        """Set audio mode (robot/local)."""
+        with self.lock:
+            self.audio_mode = mode
 
 
 # Global instance

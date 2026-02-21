@@ -48,6 +48,13 @@ class StateObserver(BaseObserver):
         self._idle_delay = 0.5
         self._idle_task = None
 
+        # Set initial status in shared state
+        try:
+            from shared_state import metrics_store
+            metrics_store.set_pipeline_status("idle")
+        except Exception as e:
+            logger.error(f"Failed to set initial pipeline status: {e}")
+
     def set_state_sync(self, state_sync: StateSync):
         """Set StateSync instance."""
         self.state_sync = state_sync
@@ -161,6 +168,16 @@ class StateObserver(BaseObserver):
             new_state: New state to set
         """
         if new_state != self._current_state:
+            logger.debug(f"State transition: {self._current_state} → {new_state}")
             self._current_state = new_state
+
+            # Update shared state for UI
+            try:
+                from shared_state import metrics_store
+                metrics_store.set_pipeline_status(new_state)
+            except Exception as e:
+                logger.error(f"Failed to update pipeline status: {e}")
+
+            # Update robot display via DataChannel
             if self.state_sync:
                 self.state_sync.send_eye_state(new_state)
