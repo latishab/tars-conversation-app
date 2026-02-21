@@ -1,4 +1,18 @@
-"""Gradio UI for TARS Conversation App - Real-time TTFB metrics dashboard."""
+"""
+DEPRECATED: This standalone metrics dashboard has been merged into src/ui/gradio_app.py
+
+Use the integrated UI instead:
+    python src/tars_bot.py --gradio
+
+This file will be removed in a future version.
+"""
+
+import warnings
+warnings.warn(
+    "ui/app.py is deprecated. Use 'python src/tars_bot.py --gradio' instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import os
 import sys
