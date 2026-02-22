@@ -33,6 +33,8 @@ ALIAS_TO_EYES = {
     "farewell":    "happy",
     "celebration": "excited",
     "apologetic":  "sad",
+    "side eye L":  "sideeye_left",
+    "side eye R":  "sideeye_right",
 }
 
 # Sparse map: only entries that differ from default (eyes=emotion, gesture=None)

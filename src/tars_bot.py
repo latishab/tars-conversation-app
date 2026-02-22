@@ -362,6 +362,10 @@ async def run_robot_bot(ui=None):
         else:
             logger.info("ℹ️  TARS Robot control disabled")
 
+        # Expose robot_client to UI so mute button can use it
+        if ui is not None:
+            ui.robot_client = robot_client
+
         # ====================================================================
         # CONTEXT AGGREGATOR
         # ====================================================================
@@ -624,7 +628,7 @@ if __name__ == "__main__":
 
     # Run pipeline
     try:
-        asyncio.run(run_robot_bot())
+        asyncio.run(run_robot_bot(ui=ui if args.gradio else None))
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     except Exception as e:
