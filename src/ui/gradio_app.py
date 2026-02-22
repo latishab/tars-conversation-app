@@ -174,8 +174,9 @@ _WEBRTC_CLIENT_HTML = (
 class TarsGradioUI:
     """Integrated Gradio UI for TARS conversation app."""
 
-    def __init__(self):
+    def __init__(self, robot_client=None):
         self._lock = threading.Lock()
+        self.robot_client = robot_client
 
     # === Display Methods (for Gradio) ===
 
@@ -363,6 +364,31 @@ class TarsGradioUI:
 
                     if metrics_store.get_audio_mode() == "Browser (SmallWebRTC)":
                         gr.HTML(_WEBRTC_CLIENT_HTML)
+
+                    if metrics_store.get_audio_mode() != "Browser (SmallWebRTC)":
+                        initial_label = "Mute Mic"
+                        if self.robot_client:
+                            try:
+                                initial_label = "Unmute Mic" if self.robot_client.is_mic_muted else "Mute Mic"
+                            except Exception:
+                                pass
+
+                        mute_btn = gr.Button(initial_label, variant="secondary")
+                        mute_status = gr.Markdown("")
+
+                        def toggle_mute(current_label):
+                            if not self.robot_client:
+                                return current_label, "No robot client"
+                            try:
+                                muting = current_label == "Mute Mic"
+                                self.robot_client.set_mic_mute(muting)
+                                label = "Unmute Mic" if muting else "Mute Mic"
+                                status = "Mic muted" if muting else "Mic active"
+                                return label, status
+                            except Exception as e:
+                                return current_label, f"Error: {e}"
+
+                        mute_btn.click(toggle_mute, inputs=mute_btn, outputs=[mute_btn, mute_status])
 
                     chatbot = gr.Chatbot(
                         value=[],
