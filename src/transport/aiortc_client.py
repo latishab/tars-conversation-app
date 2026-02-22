@@ -29,7 +29,7 @@ class AiortcRPiClient:
 
     Connection flow:
     1. Create SDP offer
-    2. POST offer to http://<rpi-ip>:8000/api/offer
+    2. POST offer to http://<rpi-ip>:8000/api/control/offer
     3. Receive SDP answer
     4. Establish P2P connection
     5. Audio tracks + DataChannel active
@@ -142,7 +142,7 @@ class AiortcRPiClient:
             # Send offer to RPi
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
-                    f"{self.rpi_url}/api/offer",
+                    f"{self.rpi_url}/api/control/offer",
                     json={
                         "sdp": self._pc.localDescription.sdp,
                         "type": self._pc.localDescription.type,
