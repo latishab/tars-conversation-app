@@ -23,8 +23,8 @@ Provides functions for robot control in robot mode (tars_bot.py):
 ```python
 from services import tars_robot
 
-# Get robot client (singleton) - replace with your robot's IP
-client = tars_robot.get_robot_client(address="100.115.193.41:50051")
+# Get robot client (singleton) - uses tars.local by default
+client = tars_robot.get_robot_client(address="tars.local:50051")
 
 # Control functions
 await tars_robot.execute_movement(["wave_right", "step_forward"])

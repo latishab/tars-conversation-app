@@ -13,7 +13,7 @@ def test_audio_via_ssh():
     """Test Pi speaker and microphone directly via SSH."""
 
     print("\n=== TARS Audio Test ===\n")
-    print("Testing audio at 100.84.133.74...")
+    print("Testing audio on tars-pi...")
 
     # ============ SPEAKER TESTS ============
     print("\n" + "="*50)

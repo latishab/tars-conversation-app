@@ -9,7 +9,7 @@ import socket
 from typing import Tuple, Optional
 from loguru import logger
 
-from . import config, is_raspberry_pi, get_robot_grpc_address
+from . import config, is_raspberry_pi, get_robot_grpc_address, get_rpi_grpc
 
 
 def detect_local_daemon() -> bool:
@@ -83,9 +83,7 @@ def get_tars_client(mode: Optional[str] = None):
     if mode is None:
         mode = get_connection_mode()
 
-    address = get_robot_grpc_address() if mode == "local" else config.get(
-        "Connection", "rpi_grpc", fallback="100.115.193.41:50051"
-    )
+    address = get_robot_grpc_address() if mode == "local" else get_rpi_grpc()
 
     logger.info(f"Creating TarsClient for {mode} mode: {address}")
     return TarsClient(address=address)
@@ -110,9 +108,7 @@ def get_async_tars_client(mode: Optional[str] = None):
     if mode is None:
         mode = get_connection_mode()
 
-    address = get_robot_grpc_address() if mode == "local" else config.get(
-        "Connection", "rpi_grpc", fallback="100.115.193.41:50051"
-    )
+    address = get_robot_grpc_address() if mode == "local" else get_rpi_grpc()
 
     logger.info(f"Creating AsyncTarsClient for {mode} mode: {address}")
     return AsyncTarsClient(address=address)

@@ -83,7 +83,7 @@ def build_tools_section() -> str:
     """Build tools section with specific usage context."""
     return """# Tools
 
-## fetch_user_image
+## capture_user_camera
 **When to use:** User explicitly asks "what do you see?" or "look at me"
 **Never use:** When user just says "hello" or talks normally
 **On failure:** Say "Visual feed's down. Can't see anything right now."
@@ -186,7 +186,7 @@ def build_examples_section() -> str:
 
 **User asks what you see (tool usage):**
 User: "What do you see?"
-You: [call fetch_user_image] [wait for result] "You're in a dimly lit room. Blue shirt. Looks tired."
+You: [call capture_user_camera] [wait for result] "You're in a dimly lit room. Blue shirt. Looks tired."
 
 **User provides name (tool + normalization):**
 User: "My name is L-A-T-I-S-H-A"

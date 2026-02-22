@@ -4,7 +4,7 @@ AI brain that connects to Raspberry Pi hardware daemon.
 
 ## Pi Access
 ```
-ssh tars-pi  # 100.84.133.74, user: mac, repo: ~/tars-daemon
+ssh tars-pi  # tars.local or Tailscale: tars, user: mac, repo: ~/tars-daemon
 ```
 
 ## Install

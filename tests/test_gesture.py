@@ -13,7 +13,7 @@ from services.tars_robot import execute_movement, get_robot_client
 async def test_gestures():
     """Test various TARS gestures."""
     # Connect to Pi
-    get_robot_client("100.84.133.74:50051")
+    get_robot_client("tars.local:50051")
 
     print("\nTest 1: side_side movement...")
     result = await execute_movement(["side_side"])
