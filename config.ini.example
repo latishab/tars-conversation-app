@@ -36,8 +36,21 @@ intervention_threshold = 2
 [Connection]
 # Transport mode: "robot" (aiortc WebRTC to RPi) or "browser" (SmallWebRTC for browser)
 mode = robot
-# Raspberry Pi WebRTC server URL (Tailscale or local network IP)
-rpi_url = http://100.115.193.41:8001
+
+# Connection type: local, manual, or tailscale
+# - local: Uses mDNS tars.local (DEFAULT - works on most home WiFi)
+# - manual: Uses the rpi_ip specified below (use if mDNS doesn't work)
+# - tailscale: Uses Tailscale MagicDNS hostname "tars" (for remote access)
+connection_type = local
+
+# Manual IP (only used when connection_type = manual)
+# Find your Pi's IP by running `hostname -I` on the Pi
+rpi_ip = 192.168.1.100
+
+# Optional: Override the full URLs directly (advanced)
+# rpi_url = http://tars.local:8000
+# rpi_grpc = tars.local:50051
+
 # Auto-connect to RPi on startup (only for robot mode)
 auto_connect = true
 # Delay between reconnection attempts (seconds)
@@ -48,5 +61,3 @@ max_reconnect_attempts = 0
 [Display]
 # Enable TARS Raspberry Pi display integration (HTTP commands)
 enabled = true
-# URL of TARS display API (Tailscale or local network IP)
-tars_url = http://100.115.193.41:8001

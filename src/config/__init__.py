@@ -40,11 +40,11 @@ def get_fresh_config():
         'EMOTIONAL_MONITORING_ENABLED': get_config("Emotional", "enabled", "EMOTIONAL_MONITORING_ENABLED", "true").lower() == "true",
         'EMOTIONAL_SAMPLING_INTERVAL': float(get_config("Emotional", "sampling_interval", "EMOTIONAL_SAMPLING_INTERVAL", "3.0")),
         'EMOTIONAL_INTERVENTION_THRESHOLD': int(get_config("Emotional", "intervention_threshold", "EMOTIONAL_INTERVENTION_THRESHOLD", "2")),
-        'TARS_DISPLAY_URL': get_config("Display", "tars_url", "TARS_DISPLAY_URL", "http://100.115.193.41:8001"),
+        'TARS_DISPLAY_URL': get_rpi_url(),
         'TARS_DISPLAY_ENABLED': get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", "false").lower() == "true",
         'CONNECTION_MODE': get_config("Connection", "mode", "CONNECTION_MODE", "robot"),
-        'RPI_URL': get_config("Connection", "rpi_url", "RPI_URL", "http://100.115.193.41:8001"),
-        'RPI_GRPC': get_config("Connection", "rpi_grpc", "RPI_GRPC", "100.115.193.41:50051"),
+        'RPI_URL': get_rpi_url(),
+        'RPI_GRPC': get_rpi_grpc(),
         'AUTO_CONNECT': get_config("Connection", "auto_connect", "AUTO_CONNECT", "true").lower() == "true",
         'RECONNECT_DELAY': int(get_config("Connection", "reconnect_delay", "RECONNECT_DELAY", "5")),
         'MAX_RECONNECT_ATTEMPTS': int(get_config("Connection", "max_reconnect_attempts", "MAX_RECONNECT_ATTEMPTS", "0")),
@@ -101,13 +101,10 @@ EMOTIONAL_SAMPLING_INTERVAL = float(get_config("Emotional", "sampling_interval",
 EMOTIONAL_INTERVENTION_THRESHOLD = int(get_config("Emotional", "intervention_threshold", "EMOTIONAL_INTERVENTION_THRESHOLD", "2"))
 
 # TARS Display (Raspberry Pi) Configuration
-TARS_DISPLAY_URL = get_config("Display", "tars_url", "TARS_DISPLAY_URL", "http://100.115.193.41:8001")
 TARS_DISPLAY_ENABLED = get_config("Display", "enabled", "TARS_DISPLAY_ENABLED", "false").lower() == "true"
 
 # Connection Mode Configuration
 CONNECTION_MODE = get_config("Connection", "mode", "CONNECTION_MODE", "robot")
-RPI_URL = get_config("Connection", "rpi_url", "RPI_URL", "http://100.115.193.41:8001")
-RPI_GRPC = get_config("Connection", "rpi_grpc", "RPI_GRPC", "100.115.193.41:50051")
 AUTO_CONNECT = get_config("Connection", "auto_connect", "AUTO_CONNECT", "true").lower() == "true"
 RECONNECT_DELAY = int(get_config("Connection", "reconnect_delay", "RECONNECT_DELAY", "5"))
 MAX_RECONNECT_ATTEMPTS = int(get_config("Connection", "max_reconnect_attempts", "MAX_RECONNECT_ATTEMPTS", "0"))
@@ -136,6 +133,58 @@ def detect_deployment_mode() -> str:
     return "local" if is_raspberry_pi() else "remote"
 
 
+def get_rpi_host() -> str:
+    """
+    Get RPi hostname/IP based on connection_type.
+
+    Returns:
+        Hostname or IP address for the Raspberry Pi based on connection_type:
+        - local: tars.local (mDNS, default)
+        - tailscale: tars (Tailscale MagicDNS)
+        - manual: IP from rpi_ip config
+    """
+    connection_type = get_config("Connection", "connection_type", "CONNECTION_TYPE", "local")
+
+    if connection_type == "local":
+        return "tars.local"
+    elif connection_type == "tailscale":
+        return "tars"
+    elif connection_type == "manual":
+        return get_config("Connection", "rpi_ip", "RPI_IP", "192.168.1.100")
+    else:
+        return "tars.local"  # Default fallback
+
+
+def get_rpi_grpc() -> str:
+    """
+    Get gRPC address for Raspberry Pi.
+
+    Returns:
+        gRPC address (host:port)
+    """
+    # Allow direct override first
+    if config.has_option("Connection", "rpi_grpc"):
+        val = config.get("Connection", "rpi_grpc").strip()
+        if val and not val.startswith("#"):
+            return val
+    return f"{get_rpi_host()}:50051"
+
+
+def get_rpi_url() -> str:
+    """
+    Get WebRTC/HTTP URL for Raspberry Pi.
+
+    Returns:
+        HTTP URL for WebRTC server
+    """
+    # Allow direct override first
+    if config.has_option("Connection", "rpi_url"):
+        val = config.get("Connection", "rpi_url").strip()
+        if val and not val.startswith("#"):
+            return val
+    return f"http://{get_rpi_host()}:8000"
+
+
 def get_robot_grpc_address() -> str:
     """
     Get appropriate gRPC address based on deployment mode.
@@ -148,5 +197,11 @@ def get_robot_grpc_address() -> str:
     if mode == "local":
         return "localhost:50051"
     else:
-        return RPI_GRPC
+        return get_rpi_grpc()
+
+
+# Connection URLs (computed based on connection_type)
+RPI_URL = get_rpi_url()
+RPI_GRPC = get_rpi_grpc()
+TARS_DISPLAY_URL = get_rpi_url()
 

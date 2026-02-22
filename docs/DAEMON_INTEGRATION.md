@@ -6,6 +6,14 @@ Guide for integrating tars-conversation-app with tars-daemon dashboard app manag
 
 The tars-daemon dashboard should provide install/uninstall buttons for managing TARS apps like this one.
 
+## Daemon Architecture
+
+The daemon runs on 2 ports:
+- **Port 8000**: Unified HTTP server (WebRTC signaling, REST API, Dashboard UI)
+- **Port 50051**: gRPC server (hardware control)
+
+Dashboard URL: `http://tars.local:8000/dashboard`
+
 ## App Discovery
 
 The daemon scans for apps with `app.json` manifest files:
@@ -211,7 +219,7 @@ def get_grpc_address():
         pass
 
     # Remote connection
-    return os.getenv("RPI_GRPC", "100.84.133.74:50051")
+    return os.getenv("RPI_GRPC", "tars.local:50051")
 ```
 
 ## Installation Validation
@@ -363,7 +371,7 @@ def create_dashboard():
 
 if __name__ == "__main__":
     dashboard = create_dashboard()
-    dashboard.launch(server_name="0.0.0.0", server_port=7860)
+    dashboard.launch(server_name="0.0.0.0", server_port=8000)
 ```
 
 ## Testing Installation

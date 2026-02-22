@@ -29,7 +29,7 @@ class AiortcRPiClient:
 
     Connection flow:
     1. Create SDP offer
-    2. POST offer to http://<rpi-ip>:8001/api/offer
+    2. POST offer to http://<rpi-ip>:8000/api/offer
     3. Receive SDP answer
     4. Establish P2P connection
     5. Audio tracks + DataChannel active
@@ -37,7 +37,7 @@ class AiortcRPiClient:
 
     def __init__(
         self,
-        rpi_url: str = "http://100.115.193.41:8001",
+        rpi_url: str = "http://tars.local:8000",
         auto_reconnect: bool = True,
         reconnect_delay: int = 5,
         max_reconnect_attempts: int = 0,  # 0 = infinite

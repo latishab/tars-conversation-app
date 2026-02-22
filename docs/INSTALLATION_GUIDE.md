@@ -13,7 +13,7 @@ Quick reference for installing tars-conversation-app on Raspberry Pi.
 
 Once tars-daemon implements app management:
 
-1. Open tars-daemon dashboard at `http://100.84.133.74:7860`
+1. Open tars-daemon dashboard at `http://tars.local:8000/dashboard` (or your Pi's IP)
 2. Navigate to "Apps" tab
 3. Find "tars-conversation-app"
 4. Click "Install" button
@@ -67,6 +67,38 @@ Edit settings (optional):
 ```bash
 nano config.ini
 ```
+
+### Step 3.1: Configure Connection (For Remote Access)
+
+If running TARS from your computer (not on the Pi), edit `config.ini`:
+
+```ini
+[Connection]
+# Connection type: local, manual, or tailscale
+connection_type = local  # Default - uses tars.local (mDNS)
+```
+
+Connection options:
+- `local`: Uses `tars.local` (works on most home WiFi networks)
+- `manual`: Uses direct IP address (see below)
+- `tailscale`: Uses Tailscale MagicDNS for remote access
+
+If mDNS doesn't work (dorm WiFi, enterprise networks):
+```bash
+# On Pi, find IP address:
+hostname -I
+```
+
+Then in `config.ini`:
+```ini
+connection_type = manual
+rpi_ip = 192.168.1.xxx  # Replace with your Pi's IP
+```
+
+For remote access via Tailscale:
+1. Install Tailscale on both Pi and your computer
+2. On Pi: `sudo tailscale set --hostname=tars`
+3. In `config.ini`: Set `connection_type = tailscale`
 
 ### Step 4: Run
 

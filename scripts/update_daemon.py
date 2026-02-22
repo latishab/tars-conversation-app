@@ -86,7 +86,7 @@ def check_daemon_health() -> bool:
         return True
 
     # Try curl health endpoint
-    code, out, _ = run_ssh("curl -s http://localhost:8001/api/health", check=False)
+    code, out, _ = run_ssh("curl -s http://localhost:8000/health", check=False)
     if code == 0 and "running" in out.lower():
         return True
 
