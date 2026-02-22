@@ -1,17 +1,18 @@
 """LLM callable tools organized by domain."""
 
 from .robot import (
-    # Movement and gestures
+    # Expression and movement
+    express,
     execute_movement,
-    set_emotion,
-    do_gesture,
     # Rate limiting
     set_rate_limiter,
     ExpressionRateLimiter,
+    # Constants
+    VALID_EMOTIONS,
+    VALID_INTENSITIES,
     # Schemas
+    create_express_schema,
     create_movement_schema,
-    create_emotion_schema,
-    create_gesture_schema,
 )
 
 from .vision import (
@@ -37,16 +38,16 @@ from .crossword import (
 )
 
 __all__ = [
-    # Robot tools (movement and expressions)
+    # Robot tools
+    "express",
     "execute_movement",
-    "set_emotion",
-    "do_gesture",
     "set_rate_limiter",
     "ExpressionRateLimiter",
+    "VALID_EMOTIONS",
+    "VALID_INTENSITIES",
+    "create_express_schema",
     "create_movement_schema",
-    "create_emotion_schema",
-    "create_gesture_schema",
-    # Vision tools (camera capture)
+    # Vision tools
     "capture_user_camera",
     "capture_robot_camera",
     "create_user_camera_schema",

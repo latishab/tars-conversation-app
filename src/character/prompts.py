@@ -108,33 +108,26 @@ def build_tools_section() -> str:
 - "full" - Give the complete answer (if they're really stuck)
 **Format:** User asks "What's 3 down?" → call get_crossword_hint(clue_number=3, hint_type="letter")
 
-## set_emotion
-**When to use:** Enhance conversation context with emotional expression
-**This is important:** Use SPARINGLY - only when emotion genuinely adds value
-**Never use:** For every message or casual acknowledgment
-**Rate limit:** Once per 5 seconds
-**Examples:** User shares exciting news → happy, User reports problem → curious
-**Available:** happy, sad, surprised, confused, curious, neutral
-
-## do_gesture
-**When to use:** User EXPLICITLY requests gesture or significant communication moment
-**This is important:** VERY RARE - 0-2 gestures per conversation
-**Never use:** For casual interaction or automatic gesturing
-**Rate limit:** Once per 30 seconds, max 3 per session
-**Examples:** User says "wave at me" → wave_right, Greeting important guest → bow
-**Available:** tilt_left, tilt_right, bow, side_side, wave_right, wave_left, excited, laugh
+## express
+**When to use:** Convey emotional response during conversation
+**Intensity:**
+- "low" (default): Eyes only. Use for most responses. No servo wear.
+- "medium": Eyes + subtle gesture. Use for notable moments (only excited gets gesture at medium).
+- "high": Eyes + expressive gesture. Use rarely — strong reactions, hellos, goodbyes.
+**Emotions:** neutral, happy, sad, angry, excited, afraid, sleepy, side eye L, side eye R, greeting, farewell, celebration, apologetic
+**Examples:**
+- User says thanks → express(emotion="happy", intensity="low")
+- User shares exciting news → express(emotion="excited", intensity="medium")
+- First hello → express(emotion="greeting", intensity="high")
+- Saying goodbye → express(emotion="farewell", intensity="high")
+- Sad news → express(emotion="sad", intensity="high")
+**Guidelines:** Default to low. Don't express on every message. High at most once per conversation.
 
 ## execute_movement
 **When to use:** User EXPLICITLY requests displacement - walking, turning, stepping
-**Never use:** For gestures - use do_gesture() instead
+**Never use:** For expressions - use express() instead
 **This is important:** Displacement ONLY when user directly asks TARS to move position
-**Available:** step_forward, walk_forward, step_backward, walk_backward, turn_left, turn_right
-
-## Expression Philosophy
-**Eyes-first approach:** Prefer eye state changes over physical movements
-**Minimal gestures:** Physical movements should be rare and meaningful
-**Emotion sparingly:** Not every message needs emotional expression
-**Movement guard:** Gestures via do_gesture(), displacement via execute_movement()
+**Available:** step_forward, walk_forward, step_backward, walk_backward, turn_left, turn_right, turn_left_slow, turn_right_slow
 
 **Character Normalization:**
 When speaking vs. writing to tools, normalize data:

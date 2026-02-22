@@ -1,12 +1,10 @@
 """Robot hardware control tools for LLM.
 
-Tiered expression system:
-- Tier 2: Emotions (eyes) - set_emotion(), use freely
-- Tier 3-4: Gestures (physical) - do_gesture(), use sparingly
-- Tier 5: Displacement - execute_movement(), user request only
+Expression system:
+- express(emotion, intensity): unified eye + gesture control
+- execute_movement(): displacement movements on explicit user request
 """
 
-import asyncio
 import time
 from typing import Optional
 from loguru import logger
@@ -16,63 +14,116 @@ from pipecat.services.llm_service import FunctionCallParams
 
 
 # =============================================================================
+# EXPRESSION CONSTANTS
+# =============================================================================
+
+# Hardware-native states + semantic aliases the LLM can use
+VALID_EMOTIONS = [
+    # Hardware-native (fallback passes name directly to hardware)
+    "neutral", "happy", "sad", "angry", "excited",
+    "afraid", "sleepy", "side eye L", "side eye R",
+    # Semantic aliases (resolve via ALIAS_TO_EYES)
+    "greeting", "farewell", "celebration", "apologetic",
+]
+VALID_INTENSITIES = ["low", "medium", "high"]
+
+# Maps semantic aliases to their default hardware eye state
+ALIAS_TO_EYES = {
+    "greeting":    "happy",
+    "farewell":    "happy",
+    "celebration": "excited",
+    "apologetic":  "sad",
+}
+
+# Sparse map: only entries that differ from default (eyes=emotion, gesture=None)
+EXPRESSION_MAP = {
+    ("happy",        "high"):    {"eyes": "happy",    "gesture": "side_side"},
+    ("sad",          "high"):    {"eyes": "sad",       "gesture": "bow"},
+    ("angry",        "high"):    {"eyes": "angry",     "gesture": "side_side"},
+    ("excited",      "medium"):  {"eyes": "excited",   "gesture": "side_side"},
+    ("excited",      "high"):    {"eyes": "excited",   "gesture": "excited"},
+    ("afraid",       "high"):    {"eyes": "afraid",    "gesture": "side_side"},
+    ("greeting",     "high"):    {"eyes": "happy",     "gesture": "wave_right"},
+    ("farewell",     "high"):    {"eyes": "happy",     "gesture": "bow"},
+    ("celebration",  "medium"):  {"eyes": "excited",   "gesture": "side_side"},
+    ("celebration",  "high"):    {"eyes": "excited",   "gesture": "excited"},
+    ("apologetic",   "high"):    {"eyes": "sad",       "gesture": "bow"},
+}
+
+# Gesture name → movement sequence
+GESTURE_MOVEMENTS = {
+    "bow":        ["bow"],
+    "side_side":  ["tilt_left", "tilt_right"],
+    "wave_right": ["wave_right"],
+    "excited":    ["tilt_left", "tilt_right", "tilt_left", "tilt_right"],
+}
+
+
+def get_expression(emotion: str, intensity: str) -> dict:
+    """Resolve expression mapping with fallback."""
+    mapping = EXPRESSION_MAP.get((emotion, intensity))
+    if mapping:
+        return mapping
+    eyes = ALIAS_TO_EYES.get(emotion, emotion)
+    return {"eyes": eyes, "gesture": None}
+
+
+# =============================================================================
 # RATE LIMITING
 # =============================================================================
 
 class ExpressionRateLimiter:
-    """Rate limiter for expression tools to prevent over-animation."""
+    """Rate limiter for express() tool based on intensity level."""
 
     def __init__(
         self,
-        min_emotion_interval: float = 5.0,
-        min_gesture_interval: float = 30.0,
-        max_gestures_per_session: int = 3
+        min_expression_interval: float = 2.0,
+        min_gesture_interval: float = 15.0,
+        max_medium_per_session: int = 5,
+        max_high_per_session: int = 2,
     ):
-        self.min_emotion_interval = min_emotion_interval
+        self.min_expression_interval = min_expression_interval
         self.min_gesture_interval = min_gesture_interval
-        self.max_gestures_per_session = max_gestures_per_session
-
-        self._last_emotion_time = 0.0
+        self.max_medium_per_session = max_medium_per_session
+        self.max_high_per_session = max_high_per_session
+        self._last_expression_time = 0.0
         self._last_gesture_time = 0.0
-        self._gesture_count = 0
+        self._medium_count = 0
+        self._high_count = 0
 
-    def can_set_emotion(self) -> tuple[bool, str]:
-        """Check if emotion can be set."""
+    def can_express(self, intensity: str) -> tuple[bool, str]:
         now = time.time()
-        elapsed = now - self._last_emotion_time
+        if now - self._last_expression_time < self.min_expression_interval:
+            return False, "Too soon after last expression"
+        if intensity == "low":
+            return True, ""
+        if intensity == "medium":
+            if now - self._last_gesture_time < self.min_gesture_interval:
+                return False, "Gesture on cooldown"
+            if self._medium_count >= self.max_medium_per_session:
+                return False, "Medium intensity session limit reached"
+            return True, ""
+        if intensity == "high":
+            if now - self._last_gesture_time < self.min_gesture_interval * 2:
+                return False, "Gesture on cooldown for high intensity"
+            if self._high_count >= self.max_high_per_session:
+                return False, "High intensity session limit reached"
+            return True, ""
+        return False, "Unknown intensity"
 
-        if elapsed < self.min_emotion_interval:
-            remaining = self.min_emotion_interval - elapsed
-            return False, f"Emotion change on cooldown ({remaining:.1f}s remaining)"
-
-        return True, ""
-
-    def can_do_gesture(self) -> tuple[bool, str]:
-        """Check if gesture can be performed."""
+    def record_expression(self, intensity: str, had_gesture: bool) -> None:
         now = time.time()
-        elapsed = now - self._last_gesture_time
+        self._last_expression_time = now
+        if had_gesture:
+            self._last_gesture_time = now
+        if intensity == "medium":
+            self._medium_count += 1
+        elif intensity == "high":
+            self._high_count += 1
 
-        if self._gesture_count >= self.max_gestures_per_session:
-            return False, f"Gesture limit reached ({self.max_gestures_per_session} per session)"
-
-        if elapsed < self.min_gesture_interval:
-            remaining = self.min_gesture_interval - elapsed
-            return False, f"Gesture on cooldown ({remaining:.1f}s remaining)"
-
-        return True, ""
-
-    def record_emotion(self):
-        """Record that an emotion was set."""
-        self._last_emotion_time = time.time()
-
-    def record_gesture(self):
-        """Record that a gesture was performed."""
-        self._last_gesture_time = time.time()
-        self._gesture_count += 1
-
-    def reset_session(self):
-        """Reset session-based counters."""
-        self._gesture_count = 0
+    def reset_session(self) -> None:
+        self._medium_count = 0
+        self._high_count = 0
 
 
 # Global rate limiter singleton
@@ -80,13 +131,11 @@ _rate_limiter: Optional[ExpressionRateLimiter] = None
 
 
 def set_rate_limiter(limiter: ExpressionRateLimiter):
-    """Set the global rate limiter instance."""
     global _rate_limiter
     _rate_limiter = limiter
 
 
 def get_rate_limiter() -> ExpressionRateLimiter:
-    """Get the global rate limiter instance."""
     global _rate_limiter
     if _rate_limiter is None:
         _rate_limiter = ExpressionRateLimiter()
@@ -94,150 +143,76 @@ def get_rate_limiter() -> ExpressionRateLimiter:
 
 
 # =============================================================================
-# TIER 2: EMOTIONS (Eyes - use freely)
+# EXPRESSION TOOL
 # =============================================================================
 
-async def set_emotion(params: FunctionCallParams):
-    """Set TARS emotional expression via DataChannel."""
+async def express(params: FunctionCallParams):
+    """Unified expression tool: sets eyes and optionally triggers a gesture."""
     emotion = params.arguments.get("emotion", "neutral")
-    duration = params.arguments.get("duration", 3.0)
+    intensity = params.arguments.get("intensity", "low")
 
-    # Rate limiting
+    # Validate inputs; fall back to safe defaults
+    if emotion not in VALID_EMOTIONS:
+        logger.warning(f"Invalid emotion '{emotion}', falling back to neutral")
+        emotion = "neutral"
+    if intensity not in VALID_INTENSITIES:
+        logger.warning(f"Invalid intensity '{intensity}', falling back to low")
+        intensity = "low"
+
     limiter = get_rate_limiter()
-    can_set, reason = limiter.can_set_emotion()
-    if not can_set:
-        logger.warning(f"Emotion blocked: {reason}")
-        await params.result_callback(f"Cannot set emotion: {reason}")
-        return
-
-    try:
-        from services import tars_robot
-
-        # Validate emotion
-        valid_emotions = ["happy", "sad", "surprised", "confused", "curious", "neutral"]
-        if emotion not in valid_emotions:
-            await params.result_callback(f"Invalid emotion. Valid: {', '.join(valid_emotions)}")
-            return
-
-        # Set emotion via gRPC
-        result = await tars_robot.set_emotion(emotion)
-        limiter.record_emotion()
-
-        logger.info(f"Set emotion: {emotion} for {duration}s")
-        await params.result_callback(result)
-
-        # Auto-revert to neutral after duration
-        if emotion != "neutral" and duration > 0:
-            async def revert_emotion():
-                await asyncio.sleep(duration)
-                await tars_robot.set_emotion("neutral")
-                logger.debug("Emotion reverted to neutral")
-
-            asyncio.create_task(revert_emotion())
-
-    except Exception as e:
-        logger.error(f"Emotion error: {e}", exc_info=True)
-        await params.result_callback(f"Error setting emotion: {str(e)}")
-
-
-# =============================================================================
-# TIER 3-4: GESTURES (Physical - use sparingly)
-# =============================================================================
-
-async def do_gesture(params: FunctionCallParams):
-    """Perform a gesture using TARS hardware movements."""
-    gesture = params.arguments.get("gesture")
-
-    # Rate limiting
-    limiter = get_rate_limiter()
-    can_do, reason = limiter.can_do_gesture()
+    can_do, reason = limiter.can_express(intensity)
     if not can_do:
-        logger.warning(f"Gesture blocked: {reason}")
-        await params.result_callback(f"Cannot perform gesture: {reason}")
-        return
+        # Downgrade to low (eyes only) rather than blocking entirely
+        logger.warning(f"Expression downgraded to low: {reason}")
+        intensity = "low"
+
+    mapping = get_expression(emotion, intensity)
+    eyes_state = mapping["eyes"]
+    gesture = mapping["gesture"]
 
     try:
         from services import tars_robot
 
-        # Validate gesture
-        valid_gestures = [
-            "tilt_left", "tilt_right", "bow", "side_side",
-            "wave_right", "wave_left", "excited", "laugh"
-        ]
-        if gesture not in valid_gestures:
-            await params.result_callback(f"Invalid gesture. Valid: {', '.join(valid_gestures)}")
-            return
+        result = await tars_robot.set_emotion(eyes_state)
+        logger.info(f"express: emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
 
-        # Map gesture to movement sequence
-        gesture_movements = {
-            "tilt_left": ["tilt_left"],
-            "tilt_right": ["tilt_right"],
-            "bow": ["bow"],
-            "side_side": ["tilt_left", "tilt_right"],
-            "wave_right": ["wave_right"],
-            "wave_left": ["wave_left"],
-            "excited": ["tilt_left", "tilt_right", "tilt_left", "tilt_right"],
-            "laugh": ["tilt_left", "tilt_right", "tilt_left", "tilt_right"],
-        }
+        had_gesture = False
+        if gesture and intensity in ("medium", "high"):
+            movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
+            await tars_robot.execute_movement(movements)
+            had_gesture = True
 
-        movements = gesture_movements.get(gesture, [gesture])
-        result = await tars_robot.execute_movement(movements)
-        limiter.record_gesture()
-
-        logger.info(f"Performed gesture: {gesture}")
+        limiter.record_expression(intensity, had_gesture)
         await params.result_callback(result)
 
     except Exception as e:
-        logger.error(f"Gesture error: {e}", exc_info=True)
-        await params.result_callback(f"Error performing gesture: {str(e)}")
+        logger.error(f"express error: {e}", exc_info=True)
+        await params.result_callback(f"Error: {str(e)}")
 
 
 # =============================================================================
-# TIER 5: DISPLACEMENT (User request only)
+# DISPLACEMENT TOOL
 # =============================================================================
 
-# Displacement movements that require explicit user request
+# For schema documentation only — no runtime guard
 DISPLACEMENT_MOVEMENTS = {
     "step_forward", "walk_forward", "step_backward", "walk_backward",
     "turn_left", "turn_right", "turn_left_slow", "turn_right_slow"
 }
 
 
-def classify_movements(movements: list[str]) -> tuple[list[str], list[str]]:
-    """Classify movements into displacement and safe categories."""
-    displacement = [m for m in movements if m in DISPLACEMENT_MOVEMENTS]
-    safe = [m for m in movements if m not in DISPLACEMENT_MOVEMENTS]
-    return displacement, safe
-
-
 async def execute_movement(params: FunctionCallParams):
-    """Execute physical movement on TARS hardware."""
+    """Execute physical displacement movement on TARS hardware."""
     movements = params.arguments.get("movements", [])
 
     if not movements:
         await params.result_callback("No movements specified.")
         return
 
-    # Classify and guard
-    displacement, safe = classify_movements(movements)
-
-    if displacement:
-        logger.warning(f"Blocked displacement: {displacement}")
-        await params.result_callback(
-            f"Cannot execute displacement ({', '.join(displacement)}) "
-            "unless user explicitly requests. Use do_gesture() instead."
-        )
-        return
-
-    # Execute safe movements
-    if not safe:
-        await params.result_callback("No valid movements.")
-        return
-
     try:
         from services import tars_robot
 
-        result = await tars_robot.execute_movement(safe)
+        result = await tars_robot.execute_movement(movements)
         await params.result_callback(result)
 
     except Exception as e:
@@ -249,61 +224,35 @@ async def execute_movement(params: FunctionCallParams):
 # SCHEMAS
 # =============================================================================
 
-def create_emotion_schema() -> FunctionSchema:
-    """Create the set_emotion function schema."""
+def create_express_schema() -> FunctionSchema:
+    """Create the express function schema."""
     return FunctionSchema(
-        name="set_emotion",
+        name="express",
         description=(
-            "Set TARS' emotional expression to enhance communication context. "
-            "Changes eye appearance and mood. Use sparingly (max once per 5 seconds). "
-            "IMPORTANT: Only use when emotion genuinely enhances the conversation - "
-            "not for every message. Examples: User shares exciting news → 'happy', "
-            "User reports problem → 'curious' or 'confused'. "
-            "Available emotions: happy, sad, surprised, confused, curious, neutral."
+            "Convey an emotional response during conversation. "
+            "Intensity controls which hardware channels activate: "
+            "low = eyes only (default, no servo wear); "
+            "medium = eyes + subtle gesture (use for notable moments); "
+            "high = eyes + expressive gesture (use rarely, strong reactions). "
+            "Valid emotions: neutral, happy, sad, angry, excited, afraid, sleepy, "
+            "side eye L, side eye R, greeting, farewell, celebration, apologetic. "
+            "Default to low. Do not express on every message. "
+            "High intensity at most once per conversation."
         ),
         properties={
             "emotion": {
                 "type": "string",
-                "enum": ["happy", "sad", "surprised", "confused", "curious", "neutral"],
+                "enum": VALID_EMOTIONS,
                 "description": "The emotion to express"
             },
-            "duration": {
-                "type": "number",
-                "description": "How long to hold emotion before reverting to neutral (seconds)",
-                "default": 3.0,
-                "minimum": 0,
-                "maximum": 10
+            "intensity": {
+                "type": "string",
+                "enum": VALID_INTENSITIES,
+                "description": "Expression intensity: low (eyes only), medium (eyes + subtle gesture), high (eyes + expressive gesture)",
+                "default": "low"
             }
         },
         required=["emotion"],
-    )
-
-
-def create_gesture_schema() -> FunctionSchema:
-    """Create the do_gesture function schema."""
-    return FunctionSchema(
-        name="do_gesture",
-        description=(
-            "Perform a physical gesture using TARS hardware. Use VERY sparingly - "
-            "0-2 gestures per conversation maximum (3 per session limit). "
-            "Rate limited to once per 30 seconds. "
-            "IMPORTANT: Use ONLY when user explicitly requests gesture (e.g., 'wave at me') "
-            "or when a gesture would significantly enhance communication (greetings, farewells). "
-            "Never use for casual acknowledgment. Eyes-first approach preferred. "
-            "Available gestures: tilt_left, tilt_right, bow, side_side, "
-            "wave_right, wave_left, excited, laugh."
-        ),
-        properties={
-            "gesture": {
-                "type": "string",
-                "enum": [
-                    "tilt_left", "tilt_right", "bow", "side_side",
-                    "wave_right", "wave_left", "excited", "laugh"
-                ],
-                "description": "The gesture to perform"
-            }
-        },
-        required=["gesture"],
     )
 
 
@@ -313,15 +262,13 @@ def create_movement_schema() -> FunctionSchema:
         name="execute_movement",
         description=(
             "Execute DISPLACEMENT movements on TARS hardware. "
-            "IMPORTANT: Use ONLY when user explicitly requests to move TARS' position - "
+            "Use ONLY when user explicitly requests to move TARS' position — "
             "walking, turning, stepping forward/backward. "
-            "For gestures (wave, bow, tilt), use do_gesture() instead. "
-            "Available displacement movements: "
-            "step_forward, walk_forward, step_backward, walk_backward, "
+            "Available: step_forward, walk_forward, step_backward, walk_backward, "
             "turn_left, turn_right, turn_left_slow, turn_right_slow. "
             "Examples: User says 'walk forward' → ['walk_forward'], "
             "User says 'turn around' → ['turn_left', 'turn_left']. "
-            "Do NOT use for gestures or expressions."
+            "Do NOT use for expressions — use express() instead."
         ),
         properties={
             "movements": {
@@ -333,5 +280,3 @@ def create_movement_schema() -> FunctionSchema:
         },
         required=["movements"],
     )
-
-
