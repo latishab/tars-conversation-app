@@ -82,7 +82,7 @@ tars-conversation-app/
 
 Install directly from HuggingFace Space via the TARS dashboard:
 
-1. Open TARS dashboard at `http://your-pi:8000`
+1. Open TARS dashboard at `http://tars.local:8000/dashboard`
 2. Go to **App Store** tab
 3. Enter Space ID: `latishab/tars-conversation-app`
 4. Click **Install from HuggingFace**
@@ -176,23 +176,42 @@ Then:
 
 Prerequisites:
 - Raspberry Pi TARS robot running tars_daemon.py
-- Network connection (LAN or Tailscale)
+- Network connection (home WiFi, Tailscale, or direct IP)
 - TARS SDK installed
 
 Configuration in `config.ini`:
 ```ini
 [Connection]
 mode = robot
-rpi_url = http://<your-rpi-ip>:8001
-rpi_grpc = <your-rpi-ip>:50051
+
+# Connection type: local, manual, or tailscale
+connection_type = local  # Default - uses tars.local (mDNS)
+
+# Manual IP (only used when connection_type = manual)
+rpi_ip = 192.168.1.100
+
 auto_connect = true
 
 [Display]
 enabled = true
 ```
 
+Connection options:
+- `local`: Uses `tars.local` (mDNS - works on most home WiFi)
+- `manual`: Uses direct IP address (for networks where mDNS doesn't work)
+- `tailscale`: Uses Tailscale MagicDNS hostname `tars` (for remote access)
+
+If mDNS doesn't work (dorm WiFi, enterprise networks):
+1. Find Pi's IP: `ssh tars-pi "hostname -I"`
+2. Set `connection_type = manual` and `rpi_ip = <your-pi-ip>`
+
+For remote access via Tailscale:
+1. Install Tailscale on both Pi and your computer
+2. On Pi: `sudo tailscale set --hostname=tars`
+3. Set `connection_type = tailscale`
+
 Deployment detection:
-- **Remote** (Mac/computer): Uses configured addresses
+- **Remote** (Mac/computer): Uses connection_type settings
 - **Local** (on RPi): Auto-detects localhost:50051
 
 Run:
