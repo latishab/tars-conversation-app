@@ -1,5 +1,6 @@
 """Integrated Gradio UI for TARS Conversation App."""
 
+import html as _html
 import gradio as gr
 import plotly.graph_objects as go
 from typing import List
@@ -7,6 +8,167 @@ import statistics
 import threading
 
 from shared_state import metrics_store
+
+
+# ---------------------------------------------------------------------------
+# Embedded WebRTC client (browser audio mode)
+# ---------------------------------------------------------------------------
+# Rendered inside a srcdoc iframe so <script> tags actually execute
+# (Gradio's Svelte @html directive does not run injected scripts).
+# The iframe delegates mic permission from the parent via allow="microphone".
+# ---------------------------------------------------------------------------
+
+_WEBRTC_INNER = """\
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 10px 14px;
+    font-family: system-ui, sans-serif;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 52px;
+    overflow: hidden;
+  }
+  button {
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid #475569;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #cb { background: #0891b2; color: #fff; border-color: #0891b2; }
+  #cb:hover { background: #0e7490; }
+  #cb.live { background: #dc2626; border-color: #dc2626; }
+  #cb.live:hover { background: #b91c1c; }
+  #mb { background: #1e293b; color: #94a3b8; }
+  #mb:hover:not(:disabled) { border-color: #64748b; }
+  #mb.muted { color: #f59e0b; border-color: #f59e0b; }
+  #mb:disabled { opacity: 0.35; cursor: default; }
+  #st { font-size: 13px; color: #64748b; }
+</style>
+</head>
+<body>
+  <button id="cb" onclick="tc()">&#127908; Connect</button>
+  <button id="mb" onclick="tm()" disabled>Mute</button>
+  <span id="st">&#9679; Disconnected</span>
+  <audio id="a" autoplay playsinline></audio>
+
+<script>
+"use strict";
+var pc = null, mic = null, muted = false;
+var API = window.parent.location.origin + "/api/offer";
+
+function el(id) { return document.getElementById(id); }
+
+function setStatus(text, color) {
+  var s = el("st");
+  s.textContent = "\\u25cf " + text;
+  s.style.color = color;
+}
+
+function resetUI() {
+  el("cb").textContent = "\\ud83c\\udf99\\ufe0f Connect";
+  el("cb").className = "";
+  el("mb").disabled = true;
+  el("mb").textContent = "Mute";
+  el("mb").className = "";
+  el("a").srcObject = null;
+  setStatus("Disconnected", "#64748b");
+}
+
+function disconnect() {
+  if (mic) { mic.getTracks().forEach(function(t) { t.stop(); }); mic = null; }
+  if (pc)  { pc.close(); pc = null; }
+  muted = false;
+  resetUI();
+}
+
+async function connect() {
+  setStatus("Requesting mic\\u2026", "#f59e0b");
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (e) {
+    setStatus("Mic denied", "#ef4444");
+    return;
+  }
+
+  pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  mic.getTracks().forEach(function(t) { pc.addTrack(t, mic); });
+
+  pc.ontrack = function(ev) { el("a").srcObject = ev.streams[0]; };
+
+  pc.onconnectionstatechange = function() {
+    var s = pc ? pc.connectionState : "closed";
+    if (s === "connected") {
+      setStatus("Connected", "#10b981");
+      el("cb").textContent = "\\u23f9\\ufe0f Disconnect";
+      el("cb").className = "live";
+      el("mb").disabled = false;
+    } else if (s === "failed" || s === "closed") {
+      disconnect();
+    }
+  };
+
+  setStatus("Negotiating\\u2026", "#f59e0b");
+  var offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  // Wait for ICE gathering so all candidates are bundled in the SDP
+  await new Promise(function(resolve) {
+    if (pc.iceGatheringState === "complete") { resolve(); return; }
+    pc.addEventListener("icegatheringstatechange", function() {
+      if (pc.iceGatheringState === "complete") resolve();
+    });
+    setTimeout(resolve, 4000); // 4s safety timeout
+  });
+
+  try {
+    var resp = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
+    });
+    if (!resp.ok) { throw new Error("HTTP " + resp.status); }
+    var ans = await resp.json();
+    await pc.setRemoteDescription(new RTCSessionDescription(ans));
+  } catch (e) {
+    setStatus("Error: " + e.message, "#ef4444");
+    disconnect();
+  }
+}
+
+async function tc() {
+  if (pc) { disconnect(); } else { await connect(); }
+}
+
+function tm() {
+  if (!mic) return;
+  muted = !muted;
+  mic.getTracks().forEach(function(t) { t.enabled = !muted; });
+  el("mb").textContent = muted ? "Unmute" : "Mute";
+  el("mb").className = muted ? "muted" : "";
+}
+</script>
+</body>
+</html>
+"""
+
+_WEBRTC_CLIENT_HTML = (
+    '<iframe'
+    ' allow="microphone; autoplay"'
+    ' style="width:100%;border:none;height:60px;background:transparent;"'
+    ' srcdoc="' + _html.escape(_WEBRTC_INNER) + '"'
+    '></iframe>'
+)
 
 
 class TarsGradioUI:
@@ -198,6 +360,9 @@ class TarsGradioUI:
                 with gr.Tab("Conversation"):
                     gr.Markdown("### Live Conversation")
                     audio_mode_md = gr.Markdown(f"*Audio: {metrics_store.get_audio_mode()}*")
+
+                    if metrics_store.get_audio_mode() == "Browser (SmallWebRTC)":
+                        gr.HTML(_WEBRTC_CLIENT_HTML)
 
                     chatbot = gr.Chatbot(
                         value=[],
