@@ -197,7 +197,7 @@ class TarsGradioUI:
                 # === Conversation Tab ===
                 with gr.Tab("Conversation"):
                     gr.Markdown("### Live Conversation")
-                    gr.Markdown("*Audio handled via robot WebRTC connection*")
+                    audio_mode_md = gr.Markdown(f"*Audio: {metrics_store.get_audio_mode()}*")
 
                     chatbot = gr.Chatbot(
                         value=[],
@@ -208,6 +208,10 @@ class TarsGradioUI:
                     )
 
                     timer_fast.tick(fn=self.get_conversation_history, outputs=chatbot)
+                    timer_slow.tick(
+                        fn=lambda: f"*Audio: {metrics_store.get_audio_mode()}*",
+                        outputs=audio_mode_md,
+                    )
 
                 # === Metrics Tab ===
                 with gr.Tab("Metrics"):
