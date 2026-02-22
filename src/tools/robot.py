@@ -4,7 +4,6 @@ Tiered expression system:
 - Tier 2: Emotions (eyes) - set_emotion(), use freely
 - Tier 3-4: Gestures (physical) - do_gesture(), use sparingly
 - Tier 5: Displacement - execute_movement(), user request only
-- Camera: capture_camera_view()
 """
 
 import asyncio
