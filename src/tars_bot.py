@@ -73,17 +73,15 @@ from tools import (
     capture_user_camera,
     capture_robot_camera,
     adjust_persona_parameter,
+    express,
     execute_movement,
     create_user_camera_schema,
     create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
+    create_express_schema,
     create_movement_schema,
     get_persona_storage,
-    set_emotion,
-    do_gesture,
-    create_emotion_schema,
-    create_gesture_schema,
     set_rate_limiter,
     ExpressionRateLimiter,
 )
@@ -308,22 +306,22 @@ async def run_robot_bot(ui=None):
 
         # Initialize expression rate limiter
         rate_limiter = ExpressionRateLimiter(
-            min_emotion_interval=5.0,
-            min_gesture_interval=30.0,
-            max_gestures_per_session=3
+            min_expression_interval=2.0,
+            min_gesture_interval=15.0,
+            max_medium_per_session=5,
+            max_high_per_session=2,
         )
         set_rate_limiter(rate_limiter)
 
         # Create tool schemas
         tools = ToolsSchema(
             standard_tools=[
+                create_express_schema(),
+                create_movement_schema(),
                 create_user_camera_schema(),
+                create_robot_camera_schema(),
                 create_adjust_persona_schema(),
                 create_identity_schema(),
-                create_movement_schema(),
-                create_robot_camera_schema(),
-                create_emotion_schema(),
-                create_gesture_schema(),
             ]
         )
 
@@ -331,12 +329,11 @@ async def run_robot_bot(ui=None):
         context = LLMContext(messages, tools)
 
         # Register tool functions
-        llm.register_function("capture_user_camera", capture_user_camera)
-        llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+        llm.register_function("express", express)
         llm.register_function("execute_movement", execute_movement)
+        llm.register_function("capture_user_camera", capture_user_camera)
         llm.register_function("capture_robot_camera", capture_robot_camera)
-        llm.register_function("set_emotion", set_emotion)
-        llm.register_function("do_gesture", do_gesture)
+        llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
         logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
 
@@ -494,6 +491,51 @@ async def run_robot_bot(ui=None):
         logger.info("✓ Cleanup complete")
 
 
+def run_browser_mode(port: int = 7860):
+    """Run browser audio mode: SmallWebRTC + Gradio UI on a single port."""
+    from fastapi import FastAPI, BackgroundTasks
+    from fastapi.middleware.cors import CORSMiddleware
+    from pipecat.transports.smallwebrtc.request_handler import (
+        SmallWebRTCPatchRequest,
+        SmallWebRTCRequest,
+        SmallWebRTCRequestHandler,
+    )
+    import gradio as gr
+    import uvicorn
+    from bot import run_bot
+    from ui.gradio_app import TarsGradioUI
+
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    small_webrtc_handler = SmallWebRTCRequestHandler()
+
+    @app.post("/api/offer")
+    async def offer(request: SmallWebRTCRequest, background_tasks: BackgroundTasks):
+        async def callback(connection):
+            background_tasks.add_task(run_bot, connection)
+        return await small_webrtc_handler.handle_web_request(request, callback)
+
+    @app.patch("/api/offer")
+    async def ice_candidate(request: SmallWebRTCPatchRequest):
+        await small_webrtc_handler.handle_patch_request(request)
+        return {"status": "success"}
+
+    ui = TarsGradioUI()
+    demo = ui.build_interface()
+    app = gr.mount_gradio_app(app, demo, path="/")
+
+    logger.info(f"Browser mode at http://localhost:{port}")
+    logger.info(f"  WebRTC offer: http://localhost:{port}/api/offer")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="TARS Conversation App - Robot Mode",
@@ -509,6 +551,11 @@ if __name__ == "__main__":
         type=int,
         default=7860,
         help="Gradio UI port (default: 7860)"
+    )
+    parser.add_argument(
+        "--browser-audio",
+        action="store_true",
+        help="Use browser mic/speaker via WebRTC (requires --gradio)"
     )
     parser.add_argument(
         "--local-audio",
@@ -532,6 +579,17 @@ if __name__ == "__main__":
     if args.local_audio:
         logger.error("--local-audio not implemented yet. Use robot mode only.")
         sys.exit(1)
+
+    if args.browser_audio and not args.gradio:
+        logger.error("--browser-audio requires --gradio")
+        sys.exit(1)
+
+    # Mode 3: browser audio + Gradio on a single server
+    if args.browser_audio:
+        from shared_state import metrics_store
+        metrics_store.set_audio_mode("Browser (SmallWebRTC)")
+        run_browser_mode(port=args.gradio_port)
+        sys.exit(0)
 
     # Launch UI if requested
     if args.gradio:
@@ -559,7 +617,7 @@ if __name__ == "__main__":
         import time
         time.sleep(1)
 
-    # Set audio mode in shared state
+    # Mode 1 / Mode 2: robot audio
     from shared_state import metrics_store
     metrics_store.set_audio_mode("Robot (WebRTC to Pi)")
     metrics_store.set_daemon_address(f"{RPI_URL} / gRPC: {get_robot_grpc_address()}")

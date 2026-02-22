@@ -98,6 +98,10 @@ class MetricsStore:
         with self.lock:
             self.audio_mode = mode
 
+    def get_audio_mode(self) -> str:
+        with self.lock:
+            return self.audio_mode
+
 
 # Global instance
 metrics_store = MetricsStore()
