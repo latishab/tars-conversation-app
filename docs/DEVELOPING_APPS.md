@@ -82,8 +82,8 @@ Runtime settings users can modify:
 ```ini
 [Connection]
 mode = robot
-rpi_url = http://100.84.133.74:8765
-rpi_grpc = 100.84.133.74:50051
+connection_type = local  # or manual, tailscale
+rpi_ip = 192.168.1.100  # if using manual mode
 auto_connect = false
 
 [LLM]
@@ -128,7 +128,7 @@ _client = None
 def get_tars_client():
     global _client
     if _client is None:
-        grpc_address = os.getenv("RPI_GRPC", "100.84.133.74:50051")
+        grpc_address = os.getenv("RPI_GRPC", "tars.local:50051")
         channel = grpc.insecure_channel(grpc_address)
         _client = TarsClient(channel)
     return _client
@@ -165,7 +165,7 @@ def detect_deployment_mode():
 def get_grpc_address():
     if detect_deployment_mode() == "local":
         return "localhost:50051"
-    return os.getenv("RPI_GRPC", "100.84.133.74:50051")
+    return os.getenv("RPI_GRPC", "tars.local:50051")
 ```
 
 ## Installation Scripts
@@ -302,7 +302,7 @@ import os
 load_dotenv(Path(__file__).parent / ".env.local")
 
 # Connect to daemon
-grpc_address = os.getenv("RPI_GRPC", "100.84.133.74:50051")
+grpc_address = os.getenv("RPI_GRPC", "tars.local:50051")
 channel = grpc.insecure_channel(grpc_address)
 client = TarsClient(channel)
 
@@ -391,10 +391,10 @@ signal.signal(signal.SIGINT, signal_handler)
 - tars-daemon: `~/tars-daemon` on Pi
 - TARS SDK: Install via pip `pip install tars-sdk`
 - Example Apps: This repository (tars-conversation-app)
-- Pi Access: `ssh tars-pi` (100.84.133.74)
+- Pi Access: `ssh tars-pi` (use `tars.local` or your Pi's IP)
 
 ## Support
 
 - Check daemon status: `systemctl status tars-daemon`
 - View daemon logs: `journalctl -u tars-daemon -f`
-- Test gRPC connection: `grpcurl -plaintext 100.84.133.74:50051 list`
+- Test gRPC connection: `grpcurl -plaintext tars.local:50051 list`

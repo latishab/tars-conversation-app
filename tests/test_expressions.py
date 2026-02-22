@@ -17,7 +17,7 @@ async def test_emotions():
     print("="*50)
 
     # Connect to Pi
-    get_robot_client("100.84.133.74:50051")
+    get_robot_client("tars.local:50051")
 
     # Available emotions based on Mood enum in modules_roboeyes.py
     emotions = [
@@ -44,7 +44,7 @@ async def test_eye_states():
     print("="*50)
 
     # Connect to Pi
-    get_robot_client("100.84.133.74:50051")
+    get_robot_client("tars.local:50051")
 
     # Available eye states based on EyeState enum
     eye_states = [
@@ -69,7 +69,7 @@ async def test_combined():
     print("="*50)
 
     # Connect to Pi
-    get_robot_client("100.84.133.74:50051")
+    get_robot_client("tars.local:50051")
 
     scenarios = [
         ("listening", "confused", "TARS is listening to something confusing"),

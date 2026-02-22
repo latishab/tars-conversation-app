@@ -35,7 +35,7 @@ def get_robot_client(address: Optional[str] = None) -> Optional[TarsClient]:
     Get singleton TARS robot client.
 
     Args:
-        address: gRPC server address (e.g., "100.115.193.41:50051")
+        address: gRPC server address (e.g., "tars.local:50051" or "192.168.1.100:50051")
                  If None, uses TARS_GRPC_ADDRESS env var or localhost:50051
 
     Returns:

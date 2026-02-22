@@ -53,6 +53,8 @@ python tests/test_expressions.py
 
 ## Configuration
 
-Tests connect to Pi at `100.84.133.74:50051` (gRPC) and `100.84.133.74:8001` (HTTP).
+Tests connect to Pi using `tars.local` by default (mDNS).
 
-Update the IP address in test files if your Pi has a different address.
+If mDNS doesn't work on your network, update the connection addresses in test files:
+- Replace `tars.local:50051` with your Pi's IP (e.g., `192.168.1.100:50051`)
+- Find your Pi's IP by running `hostname -I` on the Pi

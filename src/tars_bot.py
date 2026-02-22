@@ -70,15 +70,15 @@ from character.prompts import (
     get_introduction_instruction,
 )
 from tools import (
-    fetch_user_image,
+    capture_user_camera,
+    capture_robot_camera,
     adjust_persona_parameter,
     execute_movement,
-    capture_camera_view,
-    create_fetch_image_schema,
+    create_user_camera_schema,
+    create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
-    create_camera_capture_schema,
     get_persona_storage,
     set_emotion,
     do_gesture,
@@ -317,11 +317,11 @@ async def run_robot_bot(ui=None):
         # Create tool schemas
         tools = ToolsSchema(
             standard_tools=[
-                create_fetch_image_schema(),
+                create_user_camera_schema(),
                 create_adjust_persona_schema(),
                 create_identity_schema(),
                 create_movement_schema(),
-                create_camera_capture_schema(),
+                create_robot_camera_schema(),
                 create_emotion_schema(),
                 create_gesture_schema(),
             ]
@@ -331,10 +331,10 @@ async def run_robot_bot(ui=None):
         context = LLMContext(messages, tools)
 
         # Register tool functions
-        llm.register_function("fetch_user_image", fetch_user_image)
+        llm.register_function("capture_user_camera", capture_user_camera)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
         llm.register_function("execute_movement", execute_movement)
-        llm.register_function("capture_camera_view", capture_camera_view)
+        llm.register_function("capture_robot_camera", capture_robot_camera)
         llm.register_function("set_emotion", set_emotion)
         llm.register_function("do_gesture", do_gesture)
 

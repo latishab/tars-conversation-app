@@ -81,11 +81,11 @@ from character.prompts import (
     get_introduction_instruction,
 )
 from tools import (
-    fetch_user_image,
+    capture_user_camera,
     adjust_persona_parameter,
     execute_movement,
     capture_camera_view,
-    create_fetch_image_schema,
+    create_user_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
@@ -276,7 +276,7 @@ async def run_bot(webrtc_connection):
             system_prompt = build_tars_system_prompt(persona_params, tars_data)
 
             # Create tool schemas (these return FunctionSchema objects)
-            fetch_image_tool = create_fetch_image_schema()
+            user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
             identity_tool = create_identity_schema()
             crossword_hint_tool = create_crossword_hint_schema()
@@ -286,7 +286,7 @@ async def run_bot(webrtc_connection):
             # Pass FunctionSchema objects directly to standard_tools
             tools = ToolsSchema(
                 standard_tools=[
-                    fetch_image_tool,
+                    user_camera_tool,
                     persona_tool,
                     identity_tool,
                     crossword_hint_tool,
@@ -297,7 +297,7 @@ async def run_bot(webrtc_connection):
             messages = [system_prompt]
             context = LLMContext(messages, tools)
 
-            llm.register_function("fetch_user_image", fetch_user_image)
+            llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
             llm.register_function("get_crossword_hint", get_crossword_hint)
             llm.register_function("execute_movement", execute_movement)
