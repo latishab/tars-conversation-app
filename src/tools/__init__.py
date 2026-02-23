@@ -32,11 +32,6 @@ from .persona import (
     create_identity_schema,
 )
 
-from .crossword import (
-    get_crossword_hint,
-    create_crossword_hint_schema,
-)
-
 __all__ = [
     # Robot tools
     "express",
@@ -58,7 +53,4 @@ __all__ = [
     "get_persona_storage",
     "create_adjust_persona_schema",
     "create_identity_schema",
-    # Crossword tools
-    "get_crossword_hint",
-    "create_crossword_hint_schema",
 ]

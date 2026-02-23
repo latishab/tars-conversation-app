@@ -5,14 +5,10 @@ For logging/monitoring processors, see loggers.py module.
 """
 
 from .filters import SilenceFilter, InputAudioFilter
-from .gating import InterventionGating
-from .visual_observer import VisualObserver
-from .emotional_monitor import EmotionalStateMonitor
+from .proactive_monitor import ProactiveMonitor
 
 __all__ = [
     "SilenceFilter",
     "InputAudioFilter",
-    "InterventionGating",
-    "VisualObserver",
-    "EmotionalStateMonitor",
+    "ProactiveMonitor",
 ]
