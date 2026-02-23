@@ -1,0 +1,40 @@
+{
+  "id": "puzzle1",
+  "title": "9x9 Crossword",
+  "size": { "rows": 9, "cols": 9 },
+  "solution": [
+    ["T","O","X","I","C","#","B","O","G"],
+    ["E","#","#","N","#","P","I","#","O"],
+    ["L","U","C","K","#","#","N","#","A"],
+    ["E","#","A","#","N","I","G","H","T"],
+    ["P","A","S","T","A","#","O","#","#"],
+    ["H","#","T","#","S","#","S","L","O"],
+    ["O","P","#","B","#","B","#","#","M"],
+    ["N","#","#","A","#","I","#","#","E"],
+    ["E","V","E","N","I","N","G","#","N"]
+  ],
+  "clues": {
+    "across": [
+      { "number": 1,  "clue": "Poisonous",                            "answer": "TOXIC",   "row": 0, "col": 0, "length": 5 },
+      { "number": 3,  "clue": "Muddy lake",                           "answer": "BOG",     "row": 0, "col": 6, "length": 3 },
+      { "number": 5,  "clue": "3.14159265359",                        "answer": "PI",      "row": 1, "col": 5, "length": 2 },
+      { "number": 6,  "clue": "Success brought by chance",            "answer": "LUCK",    "row": 2, "col": 0, "length": 4 },
+      { "number": 8,  "clue": "Opposite of day",                      "answer": "NIGHT",   "row": 3, "col": 4, "length": 5 },
+      { "number": 9,  "clue": "Italian carbohydrate",                 "answer": "PASTA",   "row": 4, "col": 0, "length": 5 },
+      { "number": 10, "clue": "Acronym for service-level objective",  "answer": "SLO",     "row": 5, "col": 6, "length": 3 },
+      { "number": 12, "clue": "Abbreviation of operation",            "answer": "OP",      "row": 6, "col": 0, "length": 2 },
+      { "number": 15, "clue": "Time before night",                    "answer": "EVENING", "row": 8, "col": 0, "length": 7 }
+    ],
+    "down": [
+      { "number": 1,  "clue": "A system for transmitting voices from across the world", "answer": "TELEPHONE", "row": 0, "col": 0, "length": 9 },
+      { "number": 2,  "clue": "Squids squirt this liquid",                              "answer": "INK",       "row": 0, "col": 3, "length": 3 },
+      { "number": 3,  "clue": "Plural of a game in which players mark off numbers on a card", "answer": "BINGOS", "row": 0, "col": 6, "length": 6 },
+      { "number": 4,  "clue": "Bovid",                                                  "answer": "GOAT",      "row": 0, "col": 8, "length": 4 },
+      { "number": 7,  "clue": "Throw something in a specified direction",                "answer": "CAST",      "row": 2, "col": 2, "length": 4 },
+      { "number": 8,  "clue": "American rapper",                                         "answer": "NAS",       "row": 3, "col": 4, "length": 3 },
+      { "number": 11, "clue": "Prophetic significance",                                  "answer": "OMEN",      "row": 5, "col": 8, "length": 4 },
+      { "number": 13, "clue": "Legally prohibit",                                        "answer": "BAN",       "row": 6, "col": 3, "length": 3 },
+      { "number": 14, "clue": "Garbage holder",                                          "answer": "BIN",       "row": 6, "col": 5, "length": 3 }
+    ]
+  }
+}

@@ -61,7 +61,7 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter
+from processors import SilenceFilter, ProactiveMonitor
 from observers import StateObserver
 from character.prompts import (
     load_persona_ini,
@@ -396,8 +396,24 @@ async def run_robot_bot(ui=None):
 
         logger.info("🔧 Building pipeline...")
 
+        # task_ref defined here so proactive_monitor can hold a reference to it
+        # before the task is created; the dict is populated below after PipelineTask
+        task_ref = {"task": None, "audio_task": None}
+
+        proactive_monitor = ProactiveMonitor(
+            context=context,
+            task_ref=task_ref,
+            silence_threshold=8.0,
+            hesitation_threshold=4,
+            hesitation_window=5.0,
+            cooldown=30.0,
+            post_bot_buffer=5.0,
+            check_interval=1.0,
+        )
+
         pipeline = Pipeline([
             stt,
+            proactive_monitor,
             context_aggregator.user(),
             llm,
             SilenceFilter(),
@@ -409,9 +425,6 @@ async def run_robot_bot(ui=None):
         # ====================================================================
         # AUDIO INPUT FEEDING
         # ====================================================================
-
-        # Task reference for audio feeding
-        task_ref = {"task": None, "audio_task": None}
 
         async def feed_rpi_audio():
             """Feed audio frames from RPi mic into the pipeline."""

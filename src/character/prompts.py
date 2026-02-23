@@ -99,15 +99,6 @@ def build_tools_section() -> str:
 **Never use:** Automatically or without explicit request
 **On failure:** Say "Personality controls jammed. Stuck at current settings."
 
-## get_crossword_hint
-**When to use:** User is working on the crossword puzzle and asks for help or seems stuck
-**This is important:** You KNOW all the crossword answers! You can give hints.
-**Hint types:**
-- "letter" - Give just the first letter (gentle nudge)
-- "length" - Tell them how many letters
-- "full" - Give the complete answer (if they're really stuck)
-**Format:** User asks "What's 3 down?" → call get_crossword_hint(clue_number=3, hint_type="letter")
-
 ## express
 **When to use:** Convey emotional response during conversation
 **Intensity:**
@@ -135,6 +126,19 @@ When speaking vs. writing to tools, normalize data:
 - Phone spoken: "five five five, one two three..." → Tool: "5551234567"
 - Dates spoken: "May first twenty twenty five" → Tool: "2025-05-01"
 """
+
+
+def build_proactive_section() -> str:
+    return """## Proactive Assistance
+
+You may receive system messages tagged [PROACTIVE DETECTION]. These indicate the monitoring system has detected the user may need help based on their speech patterns (silence, hesitation markers, confusion expressions).
+
+When you receive a proactive detection message:
+- Default to a gentle Notification: acknowledge the user might be stuck without imposing a solution. Examples: "That's a tricky one. Want a hint?" or "Take your time, I'm here if you need help."
+- If the user has been struggling for a while (multiple triggers), offer a Suggestion with a specific hint.
+- If you believe this is a false positive (the user seems fine based on context), respond with exactly: {"action": "silence"}
+- NEVER give the answer directly. NEVER fill in the puzzle for them.
+- Keep proactive responses short (one sentence)."""
 
 
 def build_response_protocol(verbosity_level: int) -> str:
@@ -250,13 +254,16 @@ def build_tars_system_prompt(
     # 5. Tools (with specific context)
     sections.append(build_tools_section())
 
-    # 6. Game mode
+    # 6. Proactive assistance (crossword monitor)
+    sections.append(build_proactive_section())
+
+    # 7. Game mode
     sections.append(build_game_protocols())
 
-    # 7. Examples (concrete interactions)
+    # 8. Examples (concrete interactions)
     sections.append(build_examples_section())
 
-    # 8. Personality parameters (reference)
+    # 9. Personality parameters (reference)
     if persona_params:
         sections.append("# Personality Parameters\n")
         params_text = build_persona_parameters(persona_params)

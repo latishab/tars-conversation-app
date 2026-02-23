@@ -37,7 +37,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
-from pipecat.services.moondream.vision import MoondreamService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.llm_service import FunctionCallParams
 from services.memory_hybrid import HybridMemoryService
@@ -54,16 +53,13 @@ from config import (
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
-    MEM0_API_KEY,
     get_fresh_config,
 )
 from services.factories import create_stt_service, create_tts_service
 from processors import (
     SilenceFilter,
     InputAudioFilter,
-    InterventionGating,
-    VisualObserver,
-    EmotionalStateMonitor,
+    ProactiveMonitor,
 )
 from observers import (
     MetricsObserver,
@@ -72,7 +68,6 @@ from observers import (
     TTSStateObserver,
     VisionObserver,
     DebugObserver,
-    DisplayEventsObserver,
 )
 from character.prompts import (
     load_persona_ini,
@@ -91,8 +86,6 @@ from tools import (
     create_movement_schema,
     create_camera_capture_schema,
     get_persona_storage,
-    get_crossword_hint,
-    create_crossword_hint_schema,
 )
 from shared_state import metrics_store
 
@@ -166,19 +159,15 @@ async def run_bot(webrtc_connection):
     # Load fresh configuration for this connection (allows runtime config updates)
     runtime_config = get_fresh_config()
     DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
-    DEEPINFRA_GATING_MODEL = runtime_config['DEEPINFRA_GATING_MODEL']
     STT_PROVIDER = runtime_config['STT_PROVIDER']
     TTS_PROVIDER = runtime_config['TTS_PROVIDER']
     QWEN3_TTS_MODEL = runtime_config['QWEN3_TTS_MODEL']
     QWEN3_TTS_DEVICE = runtime_config['QWEN3_TTS_DEVICE']
     QWEN3_TTS_REF_AUDIO = runtime_config['QWEN3_TTS_REF_AUDIO']
-    EMOTIONAL_MONITORING_ENABLED = runtime_config['EMOTIONAL_MONITORING_ENABLED']
-    EMOTIONAL_SAMPLING_INTERVAL = runtime_config['EMOTIONAL_SAMPLING_INTERVAL']
-    EMOTIONAL_INTERVENTION_THRESHOLD = runtime_config['EMOTIONAL_INTERVENTION_THRESHOLD']
     TARS_DISPLAY_URL = runtime_config['TARS_DISPLAY_URL']
     TARS_DISPLAY_ENABLED = runtime_config['TARS_DISPLAY_ENABLED']
 
-    logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}, Emotional: {EMOTIONAL_MONITORING_ENABLED}")
+    logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}")
 
     # Session initialization
     session_id = str(uuid.uuid4())[:8]
@@ -279,7 +268,6 @@ async def run_bot(webrtc_connection):
             user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
             identity_tool = create_identity_schema()
-            crossword_hint_tool = create_crossword_hint_schema()
             movement_tool = create_movement_schema()
             camera_capture_tool = create_camera_capture_schema()
 
@@ -289,7 +277,6 @@ async def run_bot(webrtc_connection):
                     user_camera_tool,
                     persona_tool,
                     identity_tool,
-                    crossword_hint_tool,
                     movement_tool,
                     camera_capture_tool,
                 ]
@@ -299,7 +286,6 @@ async def run_bot(webrtc_connection):
 
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
-            llm.register_function("get_crossword_hint", get_crossword_hint)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_camera_view", capture_camera_view)
 
@@ -345,56 +331,6 @@ async def run_bot(webrtc_connection):
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
             return
-
-        # ====================================================================
-        # VISION & GATING SERVICES
-        # ====================================================================
-
-        logger.info("Initializing Moondream vision service...")
-        moondream = None
-        try:
-            moondream = MoondreamService(model="vikhyatk/moondream2", revision="2025-01-09")
-            logger.info("✓ Moondream vision service initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize Moondream: {e}")
-            return
-
-        # ====================================================================
-        # TARS DISPLAY - Note: Display control via gRPC in robot mode only
-        # ====================================================================
-
-        logger.info("TARS Display features available in robot mode (tars_bot.py)")
-        tars_client = None
-
-        logger.info("Initializing Visual Observer...")
-        visual_observer = VisualObserver(
-            vision_client=moondream,
-            enable_face_detection=True,
-            tars_client=tars_client
-        )
-        logger.info("✓ Visual Observer initialized")
-
-        logger.info("Initializing Emotional State Monitor...")
-        emotional_monitor = EmotionalStateMonitor(
-            vision_client=moondream,
-            model="vikhyatk/moondream2",
-            sampling_interval=EMOTIONAL_SAMPLING_INTERVAL,
-            intervention_threshold=EMOTIONAL_INTERVENTION_THRESHOLD,
-            enabled=EMOTIONAL_MONITORING_ENABLED,
-            auto_intervene=False,  # Let gating layer handle intervention decisions
-        )
-        logger.info(f"✓ Emotional State Monitor initialized (enabled: {EMOTIONAL_MONITORING_ENABLED})")
-        logger.info(f"   Mode: Integrated with gating layer for smarter decisions")
-
-        logger.info("Initializing Gating Layer...")
-        gating_layer = InterventionGating(
-            api_key=DEEPINFRA_API_KEY,
-            base_url=DEEPINFRA_BASE_URL,
-            model=DEEPINFRA_GATING_MODEL,
-            visual_observer=visual_observer,
-            emotional_monitor=emotional_monitor
-        )
-        logger.info(f"✓ Gating Layer initialized with emotional state integration")
 
         # ====================================================================
         # MEMORY SERVICE
@@ -452,7 +388,6 @@ async def run_bot(webrtc_connection):
         assistant_observer = AssistantResponseObserver(webrtc_connection=webrtc_connection)
         tts_state_observer = TTSStateObserver(webrtc_connection=webrtc_connection)
         vision_observer = VisionObserver(webrtc_connection=webrtc_connection)
-        display_events_observer = DisplayEventsObserver(tars_client=tars_client)
 
         # Create MetricsObserver (non-intrusive monitoring outside pipeline)
         metrics_observer = MetricsObserver(
@@ -481,14 +416,28 @@ async def run_bot(webrtc_connection):
 
         logger.info("Creating audio/video pipeline...")
 
+        # task_ref defined here so proactive_monitor can hold a reference before
+        # the PipelineTask is created; dict is populated below after PipelineTask
+        task_ref = {"task": None}
+
+        proactive_monitor = ProactiveMonitor(
+            context=context,
+            task_ref=task_ref,
+            silence_threshold=8.0,
+            hesitation_threshold=4,
+            hesitation_window=5.0,
+            cooldown=30.0,
+            post_bot_buffer=5.0,
+            check_interval=1.0,
+        )
+
         pipeline = Pipeline([
             pipecat_transport.input(),
-            # emotional_monitor,  # Real-time emotional state monitoring
             stt,
+            proactive_monitor,
             pipeline_unifier,
             context_aggregator.user(),
             memory_service,  # Hybrid memory (70% vector + 30% BM25) for automatic recall/storage
-            # gating_layer,  # AI decision system (with emotional state integration)
             llm,
             SilenceFilter(),
             tts,
@@ -499,8 +448,6 @@ async def run_bot(webrtc_connection):
         # ====================================================================
         # EVENT HANDLERS
         # ====================================================================
-
-        task_ref = {"task": None}
 
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
@@ -584,7 +531,6 @@ async def run_bot(webrtc_connection):
                 assistant_observer,
                 tts_state_observer,
                 vision_observer,
-                display_events_observer,          # Send events to TARS display
                 user_bot_latency_observer,        # Measures total user→bot response time
             ],  # Non-intrusive monitoring
         )
