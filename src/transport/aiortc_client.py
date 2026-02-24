@@ -66,6 +66,7 @@ class AiortcRPiClient:
         # Audio tracks
         self._audio_track_from_rpi: Optional[MediaStreamTrack] = None
         self._audio_track_to_rpi: Optional[MediaStreamTrack] = None
+        self._pending_audio_track: Optional[MediaStreamTrack] = None  # set before connect()
 
         # Callbacks
         self._on_audio_track_callback: Optional[Callable[[MediaStreamTrack], None]] = None
@@ -131,6 +132,11 @@ class AiortcRPiClient:
             def on_message(message):
                 if self._on_data_channel_message_callback:
                     self._on_data_channel_message_callback(message)
+
+            # Add outgoing audio track if set before connect() — included in offer
+            if self._pending_audio_track:
+                self._pc.addTrack(self._pending_audio_track)
+                self._audio_track_to_rpi = self._pending_audio_track
 
             # Add transceiver to receive audio from RPi
             self._pc.addTransceiver("audio", direction="recvonly")
@@ -227,13 +233,21 @@ class AiortcRPiClient:
         """
         Add audio track to send to RPi (TTS output).
 
+        Call before connect() to include the track in the initial WebRTC offer.
+        Calling after connect() will not work — the Pi won't receive it without renegotiation.
+
         Args:
             track: Audio track to send
         """
         if self._pc:
+            # Already connected — too late for initial offer, log a warning
+            logger.warning("🎤 add_audio_track called after connect() — track may not reach RPi")
             self._pc.addTrack(track)
             self._audio_track_to_rpi = track
-            logger.info("🎤 Added audio track to RPi connection")
+        else:
+            # Store for inclusion in the offer
+            self._pending_audio_track = track
+        logger.info("🎤 Added audio track to RPi connection")
 
     def on_audio_track(self, callback: Callable[[MediaStreamTrack], None]):
         """Register callback for when audio track is received."""

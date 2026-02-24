@@ -32,18 +32,29 @@ class RPiAudioInputTrack:
     that Pipecat can process.
     """
 
-    def __init__(self, aiortc_track: MediaStreamTrack, sample_rate: int = 16000):
+    def __init__(
+        self,
+        aiortc_track: MediaStreamTrack,
+        sample_rate: int = 16000,
+        noise_gate_rms: float = 0.02,
+    ):
         """
         Initialize audio input track.
 
         Args:
             aiortc_track: aiortc MediaStreamTrack from RPi
             sample_rate: Expected sample rate (16kHz from RPi mic)
+            noise_gate_rms: RMS threshold below which audio is replaced with silence.
+                            Set to 0.0 to disable. Default 0.02 suppresses fan/ambient noise.
         """
         self.aiortc_track = aiortc_track
         self.sample_rate = sample_rate
+        self.noise_gate_rms = noise_gate_rms
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        # Noise gate hold: keep gate open for N frames after speech ends to avoid clipping
+        self._gate_hold_frames = 8  # ~160ms at 20ms/frame
+        self._gate_hold_counter = 0
 
     async def start(self) -> AsyncIterator[AudioRawFrame]:
         """
@@ -54,26 +65,73 @@ class RPiAudioInputTrack:
         """
         self._running = True
         logger.info(f"🎤 Started receiving audio from RPi at {self.sample_rate}Hz")
+        _frame_count = 0
 
         try:
             while self._running:
                 try:
                     # Receive audio frame from aiortc track
-                    frame: AVAudioFrame = await self.aiortc_track.recv()
+                    try:
+                        frame: AVAudioFrame = await asyncio.wait_for(
+                            self.aiortc_track.recv(), timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("[AudioBridge] recv() timed out — no audio from Pi (ICE/network issue?)")
+                        continue
+                    _frame_count += 1
+                    if _frame_count <= 3 or _frame_count % 500 == 0:
+                        logger.debug(f"[AudioBridge] frame #{_frame_count}: fmt={frame.format.name}, rate={frame.sample_rate}, samples={frame.samples}, layout={frame.layout.name}")
 
-                    # Convert to numpy array
-                    # aiortc uses planar audio format, we need interleaved
+                    # Opus WebRTC decodes at 48kHz regardless of capture rate.
+                    # Downsample to target_sample_rate (16kHz) via decimation.
+                    # Pi captures at 16kHz, so 48kHz→16kHz is lossless here (ratio=3).
+                    incoming_rate = frame.sample_rate or 48000
+
+                    # Convert to numpy array.
+                    # s16 interleaved stereo → to_ndarray() returns (1, samples*channels)
+                    # s16p planar stereo     → to_ndarray() returns (channels, samples)
                     audio_array = frame.to_ndarray()
+                    fmt = frame.format.name  # e.g. "s16", "s16p", "fltp"
+                    channels = len(frame.layout.channels)
+                    is_float = fmt.startswith("flt") or fmt.startswith("dbl")
 
-                    # If stereo, convert to mono by averaging channels
-                    if len(audio_array.shape) > 1:
-                        audio_array = np.mean(audio_array, axis=0)
+                    if channels > 1:
+                        if fmt.endswith("p"):
+                            # Planar: (channels, samples) — mean across channel axis
+                            mono = audio_array.mean(axis=0)
+                        else:
+                            # Interleaved: (1, samples*channels) — reshape then mean
+                            mono = audio_array.reshape(-1, channels).mean(axis=1)
+                    else:
+                        mono = audio_array.flatten()
 
-                    # Convert to int16 PCM (Pipecat expects bytes)
-                    audio_int16 = (audio_array * 32767).astype(np.int16)
+                    # Convert to int16 PCM based on original dtype
+                    if is_float:
+                        audio_int16 = (mono * 32767).astype(np.int16)
+                    else:
+                        audio_int16 = mono.astype(np.int16)
+
+                    # Downsample if incoming rate differs from target (e.g. 48kHz → 16kHz)
+                    if incoming_rate != self.sample_rate and self.sample_rate > 0:
+                        ratio = incoming_rate // self.sample_rate
+                        if ratio > 1:
+                            audio_int16 = audio_int16[::ratio]
+
+                    # Noise gate with hold: suppress frames below RMS threshold.
+                    # Hold counter keeps gate open briefly after speech ends to avoid
+                    # clipping the tail of words (prevents click/pop artifacts).
+                    if self.noise_gate_rms > 0:
+                        rms = np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2)) / 32767.0
+                        if rms >= self.noise_gate_rms:
+                            self._gate_hold_counter = self._gate_hold_frames
+                        elif self._gate_hold_counter > 0:
+                            self._gate_hold_counter -= 1
+                        else:
+                            audio_int16 = np.zeros_like(audio_int16)
+
                     audio_bytes = audio_int16.tobytes()
 
-                    # Create Pipecat AudioRawFrame
+                    # Create Pipecat AudioRawFrame at the target sample rate
                     pipecat_frame = AudioRawFrame(
                         audio=audio_bytes,
                         sample_rate=self.sample_rate,
