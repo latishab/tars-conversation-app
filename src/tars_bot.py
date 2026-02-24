@@ -196,6 +196,11 @@ async def run_robot_bot(ui=None):
         state_sync.on_movement_status(lambda moving, movement:
             logger.debug(f"🚶 Movement: {movement} ({'active' if moving else 'idle'})"))
 
+        # Create TTS output track before connecting so it's included in the WebRTC offer.
+        # The Pi must know to receive this track during initial SDP negotiation.
+        rpi_output = RPiAudioOutputTrack(sample_rate=24000)
+        aiortc_client.add_audio_track(rpi_output)
+
         # Connect to RPi
         if AUTO_CONNECT:
             logger.info("🔄 Connecting to RPi...")
@@ -237,16 +242,11 @@ async def run_robot_bot(ui=None):
         # Create audio input track (RPi mic → Pipecat)
         rpi_input = RPiAudioInputTrack(
             aiortc_track=audio_track_from_rpi,
-            sample_rate=16000  # RPi mic sample rate
+            sample_rate=16000,
+            noise_gate_rms=0.02,  # suppress fan/ambient noise below this RMS level
         )
 
-        # Create audio output track (Pipecat TTS → RPi speaker)
-        rpi_output = RPiAudioOutputTrack(
-            sample_rate=24000  # TTS output sample rate
-        )
-
-        # Add output track to WebRTC connection
-        aiortc_client.add_audio_track(rpi_output)
+        # rpi_output was created before connect() so it was included in the WebRTC offer
 
         # Create audio bridge processor
         audio_bridge = AudioBridge(
