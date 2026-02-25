@@ -123,27 +123,27 @@ async def capture_camera_view() -> Dict[str, Any]:
         }
 
     try:
-        # Capture frame via gRPC
-        jpeg_bytes = client.capture_camera(width=640, height=480, quality=80)
+        # Capture frame via gRPC — returns CaptureResponse protobuf
+        resp = client.capture_camera(width=640, height=480, quality=80)
 
-        if jpeg_bytes:
-            # Encode to base64 for consistency with old API
-            img_base64 = base64.b64encode(jpeg_bytes).decode('utf-8')
+        jpeg_bytes = resp.image if hasattr(resp, 'image') else resp
+        if not jpeg_bytes:
+            return {"status": "error", "error": "Failed to capture frame"}
 
-            logger.info(f"Captured camera frame: {len(jpeg_bytes)} bytes")
+        img_base64 = base64.b64encode(jpeg_bytes).decode('utf-8')
+        width = resp.width if hasattr(resp, 'width') else 640
+        height = resp.height if hasattr(resp, 'height') else 480
+        fmt = resp.format if hasattr(resp, 'format') else "jpeg"
 
-            return {
-                "status": "ok",
-                "image": img_base64,
-                "width": 640,
-                "height": 480,
-                "format": "jpeg"
-            }
-        else:
-            return {
-                "status": "error",
-                "error": "Failed to capture frame"
-            }
+        logger.info(f"Captured camera frame: {width}x{height}, {len(jpeg_bytes)} bytes")
+
+        return {
+            "status": "ok",
+            "image": img_base64,
+            "width": width,
+            "height": height,
+            "format": fmt,
+        }
 
     except Exception as e:
         error_msg = f"Camera capture error: {str(e)}"
