@@ -2,11 +2,12 @@
 
 Two camera sources:
 - capture_user_camera() - User's video feed during call
-- capture_robot_camera() - TARS' Pi camera view (uses vision model directly)
+- capture_robot_camera() - TARS' Pi camera view (uses local Moondream model)
 """
 
+import asyncio
 import base64
-import httpx
+import io
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
@@ -14,33 +15,49 @@ from pipecat.services.llm_service import FunctionCallParams
 from loguru import logger
 
 
-async def _describe_image(img_base64: str, question: str) -> str:
-    """Call DeepInfra vision model to describe an image."""
-    from config import DEEPINFRA_API_KEY, DEEPINFRA_BASE_URL, VISION_MODEL
+_moondream_model = None
+
+
+def _get_moondream():
+    """Load Moondream model once and reuse."""
+    global _moondream_model
+    if _moondream_model is None:
+        import torch
+        from transformers import AutoModelForCausalLM
+
+        if torch.backends.mps.is_available():
+            device, dtype = torch.device("mps"), torch.float16
+        elif torch.cuda.is_available():
+            device, dtype = torch.device("cuda"), torch.float16
+        else:
+            device, dtype = torch.device("cpu"), torch.float32
+
+        logger.info(f"Loading Moondream model on {device}...")
+        _moondream_model = AutoModelForCausalLM.from_pretrained(
+            "vikhyatk/moondream2",
+            trust_remote_code=True,
+            revision="2025-01-09",
+            device_map={"": device},
+            dtype=dtype,
+        ).eval()
+        logger.info("Moondream model ready")
+    return _moondream_model
+
+
+async def _describe_image(img_bytes: bytes, question: str) -> str:
+    """Describe an image using the local Moondream model."""
+    from PIL import Image
+
+    def _run():
+        model = _get_moondream()
+        image = Image.open(io.BytesIO(img_bytes))
+        image_embeds = model.encode_image(image)
+        return model.query(image_embeds, question)["answer"]
+
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(
-                f"{DEEPINFRA_BASE_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {DEEPINFRA_API_KEY}"},
-                json={
-                    "model": VISION_MODEL,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}
-                            },
-                            {"type": "text", "text": question}
-                        ]
-                    }],
-                    "max_tokens": 300,
-                },
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+        return await asyncio.to_thread(_run)
     except Exception as e:
-        logger.error(f"Vision model error: {e}", exc_info=True)
+        logger.error(f"Moondream error: {e}", exc_info=True)
         return f"Unable to analyze image: {str(e)}"
 
 
@@ -62,7 +79,7 @@ async def capture_user_camera(params: FunctionCallParams):
 
 
 async def capture_robot_camera(params: FunctionCallParams):
-    """Capture image from TARS' Pi camera and describe using vision model."""
+    """Capture image from TARS' Pi camera and describe using Moondream."""
     question = params.arguments.get("question", "What do you see?")
 
     try:
@@ -82,9 +99,10 @@ async def capture_robot_camera(params: FunctionCallParams):
             await params.result_callback("Camera returned no image data.")
             return
 
-        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), calling vision model...")
-        description = await _describe_image(img_base64, question)
-        logger.info(f"Vision result: {description[:120]}")
+        img_bytes = base64.b64decode(img_base64)
+        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running Moondream...")
+        description = await _describe_image(img_bytes, question)
+        logger.info(f"Moondream result: {description[:120]}")
         await params.result_callback(description)
 
     except Exception as e:
