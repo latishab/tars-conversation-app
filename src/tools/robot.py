@@ -173,35 +173,31 @@ async def express(params: FunctionCallParams):
     eyes_state = mapping["eyes"]
     gesture = mapping["gesture"]
 
-    try:
-        from services import tars_robot
+    had_gesture = bool(gesture and intensity in ("medium", "high"))
+    limiter.record_expression(intensity, had_gesture)
 
-        result = await tars_robot.set_emotion(eyes_state)
-        logger.info(f"express: emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
+    # Return immediately so TTS starts generating in parallel with the gesture
+    await params.result_callback("Expression set.")
 
-        had_gesture = False
-        if gesture and intensity in ("medium", "high"):
-            movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
-            await tars_robot.execute_movement(movements)
-            had_gesture = True
+    async def _do_expression():
+        try:
+            from services import tars_robot
 
-        limiter.record_expression(intensity, had_gesture)
-        await params.result_callback(result)
+            await tars_robot.set_emotion(eyes_state)
+            logger.info(f"express: emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
 
-        # Return to neutral after expression completes
-        async def _return_to_neutral():
-            delay = 3.0 if had_gesture else 2.0
-            await asyncio.sleep(delay)
-            try:
-                await tars_robot.set_emotion("neutral")
-            except Exception:
-                pass
+            if had_gesture:
+                movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
+                await tars_robot.execute_movement(movements)
 
-        asyncio.create_task(_return_to_neutral())
+            # Return to neutral after expression completes
+            await asyncio.sleep(3.0 if had_gesture else 2.0)
+            await tars_robot.set_emotion("neutral")
 
-    except Exception as e:
-        logger.error(f"express error: {e}", exc_info=True)
-        await params.result_callback(f"Error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Background expression error: {e}", exc_info=True)
+
+    asyncio.create_task(_do_expression())
 
 
 # =============================================================================
