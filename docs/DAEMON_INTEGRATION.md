@@ -1,10 +1,10 @@
 # Daemon Dashboard Integration
 
-Guide for integrating tars-conversation-app with tars-daemon dashboard app management.
+Guide for how tars-conversation-app integrates with tars-daemon dashboard app management.
 
 ## Overview
 
-The tars-daemon dashboard should provide install/uninstall buttons for managing TARS apps like this one.
+The tars-daemon dashboard provides install/uninstall/start buttons for managing TARS apps. The dashboard runs a FastAPI backend at port 8000 with `/apps` routes. Apps are installed to `~/tars-apps/` via `git clone` from GitHub, and `install.sh` runs automatically after cloning. The daemon reads the `main` field from `app.json` to determine the entry point when starting the app.
 
 ## Daemon Architecture
 
@@ -204,7 +204,7 @@ dashboard.launch()
 
 ## Environment Variables
 
-Apps should auto-detect deployment:
+Apps auto-detect deployment:
 
 ```python
 # In app configuration
@@ -224,7 +224,7 @@ def get_grpc_address():
 
 ## Installation Validation
 
-The daemon should validate before installation:
+The daemon validates before installation:
 
 ```python
 def validate_app(app_path):
@@ -267,7 +267,7 @@ def validate_app(app_path):
 
 ## Running Apps
 
-After installation, provide run buttons:
+After installation, run buttons are available:
 
 ```python
 def run_app(app_path, mode="robot"):
@@ -392,10 +392,3 @@ python -c "import pipecat; print('OK')"
 bash uninstall.sh
 ```
 
-## Next Steps
-
-1. Implement app discovery in tars-daemon
-2. Add Apps tab to dashboard
-3. Create app_manager.py module
-4. Test with tars-conversation-app
-5. Document for other developers

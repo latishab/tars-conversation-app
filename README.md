@@ -21,7 +21,7 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 - **Dual TTS Options** - Qwen3-TTS (local, free, voice cloning) or ElevenLabs (cloud)
 - **LLM Integration** - Any model via DeepInfra
 - **Vision Analysis** - Moondream for image understanding
-- **Smart Gating Layer** - AI-powered decision system for natural conversation flow
+- **Proactive Interventions** - AI-powered system for initiating contextually relevant conversation
 - **Hybrid Memory** - SQLite-based hybrid search (70% vector + 30% BM25)
 - **Emotional Monitoring** - Real-time detection of confusion, hesitation, and frustration
 - **Gradio Dashboard** - Live TTFB metrics, latency charts, and conversation transcription
@@ -32,32 +32,27 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 
 ```
 tars-conversation-app/
-├── src/bot.py                      # WebRTC mode - Browser voice AI
-├── src/tars_bot.py                 # Robot mode - Raspberry Pi hardware
-├── src/pipecat_service.py          # FastAPI backend (WebRTC signaling)
-├── config.py                   # Configuration management
-├── config.ini                  # User configuration file
-├── requirements.txt            # Python dependencies
-│
-├── src/                        # Backend
-│   ├── observers/              # Pipeline observers (metrics, transcription)
-│   ├── processors/             # Pipeline processors (silence filter, gating)
-│   ├── services/               # Services (STT, TTS, Memory, Robot)
-│   ├── tools/                  # LLM callable functions
-│   ├── transport/              # WebRTC transport (aiortc)
+├── src/
+│   ├── tars_bot.py             # Robot mode entry point
+│   ├── bot.py                  # Browser mode entry point
+│   ├── pipecat_service.py      # FastAPI WebRTC signaling backend
+│   ├── shared_state.py         # Thread-safe metrics store
 │   ├── character/              # TARS personality and prompts
-│   └── shared_state.py         # Shared metrics storage
-│
-├── ui/                         # Frontend
-│   └── app.py                  # Gradio dashboard (metrics + transcription)
-│
-├── tests/                      # Tests
-│   └── gradio/
-│       └── test_gradio.py      # UI integration test
-│
-├── character/                  # TARS character data
-│   ├── TARS.json              # Character definition
-│   └── persona.ini            # Personality parameters
+│   ├── config/                 # Configuration management
+│   ├── observers/              # Pipeline observers (8 files)
+│   ├── processors/             # Pipeline frame processors
+│   ├── services/               # STT, TTS, memory, robot services
+│   │   ├── factories/          # STT/TTS provider factories
+│   │   ├── memory/             # Hybrid memory (SQLite + ChromaDB)
+│   │   └── tts/                # Qwen3-TTS local service
+│   ├── tools/                  # LLM callable tools (robot, vision, persona)
+│   ├── transport/              # WebRTC transport (aiortc)
+│   └── ui/                     # Gradio dashboard
+├── config.ini                  # User configuration
+├── config.ini.example          # Configuration template
+├── app.json                    # App manifest for daemon dashboard
+├── requirements.txt
+└── install.sh
 ```
 
 ## Operation Modes
@@ -80,21 +75,15 @@ tars-conversation-app/
 
 ### Installation on TARS Robot (Recommended)
 
-Install directly from HuggingFace Space via the TARS dashboard:
+Install via the TARS daemon dashboard:
 
-1. Open TARS dashboard at `http://tars.local:8000/dashboard`
-2. Go to **App Store** tab
-3. Enter Space ID: `latishab/tars-conversation-app`
-4. Click **Install from HuggingFace**
+1. Open TARS dashboard at `http://tars.local:8000`
+2. Go to **Apps** tab
+3. Find "TARS Conversation App" in the list
+4. Click **Install** (clones from GitHub and runs `install.sh`)
 5. Configure API keys in `.env.local`
 6. Click **Start**
 7. Access metrics dashboard at `http://your-pi:7860`
-
-The app will:
-- Auto-install dependencies
-- Set up virtual environment
-- Configure for robot mode
-- Start Gradio dashboard
 
 ### Easy Installation (Manual)
 
@@ -148,9 +137,6 @@ provider = deepgram  # or speechmatics
 
 [TTS]
 provider = qwen3  # or elevenlabs
-
-[Memory]
-type = hybrid  # SQLite-based hybrid search (vector + BM25)
 ```
 
 ### 3. Run
@@ -164,7 +150,7 @@ python src/pipecat_service.py
 
 **Terminal 2: Gradio UI (optional)**
 ```bash
-python ui/app.py
+python src/ui/gradio_app.py
 ```
 
 Then:
@@ -221,7 +207,7 @@ python src/tars_bot.py
 
 ## Gradio Dashboard
 
-The Gradio UI (`ui/app.py`) provides real-time monitoring:
+The Gradio UI (`src/ui/gradio_app.py`) provides real-time monitoring:
 
 ### Latency Dashboard
 - Service configuration (STT, Memory, LLM, TTS)
@@ -291,7 +277,7 @@ See [docs/DEVELOPING_APPS.md](docs/DEVELOPING_APPS.md) for comprehensive guide o
 4. LLM can now call your tool
 
 ### Modifying UI
-1. Edit `ui/app.py`
+1. Edit `src/ui/gradio_app.py`
 2. Gradio hot-reloads automatically
 3. Access `metrics_store` for data
 
