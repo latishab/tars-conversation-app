@@ -445,7 +445,7 @@ async def run_robot_bot(ui=None):
         # and STT TTFB cannot be calculated.
         vad_processor = VADProcessor(
             vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.7, min_volume=0.0)
+                params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
             )
         )
 

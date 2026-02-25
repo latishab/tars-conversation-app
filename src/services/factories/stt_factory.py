@@ -63,7 +63,7 @@ def create_stt_service(
             if not deepgram_api_key:
                 raise ValueError("deepgram_api_key is required for Deepgram")
 
-            logger.info("Using Deepgram STT with server-side endpointing")
+            logger.info("Using Deepgram STT with Silero VAD turn detection")
             live_options = LiveOptions(
                 language=language.value if hasattr(language, 'value') else str(language),
                 model="nova-3",
@@ -83,7 +83,7 @@ def create_stt_service(
             )
             logger.info("✓ Deepgram STT service created")
             logger.info("  Turn detection: Silero VADProcessor (upstream in pipeline)")
-            logger.info("  TTFB timeout: 5.0s for transcription metrics")
+            logger.info("  TTFB timeout: 1.0s for transcription metrics")
 
         elif provider == "deepgram-flux":
             # Lazy import to avoid requiring package when not in use
