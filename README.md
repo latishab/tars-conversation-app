@@ -23,7 +23,6 @@ Real-time voice AI with transcription, vision, and intelligent conversation usin
 - **Vision Analysis** - Moondream for image understanding
 - **Proactive Interventions** - AI-powered system for initiating contextually relevant conversation
 - **Hybrid Memory** - SQLite-based hybrid search (70% vector + 30% BM25)
-- **Emotional Monitoring** - Real-time detection of confusion, hesitation, and frustration
 - **Gradio Dashboard** - Live TTFB metrics, latency charts, and conversation transcription
 - **WebRTC Transport** - Low-latency peer-to-peer audio
 - **gRPC Robot Control** - Hardware control with 5-10ms latency (robot mode only)
