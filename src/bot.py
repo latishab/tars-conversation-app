@@ -478,7 +478,7 @@ async def run_bot(webrtc_connection):
                     # Format STT provider name for display
                     stt_display = {
                         "speechmatics": "Speechmatics",
-                        "deepgram": "Deepgram Nova-2"
+                        "deepgram": "Deepgram Nova-3"
                     }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
 
                     service_info = {

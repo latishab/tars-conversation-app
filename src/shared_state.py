@@ -24,7 +24,8 @@ class MetricEntry:
 @dataclass
 class MetricsStore:
     """Thread-safe storage for pipeline metrics and transcriptions."""
-    metrics: deque = field(default_factory=lambda: deque(maxlen=100))
+    # Keyed by turn_number so repeated calls for the same turn update in place
+    metrics: dict = field(default_factory=dict)
     service_info: Optional[Dict] = None
     transcriptions: deque = field(default_factory=lambda: deque(maxlen=50))
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -36,14 +37,23 @@ class MetricsStore:
     _status_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def add_metric(self, metric: dict):
-        """Add a new metric entry."""
+        """Upsert a metric entry by turn_number — updates existing entry if present."""
+        import dataclasses
         with self.lock:
-            self.metrics.append(MetricEntry(**metric))
+            turn = metric["turn_number"]
+            if turn in self.metrics:
+                existing = dataclasses.asdict(self.metrics[turn])
+                # Only overwrite fields that are not None in the new metric
+                merged = {k: metric[k] if metric.get(k) is not None else existing[k]
+                          for k in existing}
+                self.metrics[turn] = MetricEntry(**merged)
+            else:
+                self.metrics[turn] = MetricEntry(**metric)
 
     def get_metrics(self) -> List[MetricEntry]:
-        """Get all stored metrics."""
+        """Get all stored metrics sorted by turn number."""
         with self.lock:
-            return list(self.metrics)
+            return [self.metrics[k] for k in sorted(self.metrics)]
 
     def set_service_info(self, info: dict):
         """Store service configuration info."""
@@ -72,7 +82,7 @@ class MetricsStore:
     def clear_metrics(self):
         """Clear all stored metrics."""
         with self.lock:
-            self.metrics.clear()
+            self.metrics = {}
 
     def set_pipeline_status(self, status: str):
         """Set pipeline status (idle/listening/thinking/speaking/disconnected/error)."""

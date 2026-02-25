@@ -66,22 +66,23 @@ def create_stt_service(
             logger.info("Using Deepgram STT with server-side endpointing")
             live_options = LiveOptions(
                 language=language.value if hasattr(language, 'value') else str(language),
-                model="nova-2",  # Deepgram's latest model
-                interim_results=True,  # Enable interim transcription results
-                smart_format=True,  # Auto-format transcripts
-                punctuate=True,  # Add punctuation
-                endpointing=300,  # 300ms silence to detect end of speech (server-side)
-                vad_events=True,  # Enable VAD events for speech detection
+                model="nova-3",
+                interim_results=True,
+                smart_format=True,
+                punctuate=True,
+                # No endpointing: turn detection handled by Silero VADProcessor upstream,
+                # which emits VADUserStoppedSpeakingFrame → finalize(). Keeping endpointing
+                # alongside Silero would produce duplicate TranscriptionFrames per turn.
+                # No vad_events: Silero VAD replaces Deepgram's deprecated vad_events.
             )
 
             stt = DeepgramSTTService(
                 api_key=deepgram_api_key,
                 live_options=live_options,
-                stt_ttfb_timeout=5.0,  # TTFB timeout for transcription (seconds)
+                stt_ttfb_timeout=1.0,  # TTFB timeout; must be < next turn gap to avoid wrong-turn attribution
             )
             logger.info("✓ Deepgram STT service created")
-            logger.info("  Turn detection: Server-side endpointing (300ms silence)")
-            logger.info("  VAD events: Enabled for speech detection")
+            logger.info("  Turn detection: Silero VADProcessor (upstream in pipeline)")
             logger.info("  TTFB timeout: 5.0s for transcription metrics")
 
         elif provider == "deepgram-flux":

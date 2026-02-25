@@ -151,7 +151,7 @@ async def run_robot_bot(ui=None):
     # Format STT display name
     stt_display = {
         "speechmatics": "Speechmatics",
-        "deepgram": "Deepgram Nova-2",
+        "deepgram": "Deepgram Nova-3",
         "deepgram-flux": "Deepgram Flux"
     }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
 
