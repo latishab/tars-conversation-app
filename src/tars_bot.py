@@ -81,12 +81,10 @@ from character.prompts import (
     get_introduction_instruction,
 )
 from tools import (
-    capture_user_camera,
     capture_robot_camera,
     adjust_persona_parameter,
     express,
     execute_movement,
-    create_user_camera_schema,
     create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
@@ -312,12 +310,14 @@ async def run_robot_bot(ui=None):
             llm = CerebrasLLMService(
                 api_key=CEREBRAS_API_KEY,
                 model=_LLM_MODEL,
+                function_call_timeout_secs=60.0,
             )
         else:
             llm = OpenAILLMService(
                 api_key=DEEPINFRA_API_KEY,
                 base_url=DEEPINFRA_BASE_URL,
                 model=_LLM_MODEL,
+                function_call_timeout_secs=60.0,
             )
         logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 
@@ -341,7 +341,6 @@ async def run_robot_bot(ui=None):
             standard_tools=[
                 create_express_schema(),
                 create_movement_schema(),
-                create_user_camera_schema(),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
                 # create_identity_schema(),  # disabled: name recognition unreliable
@@ -354,7 +353,6 @@ async def run_robot_bot(ui=None):
         # Register tool functions
         llm.register_function("express", express)
         llm.register_function("execute_movement", execute_movement)
-        llm.register_function("capture_user_camera", capture_user_camera)
         llm.register_function("capture_robot_camera", capture_robot_camera)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
@@ -676,6 +674,10 @@ if __name__ == "__main__":
         # Give UI time to start
         import time
         time.sleep(1)
+
+    # Pre-warm Moondream so first camera call doesn't hit cold-start delay
+    from tools.vision import prewarm_moondream
+    prewarm_moondream()
 
     # Mode 1 / Mode 2: robot audio
     from shared_state import metrics_store

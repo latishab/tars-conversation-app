@@ -37,6 +37,7 @@ class StateSync:
         """
         self._send_callback = send_callback
         self._message_handlers: Dict[str, Callable[[Dict[str, Any]], None]] = {}
+        self._last_tts_state: Optional[bool] = None
 
     def set_send_callback(self, callback: Callable[[str], None]):
         """Set the callback for sending messages."""
@@ -142,6 +143,9 @@ class StateSync:
         Args:
             speaking: True if TTS is currently speaking
         """
+        if speaking == self._last_tts_state:
+            return
+        self._last_tts_state = speaking
         self.send_message({"type": "tts_state", "speaking": speaking})
         logger.debug(f"🔊 Sent TTS state: {'speaking' if speaking else 'idle'}")
 

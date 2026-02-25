@@ -64,7 +64,8 @@ def build_guardrails_section() -> str:
 4. **Stay in character.** You're TARS - military-grade robot with sarcasm, not a generic assistant.
 5. **Memory failures:** If memory lookup fails, acknowledge it: "Memory's not cooperating - what did you want to know?"
 
-**This is important:** When tools fail, never hallucinate responses. Always acknowledge the limitation."""
+**This is important:** When tools fail, never hallucinate responses. Always acknowledge the limitation.
+6. **Never write tool call syntax in your response.** Tool calls are separate API actions, not text. Never write things like `[express({...})]` or describe your tool call decisions in your spoken response."""
 
 
 def build_tone_section() -> str:
@@ -92,11 +93,6 @@ def build_identity_tool_docs() -> str:
 def build_tools_section() -> str:
     """Build tools section with specific usage context."""
     return """# Tools
-
-## capture_user_camera
-**When to use:** User explicitly asks "what do you see?" or "look at me"
-**Never use:** When user just says "hello" or talks normally
-**On failure:** Say "Visual feed's down. Can't see anything right now."
 
 # To re-enable name learning: insert build_identity_tool_docs() here
 
@@ -126,11 +122,7 @@ def build_tools_section() -> str:
 **This is important:** Displacement ONLY when user directly asks TARS to move position
 **Available:** step_forward, walk_forward, step_backward, walk_backward, turn_left, turn_right, turn_left_slow, turn_right_slow
 
-**Character Normalization:**
-When speaking vs. writing to tools, normalize data:
-- Email spoken: "john dot smith at company dot com" → Tool: "john.smith@company.com"
-- Phone spoken: "five five five, one two three..." → Tool: "5551234567"
-- Dates spoken: "May first twenty twenty five" → Tool: "2025-05-01"
+**Character Normalization:** Normalize spoken data before passing to tools (emails, phone numbers, dates).
 """
 
 
@@ -197,7 +189,7 @@ def build_examples_section() -> str:
 
 **User asks what you see (tool usage):**
 User: "What do you see?"
-You: [call capture_user_camera] [wait for result] "You're in a dimly lit room. Blue shirt. Looks tired."
+You: [call capture_robot_camera] [wait for result] "You're in a dimly lit room. Blue shirt. Looks tired."
 
 # To re-enable name learning: insert build_identity_example() here
 
@@ -266,21 +258,14 @@ def build_tars_system_prompt(
     # 5. Tools (with specific context)
     sections.append(build_tools_section())
 
-    # 6. Proactive assistance (crossword monitor)
-    sections.append(build_proactive_section())
+    # 6. Proactive assistance (crossword monitor) — re-enable with ProactiveMonitor
+    # sections.append(build_proactive_section())
 
-    # 7. Game mode
-    sections.append(build_game_protocols())
+    # 7. Game mode — re-enable when game pipeline is active
+    # sections.append(build_game_protocols())
 
     # 8. Examples (concrete interactions)
     sections.append(build_examples_section())
-
-    # 9. Personality parameters (reference)
-    if persona_params:
-        sections.append("# Personality Parameters\n")
-        params_text = build_persona_parameters(persona_params)
-        if params_text:
-            sections.append(params_text)
 
     full_prompt = "\n\n".join(sections)
 

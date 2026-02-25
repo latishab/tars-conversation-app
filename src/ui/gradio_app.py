@@ -421,6 +421,29 @@ class TarsGradioUI:
                         outputs=audio_mode_md,
                     )
 
+                    with gr.Row():
+                        copy_btn = gr.Button("Copy Conversation", variant="secondary", size="sm")
+                        copy_status = gr.Markdown("")
+
+                    copy_text = gr.Textbox(
+                        label="Conversation (copy from here)",
+                        lines=6,
+                        visible=False,
+                        show_copy_button=True,
+                    )
+
+                    def show_conversation_text():
+                        transcriptions = metrics_store.get_transcriptions()
+                        if not transcriptions:
+                            return gr.update(value="No conversation yet.", visible=True), ""
+                        lines = []
+                        for t in transcriptions:
+                            prefix = "You" if t["role"] == "user" else "TARS"
+                            lines.append(f"{prefix}: {t['text']}")
+                        return gr.update(value="\n".join(lines), visible=True), ""
+
+                    copy_btn.click(show_conversation_text, outputs=[copy_text, copy_status])
+
                     gr.Markdown("### Camera Log")
                     camera_log = gr.Markdown("*No camera events yet.*")
                     timer_fast.tick(fn=self.get_camera_log, outputs=camera_log)

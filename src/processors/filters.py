@@ -31,31 +31,61 @@ class InputAudioFilter(FrameProcessor):
 class SilenceFilter(FrameProcessor):
     """
     Intercepts LLM responses. If response is {"action": "silence"}, drops it.
+    Also strips [functionName({...})] tool-call annotations that the LLM
+    occasionally leaks into its text stream.
     """
     def __init__(self):
         super().__init__()
         self.current_response_text = ""
         self.is_collecting = False
-    
+        self._annot_buf = ""   # chars buffered inside a potential [func(...)]
+        self._in_annot = False
+
+    def _process_text_token(self, text: str) -> str:
+        """Strip [funcName({...})] annotations from a streaming text token."""
+        output = []
+        for ch in text:
+            if not self._in_annot:
+                if ch == '[':
+                    self._in_annot = True
+                    self._annot_buf = '['
+                else:
+                    output.append(ch)
+            else:
+                self._annot_buf += ch
+                if ch == ']':
+                    # Only emit if it doesn't look like a tool-call annotation
+                    if not re.match(r'\[[a-zA-Z_]+\s*\(', self._annot_buf):
+                        output.extend(self._annot_buf)
+                    self._annot_buf = ""
+                    self._in_annot = False
+        return ''.join(output)
+
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
-        
+
         if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
             self.current_response_text = ""
             self.is_collecting = False
+            self._annot_buf = ""
+            self._in_annot = False
             await self.push_frame(frame, direction)
             return
-        
+
         # Start collecting text
         if isinstance(frame, LLMFullResponseStartFrame):
             self.current_response_text = ""
             self.is_collecting = True
+            self._annot_buf = ""
+            self._in_annot = False
             await self.push_frame(frame, direction)
-            
-        # Accumulate text
+
+        # Accumulate and filter text tokens
         elif isinstance(frame, LLMTextFrame) and self.is_collecting:
             self.current_response_text += frame.text
-            await self.push_frame(frame, direction)
+            filtered = self._process_text_token(frame.text)
+            if filtered:
+                await self.push_frame(LLMTextFrame(text=filtered), direction)
             
         # Check the full response
         elif isinstance(frame, LLMFullResponseEndFrame):
