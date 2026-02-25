@@ -1,10 +1,10 @@
 [LLM]
-# Available models: Any DeepInfra-supported model
-# Examples: openai/gpt-oss-20b, meta-llama/Llama-3.3-70B-Instruct-Turbo, meta-llama/Llama-3.2-3B-Instruct
-model = openai/gpt-oss-20b
+# LLM provider: cerebras, deepinfra
+provider = cerebras
 
-# Gating model for intervention decisions (smaller/faster model recommended)
-gating_model = meta-llama/Llama-3.2-3B-Instruct
+# Cerebras models: gpt-oss-120b, gpt-oss-20b
+# DeepInfra models: meta-llama/Llama-3.3-70B-Instruct, openai/gpt-oss-20b
+model = gpt-oss-120b
 
 [STT]
 # Available providers: speechmatics, deepgram, deepgram-flux

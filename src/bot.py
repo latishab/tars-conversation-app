@@ -38,6 +38,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.cerebras import CerebrasLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
@@ -53,6 +54,7 @@ from config import (
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
+    CEREBRAS_API_KEY,
     get_fresh_config,
 )
 from services.factories import create_stt_service, create_tts_service
@@ -159,6 +161,8 @@ async def run_bot(webrtc_connection):
     # Load fresh configuration for this connection (allows runtime config updates)
     runtime_config = get_fresh_config()
     DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
+    _LLM_PROVIDER = runtime_config['LLM_PROVIDER']
+    _LLM_MODEL = runtime_config['LLM_MODEL']
     STT_PROVIDER = runtime_config['STT_PROVIDER']
     TTS_PROVIDER = runtime_config['TTS_PROVIDER']
     QWEN3_TTS_MODEL = runtime_config['QWEN3_TTS_MODEL']
@@ -167,7 +171,7 @@ async def run_bot(webrtc_connection):
     TARS_DISPLAY_URL = runtime_config['TARS_DISPLAY_URL']
     TARS_DISPLAY_ENABLED = runtime_config['TARS_DISPLAY_ENABLED']
 
-    logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {DEEPINFRA_MODEL}, TTS: {TTS_PROVIDER}")
+    logger.info(f"📋 Runtime config loaded - STT: {STT_PROVIDER}, LLM: {_LLM_PROVIDER}/{_LLM_MODEL}, TTS: {TTS_PROVIDER}")
 
     # Session initialization
     session_id = str(uuid.uuid4())[:8]
@@ -250,14 +254,21 @@ async def run_bot(webrtc_connection):
         # LLM SERVICE & TOOLS
         # ====================================================================
 
-        logger.info("Initializing LLM via DeepInfra...")
+        logger.info("Initializing LLM...")
         llm = None
         try:
-            llm = OpenAILLMService(
-                api_key=DEEPINFRA_API_KEY,
-                base_url=DEEPINFRA_BASE_URL,
-                model=DEEPINFRA_MODEL 
-            )
+            if _LLM_PROVIDER == "cerebras":
+                llm = CerebrasLLMService(
+                    api_key=CEREBRAS_API_KEY,
+                    model=_LLM_MODEL,
+                )
+            else:
+                llm = OpenAILLMService(
+                    api_key=DEEPINFRA_API_KEY,
+                    base_url=DEEPINFRA_BASE_URL,
+                    model=_LLM_MODEL,
+                )
+            logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
             
             character_dir = os.path.join(os.path.dirname(__file__), "character")
             persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
@@ -267,7 +278,7 @@ async def run_bot(webrtc_connection):
             # Create tool schemas (these return FunctionSchema objects)
             user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
-            identity_tool = create_identity_schema()
+            # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
             movement_tool = create_movement_schema()
             camera_capture_tool = create_camera_capture_schema()
 
@@ -276,7 +287,7 @@ async def run_bot(webrtc_connection):
                 standard_tools=[
                     user_camera_tool,
                     persona_tool,
-                    identity_tool,
+                    # identity_tool,
                     movement_tool,
                     camera_capture_tool,
                 ]
@@ -290,42 +301,41 @@ async def run_bot(webrtc_connection):
             llm.register_function("capture_camera_view", capture_camera_view)
 
             pipeline_unifier = IdentityUnifier(client_id)
-            async def wrapped_set_identity(params: FunctionCallParams):
-                name = params.arguments["name"]
-                logger.info(f"👤 Identity discovered: {name}")
-
-                old_id = client_state["client_id"]
-                new_id = f"user_{name.lower().replace(' ', '_')}"
-
-                if old_id != new_id:
-                    logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
-                    client_state["client_id"] = new_id
-
-                    # Update the pipeline unifier to use new identity
-                    pipeline_unifier.target_user_id = new_id
-                    logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
-
-                    # Update memory service with new user_id
-                    if memory_service:
-                        memory_service.user_id = new_id
-                        logger.info(f"✓ Updated memory service user_id to: {new_id}")
-
-                    # Notify frontend of identity change
-                    try:
-                        if webrtc_connection and webrtc_connection.is_connected():
-                            webrtc_connection.send_app_message({
-                                "type": "identity_update",
-                                "old_id": old_id,
-                                "new_id": new_id,
-                                "name": name
-                            })
-                            logger.info(f"📤 Sent identity update to frontend: {new_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to send identity update to frontend: {e}")
-
-                await params.result_callback(f"Identity updated to {name}.")
-
-            llm.register_function("set_user_identity", wrapped_set_identity)
+            # async def wrapped_set_identity(params: FunctionCallParams):  # disabled: name recognition unreliable
+            #     name = params.arguments["name"]
+            #     logger.info(f"👤 Identity discovered: {name}")
+            #
+            #     old_id = client_state["client_id"]
+            #     new_id = f"user_{name.lower().replace(' ', '_')}"
+            #
+            #     if old_id != new_id:
+            #         logger.info(f"🔄 Switching User ID: {old_id} -> {new_id}")
+            #         client_state["client_id"] = new_id
+            #
+            #         # Update the pipeline unifier to use new identity
+            #         pipeline_unifier.target_user_id = new_id
+            #         logger.info(f"✓ Updated pipeline unifier with new ID: {new_id}")
+            #
+            #         # Update memory service with new user_id
+            #         if memory_service:
+            #             memory_service.user_id = new_id
+            #             logger.info(f"✓ Updated memory service user_id to: {new_id}")
+            #
+            #         # Notify frontend of identity change
+            #         try:
+            #             if webrtc_connection and webrtc_connection.is_connected():
+            #                 webrtc_connection.send_app_message({
+            #                     "type": "identity_update",
+            #                     "old_id": old_id,
+            #                     "new_id": new_id,
+            #                     "name": name
+            #                 })
+            #                 logger.info(f"📤 Sent identity update to frontend: {new_id}")
+            #         except Exception as e:
+            #             logger.warning(f"Failed to send identity update to frontend: {e}")
+            #
+            #     await params.result_callback(f"Identity updated to {name}.")
+            # llm.register_function("set_user_identity", wrapped_set_identity)
             logger.info(f"✓ LLM initialized with model: {DEEPINFRA_MODEL}")
 
         except Exception as e:

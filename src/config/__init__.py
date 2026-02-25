@@ -11,7 +11,7 @@ load_dotenv()  # Also load from .env if .env.local doesn't exist
 
 # Load config.ini for user-configurable settings
 config = configparser.ConfigParser()
-config_path = Path(__file__).parent.parent / 'config.ini'
+config_path = Path(__file__).parent.parent.parent / 'config.ini'
 
 def reload_config():
     """Reload configuration from config.ini."""
@@ -31,7 +31,8 @@ def get_fresh_config():
     reload_config()
     return {
         'DEEPINFRA_MODEL': get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b"),
-        'DEEPINFRA_GATING_MODEL': get_config("LLM", "gating_model", "DEEPINFRA_GATING_MODEL", "meta-llama/Llama-3.2-3B-Instruct"),
+        'LLM_PROVIDER': get_config("LLM", "provider", "LLM_PROVIDER", "cerebras"),
+        'LLM_MODEL': get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b"),
         'STT_PROVIDER': get_config("STT", "provider", "STT_PROVIDER", "speechmatics"),
         'TTS_PROVIDER': get_config("TTS", "provider", "TTS_PROVIDER", "qwen3"),
         'QWEN3_TTS_MODEL': get_config("TTS", "qwen3_model", "QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
@@ -73,6 +74,8 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ry8mpwRw6nugb2qjP0tu")
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "")
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 PIPECAT_PORT = int(os.getenv("PIPECAT_PORT", "7860"))
 PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 
@@ -81,6 +84,8 @@ MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 
 # LLM Configuration (config.ini with .env fallback)
 DEEPINFRA_MODEL = get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b")
+LLM_PROVIDER = get_config("LLM", "provider", "LLM_PROVIDER", "cerebras")
+LLM_MODEL = get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b")
 
 # STT Configuration (config.ini with .env fallback)
 # Options: "speechmatics", "deepgram", "deepgram-flux"
@@ -91,9 +96,6 @@ TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "qwen3")
 QWEN3_TTS_MODEL = get_config("TTS", "qwen3_model", "QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
 QWEN3_TTS_DEVICE = get_config("TTS", "qwen3_device", "QWEN3_TTS_DEVICE", "mps")
 QWEN3_TTS_REF_AUDIO = get_config("TTS", "qwen3_ref_audio", "QWEN3_TTS_REF_AUDIO", "tars-clean-compressed.mp3")
-
-# Gating Model Configuration (config.ini with .env fallback)
-DEEPINFRA_GATING_MODEL = get_config("LLM", "gating_model", "DEEPINFRA_GATING_MODEL", "meta-llama/Llama-3.2-3B-Instruct")
 
 # Emotional State Monitoring (config.ini with .env fallback)
 EMOTIONAL_MONITORING_ENABLED = get_config("Emotional", "enabled", "EMOTIONAL_MONITORING_ENABLED", "true").lower() == "true"
