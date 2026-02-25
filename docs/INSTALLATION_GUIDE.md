@@ -11,16 +11,16 @@ Quick reference for installing tars-conversation-app on Raspberry Pi.
 
 ## From Dashboard (Recommended)
 
-Once tars-daemon implements app management:
+The tars-daemon dashboard supports app management at `http://tars.local:8000`:
 
-1. Open tars-daemon dashboard at `http://tars.local:8000/dashboard` (or your Pi's IP)
+1. Open tars-daemon dashboard at `http://tars.local:8000` (or your Pi's IP)
 2. Navigate to "Apps" tab
-3. Find "tars-conversation-app"
-4. Click "Install" button
+3. Find "TARS Conversation App" in the list
+4. Click "Install" (clones from GitHub and runs `install.sh`)
 5. Wait for installation to complete
 6. Configure API keys in `.env.local`
 7. Adjust settings in `config.ini` if needed
-8. Click "Run" to start
+8. Click "Start"
 
 ## Manual Installation (SSH)
 
@@ -109,12 +109,12 @@ source venv/bin/activate
 
 Run in robot mode:
 ```bash
-python tars_bot.py
+python src/tars_bot.py
 ```
 
 Or run dashboard:
 ```bash
-python ui/app.py
+python src/ui/gradio_app.py
 ```
 
 ## Verification
@@ -241,7 +241,7 @@ Requires=tars-daemon.service
 Type=simple
 User=mac
 WorkingDirectory=/home/mac/tars-conversation-app
-ExecStart=/home/mac/tars-conversation-app/venv/bin/python tars_bot.py
+ExecStart=/home/mac/tars-conversation-app/venv/bin/python src/tars_bot.py
 Restart=always
 RestartSec=10
 

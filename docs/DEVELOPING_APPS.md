@@ -248,7 +248,7 @@ echo "Uninstall complete!"
 
 ### 1. Project Structure
 
-- Keep source code in `src/` directory
+- Keep source code in `src/` directory (see `tars-conversation-app` as reference: entry points at `src/tars_bot.py` and `src/bot.py`, UI at `src/ui/gradio_app.py`)
 - Separate configuration from code
 - Provide example configs (never commit secrets)
 - Include tests in `tests/` directory
