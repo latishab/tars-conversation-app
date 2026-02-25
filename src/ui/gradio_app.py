@@ -222,6 +222,23 @@ class TarsGradioUI:
 **Audio Mode:** {metrics_store.audio_mode}
 **Status:** {metrics_store.get_pipeline_status()}"""
 
+    def get_camera_log(self) -> str:
+        from datetime import datetime
+        events = metrics_store.get_camera_events()
+        if not events:
+            return "*No camera events yet.*"
+        lines = []
+        for e in reversed(events):
+            ts = datetime.fromtimestamp(e.timestamp).strftime("%H:%M:%S")
+            if e.status == "capturing":
+                lines.append(f"`{ts}` **{e.question}**")
+            elif e.status == "ok":
+                lat = f" `{e.latency_ms:.0f}ms`" if e.latency_ms else ""
+                lines.append(f"`{ts}`{lat} {e.result_preview}")
+            else:
+                lines.append(f"`{ts}` ERR {e.result_preview}")
+        return "\n\n".join(lines)
+
     def get_turn_count(self) -> str:
         """Return turn count."""
         turns = sum(1 for t in metrics_store.get_transcriptions() if t["role"] == "user")
@@ -403,6 +420,10 @@ class TarsGradioUI:
                         fn=lambda: f"*Audio: {metrics_store.get_audio_mode()}*",
                         outputs=audio_mode_md,
                     )
+
+                    gr.Markdown("### Camera Log")
+                    camera_log = gr.Markdown("*No camera events yet.*")
+                    timer_fast.tick(fn=self.get_camera_log, outputs=camera_log)
 
                 # === Metrics Tab ===
                 with gr.Tab("Metrics"):

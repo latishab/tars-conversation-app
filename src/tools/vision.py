@@ -17,6 +17,21 @@ from loguru import logger
 
 _moondream_model = None
 
+_state_sync_ref = None  # set by tars_bot.py after StateSync is created
+
+
+def set_state_sync(ss):
+    global _state_sync_ref
+    _state_sync_ref = ss
+
+
+def _notify_display(status: str, text: str, latency_ms: float = None):
+    if _state_sync_ref is None:
+        return
+    icon = "OK" if status == "ok" else "ERR"
+    lat = f" {latency_ms:.0f}ms" if latency_ms else ""
+    _state_sync_ref.send_camera_log(f"[{icon}{lat}] {text}")
+
 
 def _get_moondream():
     """Load Moondream model once and reuse."""
@@ -80,7 +95,14 @@ async def capture_user_camera(params: FunctionCallParams):
 
 async def capture_robot_camera(params: FunctionCallParams):
     """Capture image from TARS' Pi camera and describe using Moondream."""
+    import time as _time
+    from shared_state import metrics_store, CameraEvent
+
     question = params.arguments.get("question", "What do you see?")
+    _t0 = _time.time()
+    metrics_store.add_camera_event(CameraEvent(
+        timestamp=_t0, question=question, status="capturing"
+    ))
 
     try:
         from services import tars_robot
@@ -91,11 +113,21 @@ async def capture_robot_camera(params: FunctionCallParams):
         if result.get("status") == "error":
             error = result.get("error", "unknown error")
             logger.warning(f"Robot camera capture failed: {error}")
+            metrics_store.add_camera_event(CameraEvent(
+                timestamp=_time.time(), question=question, status="error",
+                result_preview=error[:80],
+            ))
+            _notify_display("error", f"Camera unavailable: {error[:50]}")
             await params.result_callback(f"Camera unavailable: {error}")
             return
 
         img_base64 = result.get("image")
         if not img_base64:
+            metrics_store.add_camera_event(CameraEvent(
+                timestamp=_time.time(), question=question, status="error",
+                result_preview="No image data",
+            ))
+            _notify_display("error", "Camera returned no image data")
             await params.result_callback("Camera returned no image data.")
             return
 
@@ -103,10 +135,22 @@ async def capture_robot_camera(params: FunctionCallParams):
         logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running Moondream...")
         description = await _describe_image(img_bytes, question)
         logger.info(f"Moondream result: {description[:120]}")
+
+        _lat = (_time.time() - _t0) * 1000
+        metrics_store.add_camera_event(CameraEvent(
+            timestamp=_time.time(), question=question, status="ok",
+            result_preview=description[:80], latency_ms=_lat,
+        ))
+        _notify_display("ok", description[:60], _lat)
         await params.result_callback(description)
 
     except Exception as e:
         logger.error(f"Robot camera error: {e}", exc_info=True)
+        metrics_store.add_camera_event(CameraEvent(
+            timestamp=_time.time(), question=question, status="error",
+            result_preview=str(e)[:80],
+        ))
+        _notify_display("error", str(e)[:60])
         await params.result_callback(f"Camera error: {str(e)}")
 
 
