@@ -57,6 +57,7 @@ async def run_loopback(
     rpi_host: str,
     duration: int,
     noise_gate: float,
+    denoise: bool,
     play: str,
     save: str | None,
 ):
@@ -91,6 +92,7 @@ async def run_loopback(
         aiortc_track=track,
         sample_rate=16000,
         noise_gate_rms=noise_gate,
+        denoise=denoise,
     )
     logger.info(f"Noise gate: {'disabled' if noise_gate == 0 else f'RMS threshold={noise_gate}'}")
 
@@ -154,7 +156,9 @@ def main():
     parser.add_argument("--url", default="http://tars:8000", help="Pi WebRTC server URL")
     parser.add_argument("--host", default="tars-pi", help="Pi SSH host (for --play pi)")
     parser.add_argument("--duration", type=int, default=8, help="Recording duration in seconds")
-    parser.add_argument("--noise-gate", type=float, default=0.02, help="Noise gate RMS threshold (0 to disable)")
+    parser.add_argument("--noise-gate", type=float, default=0.0, help="Noise gate RMS threshold (0 to disable)")
+    parser.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=False,
+                        help="Apply spectral subtraction denoising (default: on)")
     parser.add_argument("--play", choices=["mac", "pi", "none"], default="mac",
                         help="Where to play back the recorded audio")
     parser.add_argument("--save", default=None, metavar="FILE.wav",
@@ -166,6 +170,7 @@ def main():
         rpi_host=args.host,
         duration=args.duration,
         noise_gate=args.noise_gate,
+        denoise=args.denoise,
         play=args.play,
         save=args.save,
     ))

@@ -1,60 +1,87 @@
 """
 Audio bridge between aiortc WebRTC and Pipecat pipeline.
 
-Audio format notes:
-- Opus/WebRTC always decodes to 48kHz regardless of capture rate. Pi captures at
-  16kHz, so incoming frames are 48kHz and decimated 3:1 back to 16kHz here.
-- aiortc delivers s16 interleaved stereo: to_ndarray() returns shape (1, samples*2).
-  Must reshape to (samples, 2) before mixing to mono — NOT mean(axis=0).
-- Deepgram Flux expects linear16 at the sample rate set in PipelineParams
-  (default 16000). Mismatch → silent transcription with no error.
+Audio chain (Mac → Pi):
+  ElevenLabs 24kHz PCM → AudioBridge resamples to 48kHz (resample_poly) →
+  RPiAudioOutputTrack serves 960-sample frames (20ms @ 48kHz) → aiortc Opus →
+  Pi decodes to s16 stereo 48kHz → reshape(-1,2).mean(axis=1) → SpeakerOutput
 
-Noise gate:
-- Frames below noise_gate_rms threshold are replaced with silence.
-- A hold counter keeps the gate open for ~160ms after speech ends so word
-  tails aren't clipped (avoids click/pop artifacts at speech boundaries).
+Key pitfalls:
+- aiortc Opus always decodes to s16 interleaved stereo. to_ndarray() returns
+  (1, samples*channels). Must reshape(-1, channels).mean(axis=1), not mean(axis=0).
+- Each recv() must return exactly one Opus frame (960 samples @ 48kHz = 20ms).
+  Large chunks produce multiple packets sharing one RTP timestamp; Pi jitter
+  buffer drops them as duplicates.
+- aiortc's internal resampler is linear — causes robotic artifacts. Resample
+  TTS audio on the Mac side with resample_poly before handing to aiortc.
+- Deepgram Flux expects linear16 at PipelineParams.audio_in_sample_rate (16kHz).
+
+Noise suppression (opt-in, denoise=True):
+- Captures ~0.5s noise profile then applies per-frame spectral subtraction.
+- Noise gate (noise_gate_rms > 0) is a lighter alternative when denoise=False.
 """
 
 import asyncio
+import fractions
+import time
 import numpy as np
 from typing import Optional, AsyncIterator
 from loguru import logger
+from scipy import signal
+from scipy.signal import resample_poly
+from math import gcd
 
 from aiortc import MediaStreamTrack
 from av import AudioFrame as AVAudioFrame
 
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, Frame
 from pipecat.processors.frame_processor import FrameProcessor
 
 
 class RPiAudioInputTrack:
     """Wraps aiortc audio track from RPi mic and yields Pipecat AudioRawFrame objects."""
 
+    # Spectral subtraction constants
+    _N_FFT = 512        # 32ms window at 16kHz
+    _HOP = 256          # 50% overlap (used only for noise profile estimation)
+    _ALPHA = 1.5        # subtraction strength
+    _BETA = 0.02        # spectral floor (prevents musical noise)
+    _NOISE_FRAMES = 25  # frames to capture for noise profile (~0.5s at 20ms/frame)
+
     def __init__(
         self,
         aiortc_track: MediaStreamTrack,
         sample_rate: int = 16000,
-        noise_gate_rms: float = 0.02,
+        noise_gate_rms: float = 0.0,
+        denoise: bool = False,
     ):
         """
         Args:
             aiortc_track: Audio track received from RPi via WebRTC.
             sample_rate: Target sample rate for Pipecat/STT (default 16kHz).
-            noise_gate_rms: RMS threshold below which frames are silenced.
-                            Suppresses fan/ambient noise. Set to 0.0 to disable.
+            noise_gate_rms: RMS threshold below which frames are silenced (default 0 = off).
+                            Only applies when denoise=False. Use for noisy environments
+                            without the overhead of spectral subtraction.
+            denoise: Apply spectral subtraction noise suppression (default False).
+                     Captures a noise profile from the first ~0.5s then subtracts it
+                     per-frame. Enable for environments with loud fans or ambient noise.
         """
         self.aiortc_track = aiortc_track
         self.sample_rate = sample_rate
         self.noise_gate_rms = noise_gate_rms
+        self.denoise = denoise
         self._running = False
-        self._gate_hold_frames = 8  # ~160ms at 20ms/frame
+        self.is_mic_muted = False
+
+        self._gate_hold_frames = 8   # ~160ms at 20ms/frame
         self._gate_hold_counter = 0
 
+        if denoise:
+            self._noise_spec: Optional[np.ndarray] = None
+            self._noise_buf: list[np.ndarray] = []
+            self._noise_frames_captured = 0
+
     async def start(self) -> AsyncIterator[AudioRawFrame]:
-        """
-        Receive audio frames from the RPi mic track and yield Pipecat AudioRawFrames.
-        Handles format conversion, downsampling, and noise gating.
-        """
         self._running = True
         logger.info(f"Started receiving audio from RPi at {self.sample_rate}Hz")
 
@@ -75,7 +102,6 @@ class RPiAudioInputTrack:
                 channels = len(frame.layout.channels)
                 is_float = fmt.startswith("flt") or fmt.startswith("dbl")
 
-                # Mix to mono — handle interleaved (s16) and planar (s16p) formats
                 if channels > 1:
                     if fmt.endswith("p"):
                         mono = audio_array.mean(axis=0)
@@ -89,14 +115,22 @@ class RPiAudioInputTrack:
                 else:
                     audio_int16 = mono.astype(np.int16)
 
-                # Decimate to target sample rate (e.g. 48kHz → 16kHz, ratio=3)
                 if incoming_rate != self.sample_rate and self.sample_rate > 0:
                     ratio = incoming_rate // self.sample_rate
                     if ratio > 1:
                         audio_int16 = audio_int16[::ratio]
 
-                # Noise gate with hold
-                if self.noise_gate_rms > 0:
+                if self.denoise:
+                    audio_float = audio_int16.astype(np.float32) / 32767.0
+                    if self._noise_spec is None:
+                        self._noise_buf.append(audio_float)
+                        self._noise_frames_captured += 1
+                        if self._noise_frames_captured >= self._NOISE_FRAMES:
+                            self._capture_noise_profile()
+                    else:
+                        audio_int16 = self._apply_spectral_subtraction(audio_int16)
+
+                elif self.noise_gate_rms > 0:
                     rms = np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2)) / 32767.0
                     if rms >= self.noise_gate_rms:
                         self._gate_hold_counter = self._gate_hold_frames
@@ -105,7 +139,10 @@ class RPiAudioInputTrack:
                     else:
                         audio_int16 = np.zeros_like(audio_int16)
 
-                yield AudioRawFrame(
+                if self.is_mic_muted:
+                    audio_int16 = np.zeros_like(audio_int16)
+
+                yield InputAudioRawFrame(
                     audio=audio_int16.tobytes(),
                     sample_rate=self.sample_rate,
                     num_channels=1,
@@ -115,43 +152,105 @@ class RPiAudioInputTrack:
             self._running = False
             logger.info("Stopped receiving audio from RPi")
 
+    def _capture_noise_profile(self):
+        noise = np.concatenate(self._noise_buf).astype(np.float32)
+        _, _, Zxx = signal.stft(
+            noise,
+            nperseg=self._N_FFT,
+            noverlap=self._N_FFT - self._HOP,
+            window="hann",
+        )
+        self._noise_spec = np.mean(np.abs(Zxx), axis=-1).astype(np.float32)
+        rms = np.sqrt(np.mean(noise ** 2))
+        logger.info(
+            f"Noise profile captured: RMS={rms:.4f} ({20*np.log10(rms+1e-9):.1f} dBFS), "
+            f"bins={len(self._noise_spec)}"
+        )
+        self._noise_buf.clear()
+
+    def _apply_spectral_subtraction(self, audio_int16: np.ndarray) -> np.ndarray:
+        n = len(audio_int16)
+        x = audio_int16.astype(np.float32) / 32767.0
+
+        padded = np.zeros(self._N_FFT, dtype=np.float32)
+        padded[:n] = x
+
+        spec = np.fft.rfft(padded)
+        mag = np.abs(spec)
+        phase = np.angle(spec)
+
+        mag_clean = np.maximum(
+            mag - self._ALPHA * self._noise_spec,
+            self._BETA * self._noise_spec,
+        )
+
+        denoised = np.fft.irfft(mag_clean * np.exp(1j * phase)).real
+        return np.clip(denoised[:n] * 32767, -32767, 32767).astype(np.int16)
+
+    def set_mic_mute(self, muted: bool):
+        self.is_mic_muted = muted
+
     def stop(self):
         self._running = False
 
 
 class RPiAudioOutputTrack(MediaStreamTrack):
-    """aiortc MediaStreamTrack that streams TTS audio to the RPi speaker."""
+    """aiortc MediaStreamTrack that streams TTS audio to the RPi speaker.
+
+    Buffers incoming audio and serves exactly FRAME_SAMPLES samples per recv()
+    call so every Opus packet gets a unique, incrementing RTP timestamp.
+    Sends silence between utterances to keep the WebRTC stream alive.
+    """
 
     kind = "audio"
 
-    def __init__(self, sample_rate: int = 24000):
-        """
-        Args:
-            sample_rate: Sample rate of TTS audio being sent to RPi (default 24kHz).
-                         Must be created and added to the WebRTC peer connection
-                         before connect() is called so it's included in the SDP offer.
-        """
+    def __init__(self, sample_rate: int = 48000):
         super().__init__()
         self.sample_rate = sample_rate
+        self.FRAME_SAMPLES = int(sample_rate * 0.02)  # 20ms at sample_rate
         self._queue: asyncio.Queue = asyncio.Queue()
+        self._buf = np.array([], dtype=np.int16)
         self._timestamp = 0
         self._running = True
+        self._time_base = fractions.Fraction(1, sample_rate)
+        self._diag_first_add: Optional[float] = None   # t when add_audio first called
+        self._diag_first_recv: Optional[float] = None  # t when recv first pulled audio
 
     async def recv(self) -> AVAudioFrame:
-        """Called by aiortc to pull the next frame to encode and send to RPi."""
-        audio_bytes = await self._queue.get()
+        while len(self._buf) < self.FRAME_SAMPLES and self._running:
+            try:
+                audio_bytes = await asyncio.wait_for(self._queue.get(), timeout=0.02)
+            except asyncio.TimeoutError:
+                silence = np.zeros(self.FRAME_SAMPLES - len(self._buf), dtype=np.int16)
+                self._buf = np.concatenate([self._buf, silence])
+                break
 
-        if audio_bytes is None:
-            self.stop()
-            raise Exception("Track stopped")
+            if audio_bytes is None:
+                self._running = False
+                break
 
-        audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
-        samples = len(audio_int16)
+            chunk = np.frombuffer(audio_bytes, dtype=np.int16)
+            self._buf = np.concatenate([self._buf, chunk])
 
-        frame = AVAudioFrame(format="s16", layout="mono", samples=samples)
+            # [DIAG-3] First non-silence recv after add_audio signals audio reaching aiortc
+            if self._diag_first_add is not None and self._diag_first_recv is None:
+                self._diag_first_recv = time.perf_counter()
+                gap_add_to_recv = (self._diag_first_recv - self._diag_first_add) * 1000
+                logger.debug(
+                    f"[AudioDiag] add_audio→recv gap: {gap_add_to_recv:.1f}ms"
+                )
+
+        n = min(self.FRAME_SAMPLES, len(self._buf))
+        samples = np.zeros(self.FRAME_SAMPLES, dtype=np.int16)
+        samples[:n] = self._buf[:n]
+        self._buf = self._buf[n:]
+
+        frame = AVAudioFrame(format="s16", layout="mono", samples=self.FRAME_SAMPLES)
         frame.sample_rate = self.sample_rate
-        frame.planes[0].update(audio_int16.tobytes())
-        self._timestamp += samples
+        frame.pts = self._timestamp
+        frame.time_base = self._time_base
+        frame.planes[0].update(samples.tobytes())
+        self._timestamp += self.FRAME_SAMPLES
 
         return frame
 
@@ -159,6 +258,11 @@ class RPiAudioOutputTrack(MediaStreamTrack):
         """Enqueue PCM audio bytes (int16) to be sent to the RPi speaker."""
         if self._running:
             await self._queue.put(audio_bytes)
+
+    def mark_tts_start(self):
+        """Call when the first TTS frame for a new utterance is enqueued."""
+        self._diag_first_add = time.perf_counter()
+        self._diag_first_recv = None
 
     def stop(self):
         self._running = False
@@ -179,22 +283,55 @@ class AudioBridge(FrameProcessor):
         rpi_input_track: Optional[RPiAudioInputTrack] = None,
         rpi_output_track: Optional[RPiAudioOutputTrack] = None,
     ):
-        """
-        Args:
-            rpi_input_track: Track receiving audio from the RPi mic (used externally
-                             to feed frames into the pipeline via feed_rpi_audio).
-            rpi_output_track: Track sending TTS audio to the RPi speaker.
-        """
         super().__init__()
         self.rpi_input_track = rpi_input_track
         self.rpi_output_track = rpi_output_track
+        self._diag_tts_active = False
+        self._diag_first_frame_t: Optional[float] = None
+        self._diag_logged_add = False
 
     async def process_frame(self, frame: Frame, direction):
-        """Intercept TTS AudioRawFrames and forward audio to the RPi speaker."""
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, AudioRawFrame) and self.rpi_output_track:
-            await self.rpi_output_track.add_audio(frame.audio)
+        if isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
+            # [DIAG-1] Timestamp the first TTS frame arriving at the bridge per utterance
+            if not self._diag_tts_active:
+                self._diag_tts_active = True
+                self._diag_first_frame_t = time.perf_counter()
+                logger.debug(f"[AudioDiag] First TTS frame arrived at bridge (t={self._diag_first_frame_t:.3f})")
+                self.rpi_output_track.mark_tts_start()
+
+            audio_bytes = frame.audio
+            src_rate = frame.sample_rate
+            dst_rate = self.rpi_output_track.sample_rate
+
+            if src_rate and dst_rate and src_rate != dst_rate:
+                t0 = time.perf_counter()
+                pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+                g = gcd(src_rate, dst_rate)
+                up, down = dst_rate // g, src_rate // g
+                pcm = resample_poly(pcm, up, down)
+                audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
+                # [DIAG-2] Per-frame resample cost (log first frame and any slow frames)
+                resample_ms = (time.perf_counter() - t0) * 1000
+                if not self._diag_logged_add or resample_ms > 2.0:
+                    logger.debug(
+                        f"[AudioDiag] resample_poly {src_rate}→{dst_rate}Hz: "
+                        f"{resample_ms:.2f}ms, {len(frame.audio)} bytes in / {len(audio_bytes)} out"
+                    )
+
+            await self.rpi_output_track.add_audio(audio_bytes)
+
+            # [DIAG-2] Log gap: first TTS frame → first add_audio enqueue
+            if not self._diag_logged_add:
+                self._diag_logged_add = True
+                gap_ms = (time.perf_counter() - self._diag_first_frame_t) * 1000
+                logger.debug(f"[AudioDiag] bridge→add_audio gap (incl. resample): {gap_ms:.1f}ms")
+
+        elif self._diag_tts_active and not isinstance(frame, OutputAudioRawFrame):
+            # TTS stream ended — reset for next utterance
+            self._diag_tts_active = False
+            self._diag_logged_add = False
 
         await self.push_frame(frame, direction)
 

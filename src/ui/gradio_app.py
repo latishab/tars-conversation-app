@@ -224,8 +224,8 @@ class TarsGradioUI:
 
     def get_turn_count(self) -> str:
         """Return turn count."""
-        metrics = metrics_store.get_metrics()
-        return f"**Turns:** {len(metrics)}"
+        turns = sum(1 for t in metrics_store.get_transcriptions() if t["role"] == "user")
+        return f"**Turns:** {turns}"
 
     def calculate_stats(self, values: List[float]) -> dict:
         """Calculate min/max/avg/last for a list of values."""

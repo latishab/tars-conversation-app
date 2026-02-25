@@ -5,6 +5,7 @@ Expression system:
 - execute_movement(): displacement movements on explicit user request
 """
 
+import asyncio
 import time
 from typing import Optional
 from loguru import logger
@@ -186,6 +187,17 @@ async def express(params: FunctionCallParams):
 
         limiter.record_expression(intensity, had_gesture)
         await params.result_callback(result)
+
+        # Return to neutral after expression completes
+        async def _return_to_neutral():
+            delay = 3.0 if had_gesture else 2.0
+            await asyncio.sleep(delay)
+            try:
+                await tars_robot.set_emotion("neutral")
+            except Exception:
+                pass
+
+        asyncio.create_task(_return_to_neutral())
 
     except Exception as e:
         logger.error(f"express error: {e}", exc_info=True)

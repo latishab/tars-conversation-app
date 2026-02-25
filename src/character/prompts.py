@@ -79,6 +79,16 @@ Speak like TARS from Interstellar:
 - Confident without being condescending"""
 
 
+def build_identity_tool_docs() -> str:
+    """Tool docs for set_user_identity. Re-add to build_tools_section() to re-enable."""
+    return """## set_user_identity
+**When to use:** User provides their name, especially if they spell it letter-by-letter
+**This is important:** If user spells name (e.g., "L-A-T-I-S-H-A"), they're CORRECTING you. Use exact spelling.
+**Format:** Call immediately when you learn their name
+**On failure:** Continue conversation, ask name again later if needed
+"""
+
+
 def build_tools_section() -> str:
     """Build tools section with specific usage context."""
     return """# Tools
@@ -88,11 +98,7 @@ def build_tools_section() -> str:
 **Never use:** When user just says "hello" or talks normally
 **On failure:** Say "Visual feed's down. Can't see anything right now."
 
-## set_user_identity
-**When to use:** User provides their name, especially if they spell it letter-by-letter
-**This is important:** If user spells name (e.g., "L-A-T-I-S-H-A"), they're CORRECTING you. Use exact spelling.
-**Format:** Call immediately when you learn their name
-**On failure:** Continue conversation, ask name again later if needed
+# To re-enable name learning: insert build_identity_tool_docs() here
 
 ## adjust_persona
 **When to use:** User asks to change humor level, honesty, etc.
@@ -177,6 +183,14 @@ When playing guessing games (Guess Who, 20 Questions):
 """
 
 
+def build_identity_example() -> str:
+    """Example for set_user_identity. Re-add to build_examples_section() to re-enable."""
+    return """**User provides name (tool + normalization):**
+User: "My name is L-A-T-I-S-H-A"
+You: [call set_user_identity with "Latisha"] "Got it, Latisha."
+"""
+
+
 def build_examples_section() -> str:
     """Build examples section with concrete interactions."""
     return """# Examples
@@ -185,9 +199,7 @@ def build_examples_section() -> str:
 User: "What do you see?"
 You: [call capture_user_camera] [wait for result] "You're in a dimly lit room. Blue shirt. Looks tired."
 
-**User provides name (tool + normalization):**
-User: "My name is L-A-T-I-S-H-A"
-You: [call set_user_identity with "Latisha"] "Got it, Latisha."
+# To re-enable name learning: insert build_identity_example() here
 
 **Memory lookup fails:**
 User: "Do you remember my favorite color?"
@@ -278,20 +290,17 @@ def build_tars_system_prompt(
     }
 
 
-def get_introduction_instruction(client_id: str, verbosity_level: int = 10) -> dict:
+def get_introduction_instruction(verbosity_level: int = 10) -> dict:
     """Get instruction for initial introduction message."""
     if verbosity_level <= 20:
         length_instruction = "One sentence max."
     else:
         length_instruction = "1-2 sentences max."
 
-    identity_instruction = ""
-    if client_id.startswith("guest_"):
-        identity_instruction = " Ask their name briefly."
-
     return {
         "role": "system",
-        "content": f"{length_instruction} Use '{client_id}' as user ID.{identity_instruction}"
+        "content": f"Greet the user briefly. {length_instruction}"
+        # To re-enable name ask: f"Greet the user. Ask their name briefly. {length_instruction}"
     }
 
 
