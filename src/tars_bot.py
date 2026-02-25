@@ -29,6 +29,7 @@ from loguru import logger
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -138,7 +139,7 @@ async def run_robot_bot(ui=None):
     from shared_state import metrics_store
 
     # Format LLM display name
-    llm_display = DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL
+    llm_display = _LLM_MODEL.split('/')[-1] if '/' in _LLM_MODEL else _LLM_MODEL
 
     # Format TTS display name
     if TTS_PROVIDER == "elevenlabs":
@@ -156,7 +157,7 @@ async def run_robot_bot(ui=None):
 
     service_info = {
         "stt": stt_display,
-        "llm": f"DeepInfra: {llm_display}",
+        "llm": f"{_LLM_PROVIDER.capitalize()}: {llm_display}",
         "tts": tts_display
     }
     metrics_store.set_service_info(service_info)
@@ -439,7 +440,15 @@ async def run_robot_bot(ui=None):
         #     check_interval=1.0,
         # )
 
-        vad_processor = VADProcessor(vad_analyzer=SileroVADAnalyzer())
+        # Lower min_volume from default 0.6 — Pi's compressed WebRTC audio arrives
+        # at lower amplitude than a local mic, causing Silero to miss speech events.
+        # Without VADUserStoppedSpeakingFrame, Deepgram finalize() is never called
+        # and STT TTFB cannot be calculated.
+        vad_processor = VADProcessor(
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(confidence=0.7, min_volume=0.2)
+            )
+        )
 
         pipeline = Pipeline([
             vad_processor,  # Emits VADUserStoppedSpeakingFrame needed for STT TTFB

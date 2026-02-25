@@ -1,150 +1,98 @@
 """Non-intrusive metrics observer for latency tracking."""
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import time
 from pipecat.observers.base_observer import BaseObserver, FramePushed
-from pipecat.frames.frames import MetricsFrame, UserAudioRawFrame, TranscriptionFrame, UserStartedSpeakingFrame
+from pipecat.frames.frames import MetricsFrame, TranscriptionFrame
 from pipecat.metrics.metrics import TTFBMetricsData
 from loguru import logger
-from src.shared_state import metrics_store
+from shared_state import metrics_store
 
 
 class MetricsObserver(BaseObserver):
     """
-    Observer that monitors pipeline frames for metrics collection.
-    Does not interrupt the pipeline flow - purely watches frames as they pass.
+    Watches pipeline frames to collect per-turn latency metrics.
 
-    STT Latency Measurement:
-    - Measures from turn start → first transcription received
-    - Works for services with internal turn detection (Speechmatics, Deepgram, etc.)
-    - For Deepgram, this captures endpointing + transcription time
+    All TTFB values come from pipecat's built-in TTFBMetricsData in MetricsFrame.
 
-    Other services (Memory, LLM, TTS) emit MetricsFrame which we capture directly.
+    Frame ID deduplication (per MetricsLogObserver pattern) ensures each MetricsFrame
+    is processed exactly once regardless of how many pipeline hops it passes through.
+
+    STT TTFB arrives before TranscriptionFrame, so it's buffered in
+    _pending_stt_ttfb and applied when TranscriptionFrame confirms the new turn.
+
+    Pipecat intentionally emits value=0.0 init frames at startup via
+    _initial_metrics_frame(); these are skipped via the value == 0.0 check.
     """
 
-    def __init__(self, webrtc_connection=None, stt_service=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
-        self.webrtc_connection = webrtc_connection
-        self.stt_service = stt_service
-
-
-        # Shared state for metrics tracking
         self._current_turn = 0
         self._current_metrics = {}
-        self._tts_text_time = None
-        self._last_sent_metrics = {}
-        self._last_logged_turn = -1
-        self._vision_request_time = None
-
-        # Manual timing for STT services
-        self._stt_start_time = None
-        self._stt_measured_this_turn = False
-        self._mem0_start_time = None
-        self._mem0_measured_this_turn = False
-
-
-    def start_turn(self, turn_number: int):
-        """Called by TurnTrackingObserver when a new turn starts."""
-        self._current_turn = turn_number
-        self._current_metrics = {}
-        self._last_sent_metrics = {}
-        self._last_logged_turn = -1
-        self._stt_measured_this_turn = False
-        self._mem0_measured_this_turn = False
-
-        # Use turn start time as STT baseline
-        self._stt_start_time = time.time()
-        logger.info(f"🔄 [MetricsObserver] Turn #{self._current_turn} started, STT timer initialized")
-
-        self._mem0_start_time = None
+        self._pending_stt_ttfb = None
+        self._seen_frame_ids: set = set()
 
     async def on_push_frame(self, data: FramePushed):
-        """Watch frames as they're pushed through the pipeline."""
         frame = data.frame
 
-        # STT timing: Measure from turn start to first transcription (manual fallback)
-        # Note: This includes speaking time + endpointing + transcription
-        # If the STT service emits MetricsFrame with TTFB, that will override this
-        if isinstance(frame, TranscriptionFrame) and not self._stt_measured_this_turn:
-            if self._stt_start_time is not None:
-                stt_latency_ms = (time.time() - self._stt_start_time) * 1000
-                self._current_metrics['stt_ttfb_ms'] = stt_latency_ms
-                self._stt_measured_this_turn = True
-                logger.info(f"✅ [MetricsObserver] STT total latency: {stt_latency_ms:.0f}ms (turn start → transcription)")
-                logger.debug(f"   Note: Includes speaking time + processing. Use MetricsFrame TTFB for pure processing time.")
-                self._send_to_frontend()
+        # TranscriptionFrame marks a new user turn; apply any buffered STT TTFB
+        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._current_turn += 1
+            self._current_metrics = {}
+            if self._pending_stt_ttfb is not None:
+                self._current_metrics['stt_ttfb_ms'] = self._pending_stt_ttfb
+                self._pending_stt_ttfb = None
+                self._flush()
 
-        # Capture MetricsFrame data from Pipecat's built-in metrics
-        if isinstance(frame, MetricsFrame):
+        # Capture pipecat's built-in TTFB metrics (STT, LLM, TTS)
+        elif isinstance(frame, MetricsFrame):
+            # Deduplicate: MetricsFrame propagates through every pipeline hop,
+            # triggering on_push_frame N times. Process each frame only once.
+            if frame.id in self._seen_frame_ids:
+                return
+            self._seen_frame_ids.add(frame.id)
+
             try:
+                changed = False
                 for metric_data in frame.data:
-                    if isinstance(metric_data, TTFBMetricsData):
-                        processor = metric_data.processor
-                        value_ms = metric_data.value * 1000  # Convert seconds to milliseconds
-                        processor_lower = processor.lower()
+                    if not isinstance(metric_data, TTFBMetricsData):
+                        continue
+                    # Skip pipecat's intentional 0.0 init frames (_initial_metrics_frame)
+                    if metric_data.value == 0.0:
+                        continue
+                    processor = metric_data.processor.lower()
+                    value_ms = metric_data.value * 1000
+                    logger.debug(f"[MetricsObserver] MetricsFrame: {metric_data.processor} = {value_ms:.0f}ms")
 
-                        # Log all processors to help debug
-                        logger.debug(f"📊 [MetricsObserver] MetricsFrame: {processor} = {value_ms:.0f}ms")
+                    if any(s in processor for s in ('deepgram', 'speechmatics', 'sttservice')):
+                        # STT TTFB arrives before TranscriptionFrame; buffer it
+                        if self._pending_stt_ttfb is None and 'stt_ttfb_ms' not in self._current_metrics:
+                            self._pending_stt_ttfb = value_ms
+                            logger.debug(f"[MetricsObserver] Buffered STT TTFB: {value_ms:.0f}ms")
+                    elif any(s in processor for s in ('openai', 'llmservice', 'deepinfra', 'cerebras')):
+                        if 'llm_ttfb_ms' not in self._current_metrics:
+                            self._current_metrics['llm_ttfb_ms'] = value_ms
+                            changed = True
+                    elif any(s in processor for s in ('elevenlabs', 'ttsservice', 'qwen')):
+                        if 'tts_ttfb_ms' not in self._current_metrics:
+                            self._current_metrics['tts_ttfb_ms'] = value_ms
+                            changed = True
 
-                        # Check STT (Deepgram, Speechmatics, etc.)
-                        if 'sttservice' in processor_lower or 'deepgram' in processor_lower or 'speechmatics' in processor_lower:
-                            if 'stt_ttfb_ms' not in self._current_metrics:  # Only log once per turn
-                                self._current_metrics['stt_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] STT TTFB: {value_ms:.0f}ms (from {processor})")
-                                logger.debug(f"   Note: TTFB = Time To First Byte (audio → first transcription)")
-                        # Check TTS (contains "tts" in name)
-                        elif 'ttsservice' in processor_lower or 'elevenlabs' in processor_lower or 'qwen' in processor_lower:
-                            if 'tts_ttfb_ms' not in self._current_metrics:  # Only log once per turn
-                                self._current_metrics['tts_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] TTS TTFB: {value_ms:.0f}ms (text → first audio)")
-                        # Check LLM
-                        elif 'llmservice' in processor_lower or 'openai' in processor_lower or 'deepinfra' in processor_lower:
-                            if 'llm_ttfb_ms' not in self._current_metrics:  # Only log once per turn
-                                self._current_metrics['llm_ttfb_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] LLM TTFB: {value_ms:.0f}ms (prompt → first token)")
-                        # Check Memory (HybridMemory, ChromaDB)
-                        elif 'memory' in processor_lower or 'chromadb' in processor_lower or 'hybrid' in processor_lower:
-                            if 'memory_latency_ms' not in self._current_metrics:  # Only log once per turn
-                                self._current_metrics['memory_latency_ms'] = value_ms
-                                logger.info(f"✅ [MetricsObserver] Memory latency: {value_ms:.0f}ms")
-                        else:
-                            logger.debug(f"🔍 [MetricsObserver] Unknown processor: {processor} ({value_ms:.0f}ms)")
-
-                # Calculate total latency and send if we have any metrics
-                if self._current_metrics:
-                    total = sum([
-                        self._current_metrics.get('stt_ttfb_ms', 0),
-                        self._current_metrics.get('memory_latency_ms', 0),
-                        self._current_metrics.get('llm_ttfb_ms', 0),
-                        self._current_metrics.get('tts_ttfb_ms', 0)
-                    ])
-                    if total > 0:
-                        self._current_metrics['total_ms'] = total
-
-                    self._send_to_frontend()
+                if changed:
+                    self._flush()
 
             except Exception as e:
-                logger.error(f"Error processing MetricsFrame: {e}", exc_info=True)
+                logger.error(f"[MetricsObserver] MetricsFrame error: {e}", exc_info=True)
 
-    def _send_to_frontend(self):
-        """Send metrics to frontend via WebRTC data channel and store locally for Gradio UI."""
-        # Check if metrics have changed since last send (deduplication)
-        current_metrics_key = (
-            self._current_turn,
-            self._current_metrics.get('stt_ttfb_ms'),
-            self._current_metrics.get('memory_latency_ms'),
-            self._current_metrics.get('llm_ttfb_ms'),
-            self._current_metrics.get('tts_ttfb_ms'),
-            self._current_metrics.get('vision_latency_ms'),
-        )
-
-        if current_metrics_key == self._last_sent_metrics:
+    def _flush(self):
+        """Upsert current metrics into the store."""
+        if not self._current_metrics or self._current_turn == 0:
             return
 
-        # Store in shared state for Gradio UI
+        total = sum(
+            self._current_metrics.get(k, 0) or 0
+            for k in ('stt_ttfb_ms', 'memory_latency_ms', 'llm_ttfb_ms', 'tts_ttfb_ms')
+        )
+
         metrics_store.add_metric({
             "turn_number": self._current_turn,
             "timestamp": int(time.time() * 1000),
@@ -153,44 +101,5 @@ class MetricsObserver(BaseObserver):
             "llm_ttfb_ms": self._current_metrics.get('llm_ttfb_ms'),
             "tts_ttfb_ms": self._current_metrics.get('tts_ttfb_ms'),
             "vision_latency_ms": self._current_metrics.get('vision_latency_ms'),
-            "total_ms": self._current_metrics.get('total_ms'),
+            "total_ms": total if total > 0 else None,
         })
-
-        # Send via WebRTC if connection exists
-        if self.webrtc_connection:
-            try:
-                if self.webrtc_connection.is_connected():
-                    message = {
-                        "type": "metrics",
-                        "turn_number": self._current_turn,
-                        "timestamp": int(time.time() * 1000),
-                        **self._current_metrics
-                    }
-                    logger.debug(f"📤 [MetricsObserver] Sending metrics: {message}")
-                    self.webrtc_connection.send_app_message(message)
-            except Exception as exc:
-                logger.error(f"❌ [MetricsObserver] Failed to send metrics via WebRTC: {exc}")
-
-        # Log summary once per turn
-        if self._last_logged_turn != self._current_turn:
-            def fmt(val):
-                return f"{val:.0f}ms" if isinstance(val, (int, float)) else "N/A"
-
-            # Build metrics summary
-            metrics_parts = []
-            if 'stt_ttfb_ms' in self._current_metrics:
-                metrics_parts.append(f"STT={fmt(self._current_metrics.get('stt_ttfb_ms'))}")
-            if 'memory_latency_ms' in self._current_metrics:
-                metrics_parts.append(f"Memory={fmt(self._current_metrics.get('memory_latency_ms'))}")
-            if 'llm_ttfb_ms' in self._current_metrics:
-                metrics_parts.append(f"LLM={fmt(self._current_metrics.get('llm_ttfb_ms'))}")
-            if 'tts_ttfb_ms' in self._current_metrics:
-                metrics_parts.append(f"TTS={fmt(self._current_metrics.get('tts_ttfb_ms'))}")
-            if 'vision_latency_ms' in self._current_metrics:
-                metrics_parts.append(f"Vision={fmt(self._current_metrics.get('vision_latency_ms'))}")
-
-            if metrics_parts:
-                logger.info(f"📊 Turn #{self._current_turn}: " + " | ".join(metrics_parts))
-            self._last_logged_turn = self._current_turn
-
-        self._last_sent_metrics = current_metrics_key
