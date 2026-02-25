@@ -20,6 +20,12 @@ _moondream_model = None
 _state_sync_ref = None  # set by tars_bot.py after StateSync is created
 
 
+def prewarm_moondream():
+    """Load Moondream in a background thread at startup to avoid cold-start delay."""
+    import threading
+    threading.Thread(target=_get_moondream, daemon=True, name="MoondreamPrewarm").start()
+
+
 def set_state_sync(ss):
     global _state_sync_ref
     _state_sync_ref = ss
