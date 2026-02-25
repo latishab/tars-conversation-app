@@ -188,6 +188,10 @@ async def run_robot_bot(ui=None):
         # State sync via DataChannel
         state_sync = StateSync()
 
+        # Wire state_sync into vision tool for camera log notifications
+        from tools.vision import set_state_sync
+        set_state_sync(state_sync)
+
         # Set up callbacks
         @aiortc_client.on_connected
         async def on_connected():

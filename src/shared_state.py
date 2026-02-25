@@ -22,12 +22,23 @@ class MetricEntry:
 
 
 @dataclass
+class CameraEvent:
+    """Single camera capture event."""
+    timestamp: float
+    question: str
+    status: str               # "capturing" | "ok" | "error"
+    result_preview: str = ""
+    latency_ms: Optional[float] = None
+
+
+@dataclass
 class MetricsStore:
     """Thread-safe storage for pipeline metrics and transcriptions."""
     # Keyed by turn_number so repeated calls for the same turn update in place
     metrics: dict = field(default_factory=dict)
     service_info: Optional[Dict] = None
     transcriptions: deque = field(default_factory=lambda: deque(maxlen=50))
+    camera_events: deque = field(default_factory=lambda: deque(maxlen=20))
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     # Pipeline status fields
@@ -73,6 +84,14 @@ class MetricsStore:
                 "text": text,
                 "time": time.time()
             })
+
+    def add_camera_event(self, event: "CameraEvent"):
+        with self.lock:
+            self.camera_events.append(event)
+
+    def get_camera_events(self) -> List["CameraEvent"]:
+        with self.lock:
+            return list(self.camera_events)
 
     def get_transcriptions(self) -> List[dict]:
         """Get all transcriptions."""

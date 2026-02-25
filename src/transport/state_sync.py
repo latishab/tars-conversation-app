@@ -131,6 +131,10 @@ class StateSync:
         """
         self.send_message({"type": "audio_level", "level": level})
 
+    def send_camera_log(self, text: str):
+        """Send camera event text to Pi display log."""
+        self.send_message({"type": "camera_log", "text": text})
+
     def send_tts_state(self, speaking: bool):
         """
         Send TTS speaking state.
