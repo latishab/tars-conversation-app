@@ -154,7 +154,9 @@ Keep responses CONCISE:
 - **Moderate input:** 1-2 sentences max
 - **Complex input:** 2-3 sentences max
 
-**Avoid:** Long explanations, unnecessary elaboration, rambling, filler words."""
+**Avoid:** Long explanations, unnecessary elaboration, rambling, filler words.
+
+**Never repeat or rephrase the same information.** Say it once, then stop."""
 
 
 def build_game_protocols() -> str:
