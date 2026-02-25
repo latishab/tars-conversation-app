@@ -81,12 +81,12 @@ from tools import (
     capture_user_camera,
     adjust_persona_parameter,
     execute_movement,
-    capture_camera_view,
+    capture_robot_camera,
     create_user_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
-    create_camera_capture_schema,
+    create_robot_camera_schema,
     get_persona_storage,
 )
 from shared_state import metrics_store
@@ -280,7 +280,7 @@ async def run_bot(webrtc_connection):
             persona_tool = create_adjust_persona_schema()
             # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
             movement_tool = create_movement_schema()
-            camera_capture_tool = create_camera_capture_schema()
+            camera_capture_tool = create_robot_camera_schema()
 
             # Pass FunctionSchema objects directly to standard_tools
             tools = ToolsSchema(
@@ -298,7 +298,7 @@ async def run_bot(webrtc_connection):
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
             llm.register_function("execute_movement", execute_movement)
-            llm.register_function("capture_camera_view", capture_camera_view)
+            llm.register_function("capture_robot_camera", capture_robot_camera)
 
             pipeline_unifier = IdentityUnifier(client_id)
             # async def wrapped_set_identity(params: FunctionCallParams):  # disabled: name recognition unreliable
@@ -467,7 +467,7 @@ async def run_bot(webrtc_connection):
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})
 
                     # Send service configuration info with provider and model details
-                    llm_display = DEEPINFRA_MODEL.split('/')[-1] if '/' in DEEPINFRA_MODEL else DEEPINFRA_MODEL
+                    llm_display = _LLM_MODEL.split('/')[-1] if '/' in _LLM_MODEL else _LLM_MODEL
 
                     if TTS_PROVIDER == "elevenlabs":
                         tts_display = "ElevenLabs: eleven_flash_v2_5"
@@ -484,7 +484,7 @@ async def run_bot(webrtc_connection):
                     service_info = {
                         "stt": stt_display,
                         "memory": "Hybrid Search (SQLite)",
-                        "llm": f"DeepInfra: {llm_display}",
+                        "llm": f"{_LLM_PROVIDER.capitalize()}: {llm_display}",
                         "tts": tts_display
                     }
 
