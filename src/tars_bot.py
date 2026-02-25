@@ -28,13 +28,19 @@ from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.cerebras import CerebrasLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
@@ -47,6 +53,9 @@ from config import (
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
+    CEREBRAS_API_KEY,
+    LLM_PROVIDER,
+    LLM_MODEL,
     RPI_URL,
     RPI_GRPC,
     AUTO_CONNECT,
@@ -63,7 +72,7 @@ from services.factories import create_stt_service, create_tts_service
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
 from processors import SilenceFilter, ProactiveMonitor
-from observers import StateObserver
+from observers import StateObserver, MetricsObserver
 from character.prompts import (
     load_persona_ini,
     load_tars_json,
@@ -101,6 +110,8 @@ async def run_robot_bot(ui=None):
     # Load fresh configuration
     runtime_config = get_fresh_config()
     DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
+    _LLM_PROVIDER = runtime_config['LLM_PROVIDER']
+    _LLM_MODEL = runtime_config['LLM_MODEL']
     STT_PROVIDER = runtime_config['STT_PROVIDER']
     TTS_PROVIDER = runtime_config['TTS_PROVIDER']
     QWEN3_TTS_MODEL = runtime_config['QWEN3_TTS_MODEL']
@@ -117,7 +128,7 @@ async def run_robot_bot(ui=None):
     logger.info(f"   Client: v{CLIENT_VERSION}")
     logger.info(f"   Deployment: {deployment_mode}")
     logger.info(f"   STT: {STT_PROVIDER}")
-    logger.info(f"   LLM: {DEEPINFRA_MODEL}")
+    logger.info(f"   LLM: {_LLM_PROVIDER} / {_LLM_MODEL}")
     logger.info(f"   TTS: {TTS_PROVIDER}")
     logger.info(f"   RPi HTTP: {RPI_URL}")
     logger.info(f"   RPi gRPC: {robot_grpc_address}")
@@ -292,11 +303,18 @@ async def run_robot_bot(ui=None):
         # ====================================================================
 
         logger.info("🧠 Initializing LLM...")
-        llm = OpenAILLMService(
-            api_key=DEEPINFRA_API_KEY,
-            base_url=DEEPINFRA_BASE_URL,
-            model=DEEPINFRA_MODEL
-        )
+        if _LLM_PROVIDER == "cerebras":
+            llm = CerebrasLLMService(
+                api_key=CEREBRAS_API_KEY,
+                model=_LLM_MODEL,
+            )
+        else:
+            llm = OpenAILLMService(
+                api_key=DEEPINFRA_API_KEY,
+                base_url=DEEPINFRA_BASE_URL,
+                model=_LLM_MODEL,
+            )
+        logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 
         # Load character
         character_dir = os.path.join(os.path.dirname(__file__), "character")
@@ -321,7 +339,7 @@ async def run_robot_bot(ui=None):
                 create_user_camera_schema(),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
-                create_identity_schema(),
+                # create_identity_schema(),  # disabled: name recognition unreliable
             ]
         )
 
@@ -335,12 +353,11 @@ async def run_robot_bot(ui=None):
         llm.register_function("capture_robot_camera", capture_robot_camera)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
-        async def set_user_identity(params: FunctionCallParams):
-            name = params.arguments.get("name", "")
-            logger.info(f"👤 Identity: {name}")
-            await params.result_callback(f"Identity updated to {name}.")
-
-        llm.register_function("set_user_identity", set_user_identity)
+        # async def set_user_identity(params: FunctionCallParams):
+        #     name = params.arguments.get("name", "")
+        #     logger.info(f"👤 Identity: {name}")
+        #     await params.result_callback(f"Identity updated to {name}.")
+        # llm.register_function("set_user_identity", set_user_identity)
 
         logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
 
@@ -377,8 +394,11 @@ async def run_robot_bot(ui=None):
         # CONTEXT AGGREGATOR
         # ====================================================================
 
+        smart_turn = LocalSmartTurnAnalyzerV3()
         user_params = LLMUserAggregatorParams(
-            user_turn_stop_timeout=1.5
+            user_turn_strategies=UserTurnStrategies(
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=smart_turn)]
+            )
         )
 
         context_aggregator = LLMContextAggregatorPair(
@@ -396,6 +416,7 @@ async def run_robot_bot(ui=None):
         # ====================================================================
 
         state_observer = StateObserver(state_sync=state_sync)
+        metrics_observer = MetricsObserver()
 
         # ====================================================================
         # PIPELINE ASSEMBLY
@@ -418,7 +439,10 @@ async def run_robot_bot(ui=None):
         #     check_interval=1.0,
         # )
 
+        vad_processor = VADProcessor(vad_analyzer=SileroVADAnalyzer())
+
         pipeline = Pipeline([
+            vad_processor,  # Emits VADUserStoppedSpeakingFrame needed for STT TTFB
             stt,
             # proactive_monitor,
             context_aggregator.user(),
@@ -456,7 +480,7 @@ async def run_robot_bot(ui=None):
                 enable_usage_metrics=True,
                 report_only_initial_ttfb=False,
             ),
-            observers=[state_observer],
+            observers=[state_observer, metrics_observer],
         )
 
         task_ref["task"] = task
