@@ -35,6 +35,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams
 )
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
 from pipecat.frames.frames import LLMRunFrame
@@ -198,7 +199,7 @@ async def run_robot_bot(ui=None):
 
         # Create TTS output track before connecting so it's included in the WebRTC offer.
         # The Pi must know to receive this track during initial SDP negotiation.
-        rpi_output = RPiAudioOutputTrack(sample_rate=24000)
+        rpi_output = RPiAudioOutputTrack(sample_rate=48000)
         aiortc_client.add_audio_track(rpi_output)
 
         # Connect to RPi
@@ -243,7 +244,6 @@ async def run_robot_bot(ui=None):
         rpi_input = RPiAudioInputTrack(
             aiortc_track=audio_track_from_rpi,
             sample_rate=16000,
-            noise_gate_rms=0.02,  # suppress fan/ambient noise below this RMS level
         )
 
         # rpi_output was created before connect() so it was included in the WebRTC offer
@@ -335,6 +335,13 @@ async def run_robot_bot(ui=None):
         llm.register_function("capture_robot_camera", capture_robot_camera)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
+        async def set_user_identity(params: FunctionCallParams):
+            name = params.arguments.get("name", "")
+            logger.info(f"👤 Identity: {name}")
+            await params.result_callback(f"Identity updated to {name}.")
+
+        llm.register_function("set_user_identity", set_user_identity)
+
         logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
 
         # ====================================================================
@@ -362,9 +369,9 @@ async def run_robot_bot(ui=None):
         else:
             logger.info("ℹ️  TARS Robot control disabled")
 
-        # Expose robot_client to UI so mute button can use it
+        # Expose rpi_input to UI so mute button can control mic
         if ui is not None:
-            ui.robot_client = robot_client
+            ui.robot_client = rpi_input
 
         # ====================================================================
         # CONTEXT AGGREGATOR
@@ -400,20 +407,20 @@ async def run_robot_bot(ui=None):
         # before the task is created; the dict is populated below after PipelineTask
         task_ref = {"task": None, "audio_task": None}
 
-        proactive_monitor = ProactiveMonitor(
-            context=context,
-            task_ref=task_ref,
-            silence_threshold=8.0,
-            hesitation_threshold=4,
-            hesitation_window=5.0,
-            cooldown=30.0,
-            post_bot_buffer=5.0,
-            check_interval=1.0,
-        )
+        # proactive_monitor = ProactiveMonitor(
+        #     context=context,
+        #     task_ref=task_ref,
+        #     silence_threshold=8.0,
+        #     hesitation_threshold=4,
+        #     hesitation_window=5.0,
+        #     cooldown=30.0,
+        #     post_bot_buffer=5.0,
+        #     check_interval=1.0,
+        # )
 
         pipeline = Pipeline([
             stt,
-            proactive_monitor,
+            # proactive_monitor,
             context_aggregator.user(),
             llm,
             SilenceFilter(),
@@ -464,7 +471,7 @@ async def run_robot_bot(ui=None):
 
         # Send initial greeting
         await asyncio.sleep(2.0)
-        intro_instruction = get_introduction_instruction(client_id, persona_params.get("verbosity", 10))
+        intro_instruction = get_introduction_instruction(persona_params.get("verbosity", 10))
         if context and hasattr(context, "messages"):
             context.messages.append(intro_instruction)
         await task.queue_frames([LLMRunFrame()])
