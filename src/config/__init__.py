@@ -86,6 +86,7 @@ MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 DEEPINFRA_MODEL = get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b")
 LLM_PROVIDER = get_config("LLM", "provider", "LLM_PROVIDER", "cerebras")
 LLM_MODEL = get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b")
+VISION_MODEL = get_config("LLM", "vision_model", "VISION_MODEL", "meta-llama/Llama-3.2-11B-Vision-Instruct")
 
 # STT Configuration (config.ini with .env fallback)
 # Options: "speechmatics", "deepgram", "deepgram-flux"

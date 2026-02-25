@@ -368,24 +368,23 @@ async def run_robot_bot(ui=None):
 
         logger.info("🤖 Initializing TARS Robot Client (gRPC)...")
         robot_client = None
-        if TARS_DISPLAY_ENABLED:
-            try:
-                robot_client = tars_robot.get_robot_client(address=robot_grpc_address)
-                service_refs["robot_client"] = robot_client
-                if robot_client and tars_robot.is_robot_available():
-                    logger.info(f"✓ TARS Robot Client connected via gRPC at {robot_grpc_address}")
+        try:
+            # Always initialize with the correct address so camera/movement tools work
+            robot_client = tars_robot.get_robot_client(address=robot_grpc_address)
+            service_refs["robot_client"] = robot_client
+            if robot_client and tars_robot.is_robot_available():
+                logger.info(f"✓ TARS Robot Client connected via gRPC at {robot_grpc_address}")
+                if TARS_DISPLAY_ENABLED:
                     tars_robot.set_eye_state("idle")
 
-                    # Check daemon version
-                    logger.info("Checking TARS daemon version...")
-                    update_checker = TarsUpdateChecker(robot_client)
-                    await update_checker.check_on_connect()
-                else:
-                    logger.warning("⚠️ TARS Robot not available")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not initialize TARS Robot: {e}")
-        else:
-            logger.info("ℹ️  TARS Robot control disabled")
+                # Check daemon version
+                logger.info("Checking TARS daemon version...")
+                update_checker = TarsUpdateChecker(robot_client)
+                await update_checker.check_on_connect()
+            else:
+                logger.warning("⚠️ TARS Robot not available")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not initialize TARS Robot: {e}")
 
         # Expose rpi_input to UI so mute button can control mic
         if ui is not None:
@@ -446,7 +445,7 @@ async def run_robot_bot(ui=None):
         # and STT TTFB cannot be calculated.
         vad_processor = VADProcessor(
             vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.7, min_volume=0.2)
+                params=VADParams(confidence=0.7, min_volume=0.0)
             )
         )
 

@@ -2,15 +2,46 @@
 
 Two camera sources:
 - capture_user_camera() - User's video feed during call
-- capture_robot_camera() - TARS' Pi camera view
+- capture_robot_camera() - TARS' Pi camera view (uses vision model directly)
 """
 
 import base64
+import httpx
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.frames.frames import UserImageRequestFrame, UserImageRawFrame
+from pipecat.frames.frames import UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import FunctionCallParams
 from loguru import logger
+
+
+async def _describe_image(img_base64: str, question: str) -> str:
+    """Call DeepInfra vision model to describe an image."""
+    from config import DEEPINFRA_API_KEY, DEEPINFRA_BASE_URL, VISION_MODEL
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                f"{DEEPINFRA_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {DEEPINFRA_API_KEY}"},
+                json={
+                    "model": VISION_MODEL,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}
+                            },
+                            {"type": "text", "text": question}
+                        ]
+                    }],
+                    "max_tokens": 300,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Vision model error: {e}", exc_info=True)
+        return f"Unable to analyze image: {str(e)}"
 
 
 async def capture_user_camera(params: FunctionCallParams):
@@ -20,14 +51,10 @@ async def capture_user_camera(params: FunctionCallParams):
     logger.info(f"Requesting user camera image with user_id={user_id}, question={question}")
 
     try:
-        # Request image frame (processed by Moondream, not added to context)
         await params.llm.push_frame(
             UserImageRequestFrame(user_id=user_id, text=question, append_to_context=False),
             FrameDirection.UPSTREAM,
         )
-        logger.debug("UserImageRequestFrame sent to pipeline")
-
-        # Return a minimal status - the LLM should wait for the vision result
         await params.result_callback("Processing...")
     except Exception as e:
         logger.error(f"Error requesting user camera image: {e}", exc_info=True)
@@ -35,46 +62,34 @@ async def capture_user_camera(params: FunctionCallParams):
 
 
 async def capture_robot_camera(params: FunctionCallParams):
-    """Capture image from TARS' Pi camera and analyze with vision model."""
+    """Capture image from TARS' Pi camera and describe using vision model."""
     question = params.arguments.get("question", "What do you see?")
 
     try:
         from services import tars_robot
 
-        logger.info(f"Capturing robot camera view for question: {question}")
+        logger.info(f"Capturing robot camera for: {question}")
         result = await tars_robot.capture_camera_view()
 
         if result.get("status") == "error":
             error = result.get("error", "unknown error")
             logger.warning(f"Robot camera capture failed: {error}")
-            await params.result_callback(f"Unable to capture camera image: {error}")
+            await params.result_callback(f"Camera unavailable: {error}")
             return
 
-        # Get base64 image
         img_base64 = result.get("image")
         if not img_base64:
             await params.result_callback("Camera returned no image data.")
             return
 
-        # Decode base64 to bytes
-        img_bytes = base64.b64decode(img_base64)
-
-        # Send vision frame for analysis
-        vision_frame = UserImageRawFrame(
-            image=img_bytes,
-            size=(result.get("width", 640), result.get("height", 480)),
-            format=result.get("format", "jpeg"),
-            text=question
-        )
-
-        await params.llm.push_frame(vision_frame, FrameDirection.UPSTREAM)
-        logger.info(f"Robot camera image sent for vision analysis: {result.get('width')}x{result.get('height')}")
-
-        await params.result_callback("Processing camera image...")
+        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), calling vision model...")
+        description = await _describe_image(img_base64, question)
+        logger.info(f"Vision result: {description[:120]}")
+        await params.result_callback(description)
 
     except Exception as e:
-        logger.error(f"Robot camera capture error: {e}", exc_info=True)
-        await params.result_callback(f"Error capturing camera view: {str(e)}")
+        logger.error(f"Robot camera error: {e}", exc_info=True)
+        await params.result_callback(f"Camera error: {str(e)}")
 
 
 def create_user_camera_schema() -> FunctionSchema:
