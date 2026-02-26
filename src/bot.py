@@ -37,11 +37,11 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
-from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.cerebras import CerebrasLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
@@ -57,7 +57,7 @@ from config import (
     CEREBRAS_API_KEY,
     get_fresh_config,
 )
-from services.factories import create_stt_service, create_tts_service
+from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from processors import (
     SilenceFilter,
     InputAudioFilter,
@@ -72,9 +72,7 @@ from observers import (
     DebugObserver,
 )
 from character.prompts import (
-    load_persona_ini,
-    load_tars_json,
-    build_tars_system_prompt,
+    load_character,
     get_introduction_instruction,
 )
 from tools import (
@@ -192,12 +190,21 @@ async def run_bot(webrtc_connection):
 
         logger.info(f"Initializing transport with {STT_PROVIDER} turn detection...")
 
+        # Parakeet (SegmentedSTTService) needs local VAD + SmartTurn to emit
+        # UserStartedSpeakingFrame / UserStoppedSpeakingFrame for audio segmentation.
+        # Other providers handle turn detection themselves (Speechmatics: SMART_TURN,
+        # Deepgram: server-side VAD via WebSocket).
+        use_local_vad = STT_PROVIDER == "parakeet"
+
         transport_params = TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             video_in_enabled=False,
             video_out_enabled=False,
             video_out_is_live=False,
+            vad_enabled=use_local_vad,
+            vad_analyzer=SileroVADAnalyzer() if use_local_vad else None,
+            turn_analyzer=LocalSmartTurnAnalyzerV3() if use_local_vad else None,
         )
 
         pipecat_transport = SmallWebRTCTransport(
@@ -257,23 +264,15 @@ async def run_bot(webrtc_connection):
         logger.info("Initializing LLM...")
         llm = None
         try:
-            if _LLM_PROVIDER == "cerebras":
-                llm = CerebrasLLMService(
-                    api_key=CEREBRAS_API_KEY,
-                    model=_LLM_MODEL,
-                )
-            else:
-                llm = OpenAILLMService(
-                    api_key=DEEPINFRA_API_KEY,
-                    base_url=DEEPINFRA_BASE_URL,
-                    model=_LLM_MODEL,
-                )
+            llm = create_llm_service(
+                provider=_LLM_PROVIDER,
+                model=_LLM_MODEL,
+                api_key=CEREBRAS_API_KEY if _LLM_PROVIDER == "cerebras" else DEEPINFRA_API_KEY,
+                base_url=DEEPINFRA_BASE_URL,
+            )
             logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
-            
-            character_dir = os.path.join(os.path.dirname(__file__), "character")
-            persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
-            tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
-            system_prompt = build_tars_system_prompt(persona_params, tars_data)
+
+            persona_params, tars_data, system_prompt = load_character()
 
             # Create tool schemas (these return FunctionSchema objects)
             user_camera_tool = create_user_camera_schema()
@@ -476,10 +475,7 @@ async def run_bot(webrtc_connection):
                         tts_display = f"Qwen3-TTS: {tts_model}"
 
                     # Format STT provider name for display
-                    stt_display = {
-                        "speechmatics": "Speechmatics",
-                        "deepgram": "Deepgram Nova-3"
-                    }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
+                    stt_display = stt_display_name(STT_PROVIDER)
 
                     service_info = {
                         "stt": stt_display,

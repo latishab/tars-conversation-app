@@ -13,6 +13,7 @@ websockets>=12.0
 httpx>=0.24.0
 gradio>=5.9.0
 plotly>=5.0.0
+parakeet-mlx>=0.2.0
 # aiortc is installed as a dependency of pipecat-ai[webrtc]
 # If you encounter VP8 decoder errors, run: bash fix_video_codec.sh
 

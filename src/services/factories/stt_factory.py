@@ -118,11 +118,32 @@ def create_stt_service(
             logger.info("✓ Deepgram Flux STT service created with built-in turn detection")
             logger.info("  Note: STT latency will be tracked via MetricsFrame if emitted by Flux")
 
+        elif provider == "parakeet":
+            from src.services.stt.parakeet import ParakeetSTTService
+
+            # Requires Silero VAD upstream in pipeline (same as nova-3 branch)
+            logger.info("Using Parakeet TDT v3 STT (local MLX, streaming)")
+            stt = ParakeetSTTService()
+            logger.info("✓ Parakeet STT service created")
+
         else:
-            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', or 'deepgram-flux'")
+            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', 'deepgram-flux', or 'parakeet'")
 
         return stt
 
     except Exception as e:
         logger.error(f"Failed to create STT service '{provider}': {e}", exc_info=True)
         raise
+
+
+_STT_DISPLAY_NAMES = {
+    "speechmatics": "Speechmatics",
+    "deepgram": "Deepgram Nova-3",
+    "deepgram-flux": "Deepgram Flux",
+    "parakeet": "Parakeet TDT v3 (local)",
+}
+
+
+def stt_display_name(provider: str) -> str:
+    """Return a human-readable display name for an STT provider."""
+    return _STT_DISPLAY_NAMES.get(provider, provider.capitalize())
