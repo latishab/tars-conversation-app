@@ -30,7 +30,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -380,6 +379,11 @@ async def run_robot_bot(ui=None):
 
         smart_turn = LocalSmartTurnAnalyzerV3()
         user_params = LLMUserAggregatorParams(
+            # min_volume=0.0: Pi's compressed WebRTC audio arrives at lower amplitude
+            # than a local mic; default 0.6 causes Silero to miss speech events.
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
+            ),
             user_turn_strategies=UserTurnStrategies(
                 stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=smart_turn)]
             )
@@ -423,18 +427,7 @@ async def run_robot_bot(ui=None):
         #     check_interval=1.0,
         # )
 
-        # Lower min_volume from default 0.6 — Pi's compressed WebRTC audio arrives
-        # at lower amplitude than a local mic, causing Silero to miss speech events.
-        # Without VADUserStoppedSpeakingFrame, Deepgram finalize() is never called
-        # and STT TTFB cannot be calculated.
-        vad_processor = VADProcessor(
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
-            )
-        )
-
         pipeline = Pipeline([
-            vad_processor,  # Emits VADUserStoppedSpeakingFrame needed for STT TTFB
             stt,
             # proactive_monitor,
             context_aggregator.user(),
