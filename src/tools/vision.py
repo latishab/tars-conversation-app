@@ -2,7 +2,7 @@
 
 Two camera sources:
 - capture_user_camera() - User's video feed during call
-- capture_robot_camera() - TARS' Pi camera view (uses local Moondream model)
+- capture_robot_camera() - TARS' Pi camera view (uses DeepInfra Qwen VL)
 """
 
 import asyncio
@@ -13,6 +13,8 @@ from pipecat.frames.frames import UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import FunctionCallParams
 from loguru import logger
+
+DEEPINFRA_VISION_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 
 
 _moondream_model = None
@@ -82,6 +84,34 @@ async def _describe_image(img_bytes: bytes, question: str) -> str:
         return f"Unable to analyze image: {str(e)}"
 
 
+async def _describe_image_deepinfra(img_bytes: bytes, question: str) -> str:
+    """Describe an image using DeepInfra Qwen VL via OpenAI-compatible API."""
+    from openai import AsyncOpenAI
+    from config import DEEPINFRA_API_KEY
+
+    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+    client = AsyncOpenAI(
+        api_key=DEEPINFRA_API_KEY,
+        base_url="https://api.deepinfra.com/v1/openai",
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPINFRA_VISION_MODEL,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    {"type": "text", "text": question},
+                ],
+            }],
+            max_tokens=512,
+        )
+        return response.choices[0].message.content or "No description available."
+    except Exception as e:
+        logger.error(f"DeepInfra vision error: {e}", exc_info=True)
+        return f"Unable to analyze image: {str(e)}"
+
+
 async def capture_user_camera(params: FunctionCallParams):
     """Capture image from user's camera feed for vision analysis."""
     user_id = params.arguments["user_id"]
@@ -100,7 +130,7 @@ async def capture_user_camera(params: FunctionCallParams):
 
 
 async def capture_robot_camera(params: FunctionCallParams):
-    """Capture image from TARS' Pi camera and describe using Moondream."""
+    """Capture image from TARS' Pi camera and describe using DeepInfra Qwen VL."""
     import time as _time
     from shared_state import metrics_store, CameraEvent
 
@@ -138,9 +168,9 @@ async def capture_robot_camera(params: FunctionCallParams):
             return
 
         img_bytes = base64.b64decode(img_base64)
-        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running Moondream...")
-        description = await _describe_image(img_bytes, question)
-        logger.info(f"Moondream result: {description[:120]}")
+        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running DeepInfra vision...")
+        description = await _describe_image_deepinfra(img_bytes, question)
+        logger.info(f"DeepInfra vision result: {description[:120]}")
 
         _lat = (_time.time() - _t0) * 1000
         metrics_store.add_camera_event(CameraEvent(

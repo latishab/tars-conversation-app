@@ -23,7 +23,6 @@ Noise suppression (opt-in, denoise=True):
 
 import asyncio
 import fractions
-import time
 import numpy as np
 from typing import Optional, AsyncIterator
 from loguru import logger
@@ -213,8 +212,6 @@ class RPiAudioOutputTrack(MediaStreamTrack):
         self._timestamp = 0
         self._running = True
         self._time_base = fractions.Fraction(1, sample_rate)
-        self._diag_first_add: Optional[float] = None   # t when add_audio first called
-        self._diag_first_recv: Optional[float] = None  # t when recv first pulled audio
 
     async def recv(self) -> AVAudioFrame:
         while len(self._buf) < self.FRAME_SAMPLES and self._running:
@@ -231,14 +228,6 @@ class RPiAudioOutputTrack(MediaStreamTrack):
 
             chunk = np.frombuffer(audio_bytes, dtype=np.int16)
             self._buf = np.concatenate([self._buf, chunk])
-
-            # [DIAG-3] First non-silence recv after add_audio signals audio reaching aiortc
-            if self._diag_first_add is not None and self._diag_first_recv is None:
-                self._diag_first_recv = time.perf_counter()
-                gap_add_to_recv = (self._diag_first_recv - self._diag_first_add) * 1000
-                logger.debug(
-                    f"[AudioDiag] add_audio→recv gap: {gap_add_to_recv:.1f}ms"
-                )
 
         n = min(self.FRAME_SAMPLES, len(self._buf))
         samples = np.zeros(self.FRAME_SAMPLES, dtype=np.int16)
@@ -258,11 +247,6 @@ class RPiAudioOutputTrack(MediaStreamTrack):
         """Enqueue PCM audio bytes (int16) to be sent to the RPi speaker."""
         if self._running:
             await self._queue.put(audio_bytes)
-
-    def mark_tts_start(self):
-        """Call when the first TTS frame for a new utterance is enqueued."""
-        self._diag_first_add = time.perf_counter()
-        self._diag_first_recv = None
 
     def stop(self):
         self._running = False
@@ -287,51 +271,30 @@ class AudioBridge(FrameProcessor):
         self.rpi_input_track = rpi_input_track
         self.rpi_output_track = rpi_output_track
         self._diag_tts_active = False
-        self._diag_first_frame_t: Optional[float] = None
-        self._diag_logged_add = False
 
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
-            # [DIAG-1] Timestamp the first TTS frame arriving at the bridge per utterance
             if not self._diag_tts_active:
                 self._diag_tts_active = True
-                self._diag_first_frame_t = time.perf_counter()
-                logger.debug(f"[AudioDiag] First TTS frame arrived at bridge (t={self._diag_first_frame_t:.3f})")
-                self.rpi_output_track.mark_tts_start()
+                logger.debug(f"[AudioDiag] First TTS frame arrived at bridge")
 
             audio_bytes = frame.audio
             src_rate = frame.sample_rate
             dst_rate = self.rpi_output_track.sample_rate
 
             if src_rate and dst_rate and src_rate != dst_rate:
-                t0 = time.perf_counter()
                 pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
                 g = gcd(src_rate, dst_rate)
                 up, down = dst_rate // g, src_rate // g
                 pcm = resample_poly(pcm, up, down)
                 audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
-                # [DIAG-2] Per-frame resample cost (log first frame and any slow frames)
-                resample_ms = (time.perf_counter() - t0) * 1000
-                if not self._diag_logged_add or resample_ms > 2.0:
-                    logger.debug(
-                        f"[AudioDiag] resample_poly {src_rate}→{dst_rate}Hz: "
-                        f"{resample_ms:.2f}ms, {len(frame.audio)} bytes in / {len(audio_bytes)} out"
-                    )
 
             await self.rpi_output_track.add_audio(audio_bytes)
 
-            # [DIAG-2] Log gap: first TTS frame → first add_audio enqueue
-            if not self._diag_logged_add:
-                self._diag_logged_add = True
-                gap_ms = (time.perf_counter() - self._diag_first_frame_t) * 1000
-                logger.debug(f"[AudioDiag] bridge→add_audio gap (incl. resample): {gap_ms:.1f}ms")
-
         elif self._diag_tts_active and not isinstance(frame, OutputAudioRawFrame):
-            # TTS stream ended — reset for next utterance
             self._diag_tts_active = False
-            self._diag_logged_add = False
 
         await self.push_frame(frame, direction)
 

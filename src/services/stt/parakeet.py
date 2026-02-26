@@ -39,6 +39,10 @@ class ParakeetSTTService(SegmentedSTTService):
     Requires Silero VAD upstream in the pipeline.
     """
 
+    # Minimum segment duration to transcribe (avoids wasting inference on noise bursts).
+    # Modal Labs uses 0.5s; 0.3s is more responsive for short commands.
+    MIN_DURATION_SECS = 0.3
+
     def __init__(
         self,
         *,
@@ -60,6 +64,13 @@ class ParakeetSTTService(SegmentedSTTService):
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         if not audio or self._model is None:
+            return
+
+        # Skip segments shorter than MIN_DURATION_SECS — likely noise, not speech.
+        # 16-bit mono PCM: 2 bytes/sample at self._sample_rate samples/sec.
+        min_bytes = int(self.MIN_DURATION_SECS * self.sample_rate * 2)
+        if len(audio) < min_bytes:
+            logger.debug(f"Parakeet: skipping short segment ({len(audio)} bytes < {min_bytes})")
             return
 
         loop = asyncio.get_event_loop()
