@@ -40,8 +40,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
-from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.cerebras import CerebrasLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
@@ -69,15 +67,13 @@ from config import (
 
 from transport import AiortcRPiClient, AudioBridge, StateSync
 from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
-from services.factories import create_stt_service, create_tts_service
+from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
 from processors import SilenceFilter, ProactiveMonitor
 from observers import StateObserver, MetricsObserver
 from character.prompts import (
-    load_persona_ini,
-    load_tars_json,
-    build_tars_system_prompt,
+    load_character,
     get_introduction_instruction,
 )
 from tools import (
@@ -147,11 +143,7 @@ async def run_robot_bot(ui=None):
         tts_display = f"Qwen3-TTS: {tts_model}"
 
     # Format STT display name
-    stt_display = {
-        "speechmatics": "Speechmatics",
-        "deepgram": "Deepgram Nova-3",
-        "deepgram-flux": "Deepgram Flux"
-    }.get(STT_PROVIDER, STT_PROVIDER.capitalize())
+    stt_display = stt_display_name(STT_PROVIDER)
 
     service_info = {
         "stt": stt_display,
@@ -306,26 +298,16 @@ async def run_robot_bot(ui=None):
         # ====================================================================
 
         logger.info("🧠 Initializing LLM...")
-        if _LLM_PROVIDER == "cerebras":
-            llm = CerebrasLLMService(
-                api_key=CEREBRAS_API_KEY,
-                model=_LLM_MODEL,
-                function_call_timeout_secs=60.0,
-            )
-        else:
-            llm = OpenAILLMService(
-                api_key=DEEPINFRA_API_KEY,
-                base_url=DEEPINFRA_BASE_URL,
-                model=_LLM_MODEL,
-                function_call_timeout_secs=60.0,
-            )
+        llm = create_llm_service(
+            provider=_LLM_PROVIDER,
+            model=_LLM_MODEL,
+            api_key=CEREBRAS_API_KEY if _LLM_PROVIDER == "cerebras" else DEEPINFRA_API_KEY,
+            base_url=DEEPINFRA_BASE_URL,
+            function_call_timeout_secs=60.0,
+        )
         logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 
-        # Load character
-        character_dir = os.path.join(os.path.dirname(__file__), "character")
-        persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
-        tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
-        system_prompt = build_tars_system_prompt(persona_params, tars_data)
+        persona_params, tars_data, system_prompt = load_character()
 
         # Initialize expression rate limiter
         rate_limiter = ExpressionRateLimiter(

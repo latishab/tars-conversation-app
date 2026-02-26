@@ -1,8 +1,9 @@
 """Prompt management for TARS character with dynamic verbosity handling."""
 
 import json
+import os
 import configparser
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 
 def load_persona_ini(persona_file_path: str) -> dict:
@@ -275,6 +276,24 @@ def build_tars_system_prompt(
         "role": "system",
         "content": full_prompt
     }
+
+
+def load_character(character_dir: str = None) -> Tuple[dict, dict, dict]:
+    """Load persona, TARS data, and build system prompt from character directory.
+
+    Args:
+        character_dir: Path to the character/ directory. Defaults to the
+                       character/ folder adjacent to this file.
+
+    Returns:
+        (persona_params, tars_data, system_prompt_message)
+    """
+    if character_dir is None:
+        character_dir = os.path.dirname(__file__)
+    persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
+    tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
+    system_prompt = build_tars_system_prompt(persona_params, tars_data)
+    return persona_params, tars_data, system_prompt
 
 
 def get_introduction_instruction(verbosity_level: int = 10) -> dict:
