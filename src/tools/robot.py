@@ -11,7 +11,7 @@ from typing import Optional
 from loguru import logger
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.services.llm_service import FunctionCallParams
+from pipecat.services.llm_service import FunctionCallParams, FunctionCallResultProperties
 
 
 # =============================================================================
@@ -176,8 +176,12 @@ async def express(params: FunctionCallParams):
     had_gesture = bool(gesture and intensity in ("medium", "high"))
     limiter.record_expression(intensity, had_gesture)
 
-    # Return immediately so TTS starts generating in parallel with the gesture
-    await params.result_callback("Expression set.")
+    # Fire-and-forget: don't trigger a second LLM completion after this tool result.
+    # The LLM already generated its spoken response alongside the tool call.
+    await params.result_callback(
+        "Expression set.",
+        properties=FunctionCallResultProperties(run_llm=False),
+    )
 
     async def _do_expression():
         try:

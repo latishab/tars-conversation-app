@@ -28,6 +28,84 @@ class InputAudioFilter(FrameProcessor):
             return
         await self.push_frame(frame, direction)
 
+class ReasoningLeakFilter(FrameProcessor):
+    """
+    Strips reasoning artifacts and markdown formatting from LLM text tokens
+    before they reach TTS. Handles <think> blocks (stateful), markdown inline
+    formatting, and leading ellipsis tokens.
+    """
+    _MD_RE = re.compile(r'\*{1,3}|_{1,2}|`+')
+    _LEAD_ELLIPSIS_RE = re.compile(r'^[\s…\.]+')
+
+    def __init__(self):
+        super().__init__()
+        self._in_think = False
+        self._think_buf = ""
+        self._collecting = False
+
+    def _reset(self):
+        self._in_think = False
+        self._think_buf = ""
+        self._collecting = False
+
+    def _strip_token(self, text: str) -> str:
+        """
+        Statefully strips <think>...</think> content, then applies
+        regex-based markdown and ellipsis stripping.
+        """
+        output = []
+        for ch in text:
+            if self._in_think:
+                self._think_buf += ch
+                if self._think_buf.endswith("</think>"):
+                    self._in_think = False
+                    self._think_buf = ""
+            else:
+                self._think_buf += ch
+                if self._think_buf == "<think>":
+                    self._in_think = True
+                    self._think_buf = ""
+                elif not "<think>".startswith(self._think_buf):
+                    output.extend(self._think_buf)
+                    self._think_buf = ""
+                # else: keep buffering potential <think> prefix
+
+        # Flush think_buf if we didn't enter a think block
+        if self._think_buf and not self._in_think:
+            output.extend(self._think_buf)
+            self._think_buf = ""
+
+        result = "".join(output)
+        result = self._MD_RE.sub("", result)
+        result = self._LEAD_ELLIPSIS_RE.sub("", result)
+        return result
+
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
+            self._reset()
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._reset()
+            self._collecting = True
+            await self.push_frame(frame, direction)
+
+        elif isinstance(frame, LLMTextFrame) and self._collecting:
+            cleaned = self._strip_token(frame.text)
+            if cleaned:
+                await self.push_frame(LLMTextFrame(text=cleaned), direction)
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._collecting = False
+            await self.push_frame(frame, direction)
+
+        else:
+            await self.push_frame(frame, direction)
+
+
 class SilenceFilter(FrameProcessor):
     """
     Intercepts LLM responses. If response is {"action": "silence"}, drops it.

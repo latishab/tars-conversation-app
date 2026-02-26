@@ -70,7 +70,7 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter, ProactiveMonitor
+from processors import SilenceFilter, ReasoningLeakFilter, ProactiveMonitor
 from observers import StateObserver, MetricsObserver
 from character.prompts import (
     load_character,
@@ -440,6 +440,7 @@ async def run_robot_bot(ui=None):
             context_aggregator.user(),
             llm,
             SilenceFilter(),
+            ReasoningLeakFilter(),
             tts,
             audio_bridge,  # Captures TTS output and sends to RPi speaker
             context_aggregator.assistant(),

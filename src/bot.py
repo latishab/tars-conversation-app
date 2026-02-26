@@ -31,6 +31,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
@@ -61,6 +62,7 @@ from services.factories import create_stt_service, create_tts_service, create_ll
 from processors import (
     SilenceFilter,
     InputAudioFilter,
+    ReasoningLeakFilter,
     ProactiveMonitor,
 )
 from observers import (
@@ -79,15 +81,24 @@ from tools import (
     capture_user_camera,
     adjust_persona_parameter,
     execute_movement,
+    express,
     capture_robot_camera,
     create_user_camera_schema,
     create_adjust_persona_schema,
+    create_express_schema,
     create_identity_schema,
     create_movement_schema,
     create_robot_camera_schema,
     get_persona_storage,
 )
 from shared_state import metrics_store
+
+# Truncate LLM context dumps to last 4 messages to avoid system-prompt spam in logs
+def _truncated_messages_for_logging(self):
+    msgs = [m for m in self.messages if m.get("role") != "system"][-4:]
+    return msgs
+
+OpenAILLMContext.get_messages_for_logging = _truncated_messages_for_logging
 
 
 # ============================================================================
@@ -277,6 +288,7 @@ async def run_bot(webrtc_connection):
             # Create tool schemas (these return FunctionSchema objects)
             user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
+            express_tool = create_express_schema()
             # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
             movement_tool = create_movement_schema()
             camera_capture_tool = create_robot_camera_schema()
@@ -286,6 +298,7 @@ async def run_bot(webrtc_connection):
                 standard_tools=[
                     user_camera_tool,
                     persona_tool,
+                    express_tool,
                     # identity_tool,
                     movement_tool,
                     camera_capture_tool,
@@ -296,6 +309,7 @@ async def run_bot(webrtc_connection):
 
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+            llm.register_function("express", express)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_robot_camera", capture_robot_camera)
 
@@ -449,6 +463,7 @@ async def run_bot(webrtc_connection):
             memory_service,  # Hybrid memory (70% vector + 30% BM25) for automatic recall/storage
             llm,
             SilenceFilter(),
+            ReasoningLeakFilter(),
             tts,
             pipecat_transport.output(),
             context_aggregator.assistant(),
@@ -498,7 +513,7 @@ async def run_bot(webrtc_connection):
 
             if task_ref["task"]:
                 verbosity = persona_params.get("verbosity", 10) if persona_params else 10
-                intro_instruction = get_introduction_instruction(client_state['client_id'], verbosity)
+                intro_instruction = get_introduction_instruction(verbosity)
                 
                 if context and hasattr(context, "messages"):
                      context.messages.append(intro_instruction)
