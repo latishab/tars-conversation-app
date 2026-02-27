@@ -3,6 +3,22 @@
 from loguru import logger
 
 
+class _GoogleAILLMService:
+    """OpenAILLMService subclass that injects reasoning_effort=none to disable thinking."""
+
+    @classmethod
+    def create(cls, **kwargs):
+        from pipecat.services.openai.llm import OpenAILLMService
+
+        class GoogleAILLMService(OpenAILLMService):
+            def build_chat_completion_params(self, params_from_context):
+                params = super().build_chat_completion_params(params_from_context)
+                params["reasoning_effort"] = "none"
+                return params
+
+        return GoogleAILLMService(**kwargs)
+
+
 def create_llm_service(
     provider: str,
     model: str,
@@ -14,7 +30,7 @@ def create_llm_service(
     Create and configure an LLM service based on provider.
 
     Args:
-        provider: "cerebras" or "openai" (also covers DeepInfra/compatible endpoints)
+        provider: "cerebras", "google", or "openai" (also covers DeepInfra/compatible endpoints)
         model: Model name / path
         api_key: API key for the provider
         base_url: Base URL for OpenAI-compatible endpoints
@@ -30,8 +46,17 @@ def create_llm_service(
             from pipecat.services.cerebras.llm import CerebrasLLMService
             llm = CerebrasLLMService(api_key=api_key, model=model, **kwargs)
 
+        elif provider == "google":
+            # Google AI Studio via OpenAI-compat endpoint, thinking disabled
+            llm = _GoogleAILLMService.create(
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                **kwargs,
+            )
+
         else:
-            # OpenAI-compatible: DeepInfra, Google AI Studio, OpenAI, etc.
+            # OpenAI-compatible: DeepInfra, OpenAI, etc.
             from pipecat.services.openai.llm import OpenAILLMService
             llm = OpenAILLMService(
                 api_key=api_key,
