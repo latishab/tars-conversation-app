@@ -70,6 +70,8 @@ def get_config(section: str, key: str, env_key: str = None, default: str = "") -
 # API Keys (always from .env for security)
 SPEECHMATICS_API_KEY = os.getenv("SPEECHMATICS_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+SONIOX_API_KEY_JP = os.getenv("SONIOX_API_KEY_JP", "")
+SONIOX_API_KEY_US = os.getenv("SONIOX_API_KEY_US", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "ry8mpwRw6nugb2qjP0tu")
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "")
@@ -90,6 +92,9 @@ LLM_MODEL = get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b")
 # STT Configuration (config.ini with .env fallback)
 # Options: "speechmatics", "deepgram", "deepgram-flux"
 STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "deepgram-flux")
+DEEPGRAM_MODEL = get_config("STT", "deepgram_model", "DEEPGRAM_MODEL", "nova-3")
+DEEPGRAM_ENDPOINTING = int(get_config("STT", "deepgram_endpointing", "DEEPGRAM_ENDPOINTING", "100"))
+SONIOX_MODEL = get_config("STT", "soniox_model", "SONIOX_MODEL", "stt-rt-v4")
 
 # TTS Configuration (config.ini with .env fallback)
 TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "qwen3")

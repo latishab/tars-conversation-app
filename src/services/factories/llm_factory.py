@@ -27,7 +27,7 @@ def create_llm_service(
 
     try:
         if provider == "cerebras":
-            from pipecat.services.cerebras import CerebrasLLMService
+            from pipecat.services.cerebras.llm import CerebrasLLMService
             llm = CerebrasLLMService(api_key=api_key, model=model, **kwargs)
 
         else:
