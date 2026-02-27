@@ -71,7 +71,7 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter, ReasoningLeakFilter, ProactiveMonitor
+from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, ProactiveMonitor
 from observers import StateObserver, MetricsObserver
 from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from character.prompts import (
@@ -81,12 +81,10 @@ from character.prompts import (
 from tools import (
     capture_robot_camera,
     adjust_persona_parameter,
-    express,
     execute_movement,
     create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
-    create_express_schema,
     create_movement_schema,
     get_persona_storage,
     set_rate_limiter,
@@ -327,7 +325,6 @@ async def run_robot_bot(ui=None):
         # Create tool schemas
         tools = ToolsSchema(
             standard_tools=[
-                create_express_schema(),
                 create_movement_schema(),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
@@ -339,7 +336,6 @@ async def run_robot_bot(ui=None):
         context = LLMContext(messages, tools)
 
         # Register tool functions
-        llm.register_function("express", express)
         llm.register_function("execute_movement", execute_movement)
         llm.register_function("capture_robot_camera", capture_robot_camera)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
@@ -443,6 +439,7 @@ async def run_robot_bot(ui=None):
             # proactive_monitor,
             context_aggregator.user(),
             llm,
+            ExpressTagFilter(),
             SilenceFilter(),
             ReasoningLeakFilter(),
             tts,

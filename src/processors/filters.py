@@ -11,8 +11,11 @@ from pipecat.frames.frames import (
     TTSTextFrame
 )
 from loguru import logger
+import asyncio
 import json
 import re
+
+from tools.robot import fire_expression
 
 
 class InputAudioFilter(FrameProcessor):
@@ -187,3 +190,84 @@ class SilenceFilter(FrameProcessor):
         else:
             await self.push_frame(frame, direction)
 
+
+class ExpressTagFilter(FrameProcessor):
+    """
+    Strips [express(emotion, intensity)] inline tags from LLM streaming output,
+    parses them, and fires the expression as a background task.
+
+    Must be inserted BEFORE SilenceFilter in the pipeline — SilenceFilter also
+    strips bracket annotations and would silently drop express tags if it ran first.
+    """
+    _EXPRESS_RE = re.compile(r'\[express\(([^,)]+),\s*([^)]+)\)\]', re.IGNORECASE)
+    # Belt-and-suspenders: catch non-express inline tags that shouldn't exist
+    _FOREIGN_TAG_RE = re.compile(r'\[(?!express\b)\w[\w_]*\s*\(', re.IGNORECASE)
+
+    def __init__(self):
+        super().__init__()
+        self._buf = ""
+        self._in_tag = False
+        self._collecting = False
+
+    def _reset(self):
+        self._buf = ""
+        self._in_tag = False
+        self._collecting = False
+
+    def _process_token(self, text: str) -> str:
+        """Buffer [express(...)] tags, strip them, fire expression. Pass all other text."""
+        output = []
+        for ch in text:
+            if not self._in_tag:
+                if ch == '[':
+                    self._in_tag = True
+                    self._buf = '['
+                else:
+                    output.append(ch)
+            else:
+                self._buf += ch
+                if ch == ']':
+                    m = self._EXPRESS_RE.fullmatch(self._buf)
+                    if m:
+                        emotion = m.group(1).strip()
+                        intensity = m.group(2).strip()
+                        asyncio.create_task(fire_expression(emotion, intensity))
+                        logger.debug(f"ExpressTagFilter: fired {emotion}/{intensity}")
+                    elif self._FOREIGN_TAG_RE.match(self._buf):
+                        # Non-express inline tag — log and discard, don't pass to TTS
+                        logger.warning(f"ExpressTagFilter: unexpected inline tag discarded: {self._buf!r}")
+                    else:
+                        output.extend(self._buf)  # not a tool tag, emit as-is
+                    self._buf = ""
+                    self._in_tag = False
+        return ''.join(output)
+
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
+            self._reset()
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._reset()
+            self._collecting = True
+            await self.push_frame(frame, direction)
+
+        elif isinstance(frame, LLMTextFrame) and self._collecting:
+            filtered = self._process_token(frame.text)
+            if filtered:
+                await self.push_frame(LLMTextFrame(text=filtered), direction)
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._collecting = False
+            # Flush any buffered partial tag as plain text — stream ended mid-tag
+            if self._buf:
+                await self.push_frame(LLMTextFrame(text=self._buf), direction)
+                self._buf = ""
+                self._in_tag = False
+            await self.push_frame(frame, direction)
+
+        else:
+            await self.push_frame(frame, direction)

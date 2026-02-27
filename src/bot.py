@@ -71,6 +71,7 @@ from processors import (
     SilenceFilter,
     InputAudioFilter,
     ReasoningLeakFilter,
+    ExpressTagFilter,
     ProactiveMonitor,
 )
 from observers import (
@@ -89,11 +90,9 @@ from tools import (
     capture_user_camera,
     adjust_persona_parameter,
     execute_movement,
-    express,
     capture_robot_camera,
     create_user_camera_schema,
     create_adjust_persona_schema,
-    create_express_schema,
     create_identity_schema,
     create_movement_schema,
     create_robot_camera_schema,
@@ -304,7 +303,6 @@ async def run_bot(webrtc_connection):
             # Create tool schemas (these return FunctionSchema objects)
             user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
-            express_tool = create_express_schema()
             # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
             movement_tool = create_movement_schema()
             camera_capture_tool = create_robot_camera_schema()
@@ -314,7 +312,6 @@ async def run_bot(webrtc_connection):
                 standard_tools=[
                     user_camera_tool,
                     persona_tool,
-                    express_tool,
                     # identity_tool,
                     movement_tool,
                     camera_capture_tool,
@@ -325,7 +322,6 @@ async def run_bot(webrtc_connection):
 
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
-            llm.register_function("express", express)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_robot_camera", capture_robot_camera)
 
@@ -485,6 +481,7 @@ async def run_bot(webrtc_connection):
             context_aggregator.user(),
             memory_service,  # Hybrid memory (70% vector + 30% BM25) for automatic recall/storage
             llm,
+            ExpressTagFilter(),
             SilenceFilter(),
             ReasoningLeakFilter(),
             tts,

@@ -149,6 +149,43 @@ def get_rate_limiter() -> ExpressionRateLimiter:
 # EXPRESSION TOOL
 # =============================================================================
 
+async def fire_expression(emotion: str, intensity: str) -> None:
+    """Execute expression directly — used by ExpressTagFilter for inline tags."""
+    if emotion not in VALID_EMOTIONS:
+        logger.warning(f"Invalid emotion '{emotion}', falling back to neutral")
+        emotion = "neutral"
+    if intensity not in VALID_INTENSITIES:
+        logger.warning(f"Invalid intensity '{intensity}', falling back to low")
+        intensity = "low"
+
+    limiter = get_rate_limiter()
+    can_do, reason = limiter.can_express(intensity)
+    if not can_do:
+        logger.warning(f"Expression downgraded to low: {reason}")
+        intensity = "low"
+
+    mapping = get_expression(emotion, intensity)
+    eyes_state = mapping["eyes"]
+    gesture = mapping["gesture"]
+    had_gesture = bool(gesture and intensity in ("medium", "high"))
+    limiter.record_expression(intensity, had_gesture)
+
+    async def _do():
+        try:
+            from services import tars_robot
+            await tars_robot.set_emotion(eyes_state)
+            logger.info(f"express (inline): emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
+            if had_gesture:
+                movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
+                await tars_robot.execute_movement(movements)
+            await asyncio.sleep(3.0 if had_gesture else 2.0)
+            await tars_robot.set_emotion("neutral")
+        except Exception as e:
+            logger.error(f"fire_expression error: {e}", exc_info=True)
+
+    asyncio.create_task(_do())
+
+
 async def express(params: FunctionCallParams):
     """Unified expression tool: sets eyes and optionally triggers a gesture."""
     emotion = params.arguments.get("emotion", "neutral")
@@ -270,14 +307,16 @@ def create_movement_schema() -> FunctionSchema:
     return FunctionSchema(
         name="execute_movement",
         description=(
-            "Execute DISPLACEMENT movements on TARS hardware. "
-            "Use ONLY when user explicitly requests to move TARS' position — "
-            "walking, turning, stepping forward/backward. "
+            "Execute physical movement commands on TARS hardware. "
+            "Use when the user explicitly tells TARS to walk, step, or turn — "
+            "any command that physically moves or rotates TARS' body. "
             "Available: step_forward, walk_forward, step_backward, walk_backward, "
             "turn_left, turn_right, turn_left_slow, turn_right_slow. "
-            "Examples: User says 'walk forward' → ['walk_forward'], "
-            "User says 'turn around' → ['turn_left', 'turn_left']. "
-            "Do NOT use for expressions — use express() instead."
+            "Examples: 'walk forward' → ['walk_forward'], "
+            "'turn around' → ['turn_left', 'turn_left'], "
+            "'turn left' → ['turn_left'], "
+            "'turn right slowly' → ['turn_right_slow']. "
+            "Do NOT use for expressions — use [express(...)] inline tag instead."
         ),
         properties={
             "movements": {
