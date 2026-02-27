@@ -55,6 +55,38 @@ STT=Deepgram Nova-3, LLM=gpt-oss-120b, TTS=ElevenLabs
 
 ---
 
+## Split Routing (Tailscale exit node)
+
+If using a Tailscale exit node (e.g. Singapore), latency-sensitive services (Soniox JP, Deepgram, ElevenLabs) are routed directly via the real WiFi gateway to avoid the detour.
+
+**One-time install** (persists across reboots):
+```bash
+sudo bash scripts/install-split-routes.sh
+```
+
+**Run manually** (current session only):
+```bash
+sudo bash scripts/split-routes.sh
+```
+
+**Verify routes are active:**
+```bash
+netstat -rn -f inet | grep -E 'soniox|deepgram|elevenlabs|172\.66|104\.20|34\.8|208\.184'
+# Each entry should show en0, not utun*
+```
+
+**Logs:**
+```bash
+tail -f /tmp/tars-split-routes.log
+```
+
+Hosts routed directly:
+- `stt-rt.jp.soniox.com` — Soniox JP STT
+- `api.deepgram.com` — Deepgram STT
+- `api.elevenlabs.io` — ElevenLabs TTS
+
+---
+
 ## Troubleshooting
 
 **Pi not reachable**

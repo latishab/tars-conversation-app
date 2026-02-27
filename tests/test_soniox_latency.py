@@ -140,7 +140,7 @@ async def _run_region_async(api_key: str, region: str, url: str, speech_pcm: byt
 
     config = {
         "api_key": api_key,
-        "model": "stt-rt-preview",
+        "model": "stt-rt-v4",
         "audio_format": "pcm_s16le",
         "sample_rate": SAMPLE_RATE,
         "num_channels": CHANNELS,
@@ -290,22 +290,15 @@ def main():
     parser.add_argument("--skip-conn", action="store_true")
     args = parser.parse_args()
 
-    # Resolve API key
-    api_key = os.environ.get("SONIOX_API_KEY")
-    if not api_key:
-        for fname in (".env.local", ".env"):
-            env_path = Path(__file__).parent.parent / fname
-            if env_path.exists():
-                for line in env_path.read_text().splitlines():
-                    if line.startswith("SONIOX_API_KEY="):
-                        api_key = line.split("=", 1)[1].strip()
-                        break
-            if api_key:
-                break
-
-    if not api_key:
-        print("Error: SONIOX_API_KEY not set.")
-        sys.exit(1)
+    # Load all env vars from .env.local / .env into os.environ
+    for fname in (".env.local", ".env"):
+        env_path = Path(__file__).parent.parent / fname
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+            break
 
     regions = [r.strip().lower() for r in args.regions.split(",") if r.strip()]
     for r in regions:
@@ -336,6 +329,13 @@ def main():
     # Phase 2 — transcription test per region
     results = []
     for region in regions:
+        api_key = (
+            os.environ.get(f"SONIOX_API_KEY_{region.upper()}")
+            or os.environ.get("SONIOX_API_KEY")
+        )
+        if not api_key:
+            print(f"Error: no API key for region '{region}'. Set SONIOX_API_KEY_{region.upper()} or SONIOX_API_KEY.")
+            sys.exit(1)
         print(f"\n{'='*65}")
         print(f"Testing region: {region.upper()}")
         print("=" * 65)

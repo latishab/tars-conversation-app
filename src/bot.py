@@ -36,6 +36,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
+from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.llm_service import FunctionCallParams
@@ -51,6 +52,11 @@ from loguru import logger
 from config import (
     SPEECHMATICS_API_KEY,
     DEEPGRAM_API_KEY,
+    SONIOX_API_KEY_JP,
+    SONIOX_API_KEY_US,
+    DEEPGRAM_MODEL,
+    DEEPGRAM_ENDPOINTING,
+    SONIOX_MODEL,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
@@ -236,6 +242,10 @@ async def run_bot(webrtc_connection):
                 provider=STT_PROVIDER,
                 speechmatics_api_key=SPEECHMATICS_API_KEY,
                 deepgram_api_key=DEEPGRAM_API_KEY,
+                soniox_api_key=SONIOX_API_KEY_JP if STT_PROVIDER == "soniox-jp" else SONIOX_API_KEY_US,
+                deepgram_model=DEEPGRAM_MODEL,
+                deepgram_endpointing=DEEPGRAM_ENDPOINTING,
+                soniox_model=SONIOX_MODEL,
                 language=Language.EN,
                 enable_diarization=False,
             )
@@ -383,10 +393,17 @@ async def run_bot(webrtc_connection):
         # CONTEXT AGGREGATOR & PERSONA STORAGE
         # ====================================================================
 
-        # Configure user turn aggregation
-        # STT services (Speechmatics, Deepgram) handle turn detection internally
+        # Configure user turn aggregation.
+        # Cloud STT providers (Deepgram, Speechmatics, Soniox) handle turn
+        # detection server-side and emit UserStartedSpeakingFrame /
+        # UserStoppedSpeakingFrame. ExternalUserTurnStrategies listens to those
+        # frames directly instead of relying on local VAD + SmartTurn, which
+        # requires VADUserStoppedSpeakingFrame that these providers never send.
+        # Parakeet uses local VAD so it keeps the default SmartTurn strategy.
+        use_external_turn = STT_PROVIDER != "parakeet"
         user_params = LLMUserAggregatorParams(
-            user_turn_stop_timeout=1.5
+            user_turn_strategies=ExternalUserTurnStrategies() if use_external_turn else None,
+            user_turn_stop_timeout=1.5,
         )
 
         context_aggregator = LLMContextAggregatorPair(

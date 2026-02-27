@@ -100,7 +100,6 @@ class StateSync:
             state: "idle", "listening", "thinking", or "speaking"
         """
         self.send_message({"type": "eye_state", "state": state})
-        logger.debug(f"👁️  Sent eye state: {state}")
 
     def send_emotion(self, emotion: str):
         """
@@ -147,7 +146,6 @@ class StateSync:
             return
         self._last_tts_state = speaking
         self.send_message({"type": "tts_state", "speaking": speaking})
-        logger.debug(f"🔊 Sent TTS state: {'speaking' if speaking else 'idle'}")
 
     # ========== RPi → MacBook Message Handlers ==========
 
