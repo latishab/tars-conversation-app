@@ -11,10 +11,8 @@ import io
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.llm_service import FunctionCallParams
+from pipecat.services.llm_service import FunctionCallParams, FunctionCallResultProperties
 from loguru import logger
-
-DEEPINFRA_VISION_MODEL = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 
 
 _moondream_model = None
@@ -85,9 +83,9 @@ async def _describe_image(img_bytes: bytes, question: str) -> str:
 
 
 async def _describe_image_deepinfra(img_bytes: bytes, question: str) -> str:
-    """Describe an image using DeepInfra Qwen VL via OpenAI-compatible API."""
+    """Describe an image using DeepInfra vision model via OpenAI-compatible API."""
     from openai import AsyncOpenAI
-    from config import DEEPINFRA_API_KEY
+    from config import DEEPINFRA_API_KEY, DEEPINFRA_VISION_MODEL
 
     img_b64 = base64.b64encode(img_bytes).decode("utf-8")
     client = AsyncOpenAI(
@@ -104,7 +102,7 @@ async def _describe_image_deepinfra(img_bytes: bytes, question: str) -> str:
                     {"type": "text", "text": question},
                 ],
             }],
-            max_tokens=512,
+            max_tokens=200,
         )
         return response.choices[0].message.content or "No description available."
     except Exception as e:
@@ -178,7 +176,13 @@ async def capture_robot_camera(params: FunctionCallParams):
             result_preview=description[:80], latency_ms=_lat,
         ))
         _notify_display("ok", description[:60], _lat)
-        await params.result_callback(description)
+        # run_llm=True: vision always needs a second LLM pass to verbalize the result.
+        # express()/movement() use run_llm=False because they speak alongside the tool call,
+        # but the camera can't know what it sees until after capture.
+        await params.result_callback(
+            description,
+            properties=FunctionCallResultProperties(run_llm=True),
+        )
 
     except Exception as e:
         logger.error(f"Robot camera error: {e}", exc_info=True)

@@ -73,6 +73,7 @@ from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
 from processors import SilenceFilter, ReasoningLeakFilter, ProactiveMonitor
 from observers import StateObserver, MetricsObserver
+from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from character.prompts import (
     load_character,
     get_introduction_instruction,
@@ -410,6 +411,12 @@ async def run_robot_bot(ui=None):
         state_observer = StateObserver(state_sync=state_sync)
         metrics_observer = MetricsObserver()
 
+        latency_observer = UserBotLatencyObserver()
+
+        @latency_observer.event_handler("on_latency_measured")
+        async def on_latency_measured(observer, latency_s: float):
+            metrics_observer.record_ttfa(latency_s * 1000)
+
         # ====================================================================
         # PIPELINE ASSEMBLY
         # ====================================================================
@@ -470,7 +477,7 @@ async def run_robot_bot(ui=None):
                 enable_usage_metrics=True,
                 report_only_initial_ttfb=False,
             ),
-            observers=[state_observer, metrics_observer],
+            observers=[state_observer, metrics_observer, latency_observer],
         )
 
         task_ref["task"] = task
