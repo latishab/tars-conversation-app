@@ -62,6 +62,8 @@ from config import (
     DEEPINFRA_API_KEY,
     DEEPINFRA_BASE_URL,
     CEREBRAS_API_KEY,
+    GEMINI_API_KEY,
+    GOOGLE_BASE_URL,
     get_fresh_config,
 )
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
@@ -285,11 +287,15 @@ async def run_bot(webrtc_connection):
         logger.info("Initializing LLM...")
         llm = None
         try:
+            _api_key_map = {
+                "cerebras": CEREBRAS_API_KEY,
+                "google":   GEMINI_API_KEY,
+            }
             llm = create_llm_service(
                 provider=_LLM_PROVIDER,
                 model=_LLM_MODEL,
-                api_key=CEREBRAS_API_KEY if _LLM_PROVIDER == "cerebras" else DEEPINFRA_API_KEY,
-                base_url=DEEPINFRA_BASE_URL,
+                api_key=_api_key_map.get(_LLM_PROVIDER, DEEPINFRA_API_KEY),
+                base_url=GOOGLE_BASE_URL if _LLM_PROVIDER == "google" else DEEPINFRA_BASE_URL,
             )
             logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 

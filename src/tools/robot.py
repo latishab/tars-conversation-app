@@ -243,15 +243,10 @@ def create_express_schema() -> FunctionSchema:
     return FunctionSchema(
         name="express",
         description=(
-            "Convey an emotional response during conversation. "
-            "Intensity controls which hardware channels activate: "
-            "low = eyes only (default, no servo wear); "
-            "medium = eyes + subtle gesture (use for notable moments); "
-            "high = eyes + expressive gesture (use rarely, strong reactions). "
-            "Valid emotions: neutral, happy, sad, angry, excited, afraid, sleepy, "
-            "side eye L, side eye R, greeting, farewell, celebration, apologetic. "
-            "Default to low. Do not express on every message. "
-            "High intensity at most once per conversation."
+            "Set TARS eye expression to match the emotional tone of your response. "
+            "low = eyes only, costs nothing, use whenever your words carry emotion. "
+            "medium = eyes + gesture, for notable moments. "
+            "high = eyes + expressive gesture, for greetings and strong reactions."
         ),
         properties={
             "emotion": {

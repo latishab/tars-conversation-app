@@ -31,7 +31,7 @@ def create_llm_service(
             llm = CerebrasLLMService(api_key=api_key, model=model, **kwargs)
 
         else:
-            # Default: OpenAI-compatible (DeepInfra, OpenAI, etc.)
+            # OpenAI-compatible: DeepInfra, Google AI Studio, OpenAI, etc.
             from pipecat.services.openai.llm import OpenAILLMService
             llm = OpenAILLMService(
                 api_key=api_key,
