@@ -8,6 +8,10 @@ def create_stt_service(
     provider: str,
     speechmatics_api_key: str = None,
     deepgram_api_key: str = None,
+    soniox_api_key: str = None,
+    deepgram_model: str = "nova-3",
+    deepgram_endpointing: int = 100,
+    soniox_model: str = "stt-rt-v4",
     language: Language = Language.EN,
     enable_diarization: bool = False,
 ):
@@ -15,9 +19,10 @@ def create_stt_service(
     Create and configure STT service based on provider.
 
     Args:
-        provider: "speechmatics", "deepgram", or "deepgram-flux"
+        provider: "speechmatics", "deepgram", "deepgram-flux", "parakeet", "soniox-jp", or "soniox-us"
         speechmatics_api_key: Speechmatics API key (if using speechmatics)
         deepgram_api_key: Deepgram API key (if using deepgram/deepgram-flux)
+        soniox_api_key: Soniox API key (if using soniox-jp or soniox-us)
         language: Language for transcription (default: English)
         enable_diarization: Enable speaker diarization (default: False)
 
@@ -63,17 +68,19 @@ def create_stt_service(
             if not deepgram_api_key:
                 raise ValueError("deepgram_api_key is required for Deepgram")
 
-            logger.info("Using Deepgram STT with Silero VAD turn detection")
+            logger.info(f"Using Deepgram STT ({deepgram_model}) with Silero VAD turn detection")
             live_options = LiveOptions(
                 language=language.value if hasattr(language, 'value') else str(language),
-                model="nova-3",
+                model=deepgram_model,
                 interim_results=True,
                 smart_format=True,
                 punctuate=True,
-                # No endpointing: turn detection handled by Silero VADProcessor upstream,
-                # which emits VADUserStoppedSpeakingFrame → finalize(). Keeping endpointing
-                # alongside Silero would produce duplicate TranscriptionFrames per turn.
-                # No vad_events: Silero VAD replaces Deepgram's deprecated vad_events.
+                # endpointing: VAD is inside LLMUserAggregator (downstream of Deepgram),
+                # so VADUserStoppedSpeakingFrame never reaches Deepgram and finalize() is
+                # never called. Without server-side endpointing, short utterances never get
+                # a final transcript. Value should be < VAD stop_secs (200ms) so the
+                # transcript arrives before the turn closes.
+                endpointing=deepgram_endpointing,
             )
 
             stt = DeepgramSTTService(
@@ -82,7 +89,7 @@ def create_stt_service(
                 stt_ttfb_timeout=1.0,  # TTFB timeout; must be < next turn gap to avoid wrong-turn attribution
             )
             logger.info("✓ Deepgram STT service created")
-            logger.info("  Turn detection: Silero VADProcessor (upstream in pipeline)")
+            logger.info(f"  Model: {deepgram_model}, endpointing: {deepgram_endpointing}ms")
             logger.info("  TTFB timeout: 1.0s for transcription metrics")
 
         elif provider == "deepgram-flux":
@@ -126,8 +133,33 @@ def create_stt_service(
             stt = ParakeetSTTService()
             logger.info("✓ Parakeet STT service created")
 
+        elif provider in ("soniox-jp", "soniox-us"):
+            from pipecat.services.soniox.stt import SonioxSTTService, SonioxInputParams
+
+            if not soniox_api_key:
+                raise ValueError(f"soniox_api_key is required for {provider}")
+
+            region_urls = {
+                "soniox-jp": "wss://stt-rt.jp.soniox.com/transcribe-websocket",
+                "soniox-us": "wss://stt-rt.soniox.com/transcribe-websocket",
+            }
+            url = region_urls[provider]
+            region = provider.split("-")[1].upper()
+
+            # vad_force_turn_endpoint=True: VAD-driven finalization instead of Soniox's
+            # built-in semantic endpoint detection. Reduces time to final segment to
+            # ~250ms median.
+            logger.info(f"Using Soniox STT ({region}) with VAD-driven endpoint")
+            stt = SonioxSTTService(
+                api_key=soniox_api_key,
+                url=url,
+                params=SonioxInputParams(model=soniox_model),
+                vad_force_turn_endpoint=True,
+            )
+            logger.info(f"✓ Soniox STT service created ({region}, {soniox_model})")
+
         else:
-            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', 'deepgram-flux', or 'parakeet'")
+            raise ValueError(f"Unknown STT provider: {provider}. Must be 'speechmatics', 'deepgram', 'deepgram-flux', 'parakeet', 'soniox-jp', or 'soniox-us'")
 
         return stt
 
@@ -141,6 +173,8 @@ _STT_DISPLAY_NAMES = {
     "deepgram": "Deepgram Nova-3",
     "deepgram-flux": "Deepgram Flux",
     "parakeet": "Parakeet TDT v3 (local)",
+    "soniox-jp": "Soniox v4 (JP)",
+    "soniox-us": "Soniox v4 (US)",
 }
 
 

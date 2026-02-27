@@ -18,6 +18,7 @@ class MetricEntry:
     llm_ttfb_ms: Optional[float] = None
     tts_ttfb_ms: Optional[float] = None
     vision_latency_ms: Optional[float] = None
+    ttfa_ms: Optional[float] = None
     total_ms: Optional[float] = None
 
 
