@@ -2,7 +2,7 @@
 
 import time
 from pipecat.observers.base_observer import BaseObserver, FramePushed
-from pipecat.frames.frames import MetricsFrame, TranscriptionFrame, UserStartedSpeakingFrame, OutputAudioRawFrame
+from pipecat.frames.frames import MetricsFrame, TranscriptionFrame
 from pipecat.metrics.metrics import TTFBMetricsData
 from loguru import logger
 from shared_state import metrics_store
@@ -34,27 +34,9 @@ class MetricsObserver(BaseObserver):
         self._pending_stt_ttfb = None
         self._seen_frame_ids: set = set()
         self._turn_has_transcription = False  # True after TranscriptionFrame for current turn
-        self._t_user_spoke: float | None = None  # wall-clock time of UserStartedSpeakingFrame
-        self._first_audio_done = False  # True after first OutputAudioRawFrame per turn
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
-
-        # UserStartedSpeakingFrame: start the TTFA clock.
-        if isinstance(frame, UserStartedSpeakingFrame):
-            self._t_user_spoke = time.time()
-            self._first_audio_done = False
-            return
-
-        # OutputAudioRawFrame: first one per turn gives end-to-end TTFA.
-        if isinstance(frame, OutputAudioRawFrame):
-            if not self._first_audio_done and self._t_user_spoke is not None:
-                self._first_audio_done = True
-                ttfa_ms = (time.time() - self._t_user_spoke) * 1000
-                self._current_metrics['ttfa_ms'] = ttfa_ms
-                logger.info(f"[MetricsObserver] TTFA turn {self._current_turn}: {ttfa_ms:.0f}ms")
-                self._flush()
-            return
 
         # TranscriptionFrame marks a new user turn; apply any buffered STT TTFB.
         # Only start a new turn if the previous turn already received LLM metrics —
@@ -141,3 +123,9 @@ class MetricsObserver(BaseObserver):
             "ttfa_ms": self._current_metrics.get('ttfa_ms'),
             "total_ms": total if total > 0 else None,
         })
+
+    def record_ttfa(self, latency_ms: float):
+        """Called by UserBotLatencyObserver when VAD-stop → BotStartedSpeaking latency is known."""
+        self._current_metrics['ttfa_ms'] = latency_ms
+        logger.info(f"[MetricsObserver] TTFA turn {self._current_turn}: {latency_ms:.0f}ms")
+        self._flush()
