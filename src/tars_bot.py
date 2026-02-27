@@ -36,9 +36,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
-from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
@@ -47,6 +44,11 @@ from pipecat.frames.frames import LLMRunFrame
 from config import (
     DEEPGRAM_API_KEY,
     SPEECHMATICS_API_KEY,
+    SONIOX_API_KEY_JP,
+    SONIOX_API_KEY_US,
+    DEEPGRAM_MODEL,
+    DEEPGRAM_ENDPOINTING,
+    SONIOX_MODEL,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     DEEPINFRA_API_KEY,
@@ -270,6 +272,10 @@ async def run_robot_bot(ui=None):
             provider=STT_PROVIDER,
             speechmatics_api_key=SPEECHMATICS_API_KEY,
             deepgram_api_key=DEEPGRAM_API_KEY,
+            soniox_api_key=SONIOX_API_KEY_JP if STT_PROVIDER == "soniox-jp" else SONIOX_API_KEY_US,
+            deepgram_model=DEEPGRAM_MODEL,
+            deepgram_endpointing=DEEPGRAM_ENDPOINTING,
+            soniox_model=SONIOX_MODEL,
             language=Language.EN,
             enable_diarization=False,
         )
@@ -377,16 +383,14 @@ async def run_robot_bot(ui=None):
         # CONTEXT AGGREGATOR
         # ====================================================================
 
-        smart_turn = LocalSmartTurnAnalyzerV3()
+        # Pipecat 0.0.102 default: Smart Turn v3 activates automatically when a
+        # VAD analyzer is present. No explicit stop strategy needed.
         user_params = LLMUserAggregatorParams(
             # min_volume=0.0: Pi's compressed WebRTC audio arrives at lower amplitude
             # than a local mic; default 0.6 causes Silero to miss speech events.
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
             ),
-            user_turn_strategies=UserTurnStrategies(
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=smart_turn)]
-            )
         )
 
         context_aggregator = LLMContextAggregatorPair(

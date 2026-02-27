@@ -2,7 +2,7 @@
 
 import time
 from pipecat.observers.base_observer import BaseObserver, FramePushed
-from pipecat.frames.frames import MetricsFrame, TranscriptionFrame
+from pipecat.frames.frames import MetricsFrame, TranscriptionFrame, UserStartedSpeakingFrame, OutputAudioRawFrame
 from pipecat.metrics.metrics import TTFBMetricsData
 from loguru import logger
 from shared_state import metrics_store
@@ -34,14 +34,37 @@ class MetricsObserver(BaseObserver):
         self._pending_stt_ttfb = None
         self._seen_frame_ids: set = set()
         self._turn_has_transcription = False  # True after TranscriptionFrame for current turn
+        self._t_user_spoke: float | None = None  # wall-clock time of UserStartedSpeakingFrame
+        self._first_audio_done = False  # True after first OutputAudioRawFrame per turn
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
 
-        # TranscriptionFrame marks a new user turn; apply any buffered STT TTFB
+        # UserStartedSpeakingFrame: start the TTFA clock.
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self._t_user_spoke = time.time()
+            self._first_audio_done = False
+            return
+
+        # OutputAudioRawFrame: first one per turn gives end-to-end TTFA.
+        if isinstance(frame, OutputAudioRawFrame):
+            if not self._first_audio_done and self._t_user_spoke is not None:
+                self._first_audio_done = True
+                ttfa_ms = (time.time() - self._t_user_spoke) * 1000
+                self._current_metrics['ttfa_ms'] = ttfa_ms
+                logger.info(f"[MetricsObserver] TTFA turn {self._current_turn}: {ttfa_ms:.0f}ms")
+                self._flush()
+            return
+
+        # TranscriptionFrame marks a new user turn; apply any buffered STT TTFB.
+        # Only start a new turn if the previous turn already received LLM metrics —
+        # this prevents spurious increments from Soniox mid-utterance <end> tokens
+        # or bot-speech echo on the Pi mic being re-transcribed.
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
-            self._current_turn += 1
-            self._current_metrics = {}
+            llm_done = 'llm_ttfb_ms' in self._current_metrics
+            if llm_done or self._current_turn == 0:
+                self._current_turn += 1
+                self._current_metrics = {}
             self._turn_has_transcription = True
             if self._pending_stt_ttfb is not None:
                 self._current_metrics['stt_ttfb_ms'] = self._pending_stt_ttfb
@@ -68,19 +91,20 @@ class MetricsObserver(BaseObserver):
                     value_ms = metric_data.value * 1000
                     logger.debug(f"[MetricsObserver] MetricsFrame: {metric_data.processor} = {value_ms:.0f}ms")
 
-                    if any(s in processor for s in ('deepgram', 'speechmatics', 'sttservice')):
-                        if 'stt_ttfb_ms' not in self._current_metrics:
-                            if self._turn_has_transcription:
-                                # Late arrival (timeout path): TranscriptionFrame already processed;
-                                # apply directly to current turn instead of buffering for next
-                                self._current_metrics['stt_ttfb_ms'] = value_ms
-                                self._pending_stt_ttfb = None
-                                changed = True
-                                logger.debug(f"[MetricsObserver] Late STT TTFB turn {self._current_turn}: {value_ms:.0f}ms")
-                            elif self._pending_stt_ttfb is None:
-                                # Fast path: STT MetricsFrame arrives before TranscriptionFrame
-                                self._pending_stt_ttfb = value_ms
-                                logger.debug(f"[MetricsObserver] Buffered STT TTFB: {value_ms:.0f}ms")
+                    if any(s in processor for s in ('deepgram', 'speechmatics', 'sttservice', 'soniox')):
+                        if self._turn_has_transcription and 'stt_ttfb_ms' not in self._current_metrics:
+                            # Late arrival: TranscriptionFrame already processed for this turn;
+                            # apply directly to current turn
+                            self._current_metrics['stt_ttfb_ms'] = value_ms
+                            self._pending_stt_ttfb = None
+                            changed = True
+                            logger.debug(f"[MetricsObserver] Late STT TTFB turn {self._current_turn}: {value_ms:.0f}ms")
+                        elif self._pending_stt_ttfb is None:
+                            # Fast path (before TranscriptionFrame) OR between-turn arrival
+                            # (stt_ttfb_ms already set for current turn, so this belongs to next):
+                            # buffer for the upcoming TranscriptionFrame
+                            self._pending_stt_ttfb = value_ms
+                            logger.debug(f"[MetricsObserver] Buffered STT TTFB: {value_ms:.0f}ms")
                     elif any(s in processor for s in ('openai', 'llmservice', 'deepinfra', 'cerebras')):
                         if 'llm_ttfb_ms' not in self._current_metrics:
                             self._current_metrics['llm_ttfb_ms'] = value_ms
@@ -114,5 +138,6 @@ class MetricsObserver(BaseObserver):
             "llm_ttfb_ms": self._current_metrics.get('llm_ttfb_ms'),
             "tts_ttfb_ms": self._current_metrics.get('tts_ttfb_ms'),
             "vision_latency_ms": self._current_metrics.get('vision_latency_ms'),
+            "ttfa_ms": self._current_metrics.get('ttfa_ms'),
             "total_ms": total if total > 0 else None,
         })
