@@ -10,326 +10,109 @@ pinned: false
 
 # TARS Conversation App
 
-Real-time voice AI with transcription, vision, and intelligent conversation using Speechmatics/Deepgram, Qwen3-TTS/ElevenLabs, DeepInfra LLM, and Moondream.
+Real-time voice AI brain for the TARS robot. Connects to a Raspberry Pi hardware daemon via WebRTC and gRPC.
 
-## Features
+## Modes
 
-- **Dual Operation Modes**
-  - **WebRTC Mode** (`src/bot.py`) - Browser-based voice AI with real-time metrics dashboard
-  - **Robot Mode** (`src/tars_bot.py`) - Connect to Raspberry Pi TARS robot via WebRTC and gRPC
-- **Real-time Transcription** - Speechmatics or Deepgram with smart turn detection
-- **Dual TTS Options** - Qwen3-TTS (local, free, voice cloning) or ElevenLabs (cloud)
-- **LLM Integration** - Any model via DeepInfra
-- **Vision Analysis** - Moondream for image understanding
-- **Proactive Interventions** - AI-powered system for initiating contextually relevant conversation
-- **Hybrid Memory** - SQLite-based hybrid search (70% vector + 30% BM25)
-- **Gradio Dashboard** - Live TTFB metrics, latency charts, and conversation transcription
-- **WebRTC Transport** - Low-latency peer-to-peer audio
-- **gRPC Robot Control** - Hardware control with 5-10ms latency (robot mode only)
+**Robot mode** (`src/tars_bot.py`) — connects to RPi over WebRTC + gRPC. Controls eyes, gestures, and movement.
+
+**Browser mode** (`src/bot.py`) — browser mic/speaker via SmallWebRTC. Includes hybrid memory and Gradio dashboard.
+
+## Stack
+
+| Layer | Options |
+|-------|---------|
+| STT | Deepgram, Speechmatics, Soniox |
+| LLM | Cerebras, Gemini, DeepInfra (any OpenAI-compatible) |
+| TTS | ElevenLabs, Qwen3-TTS (local) |
+| Vision | Moondream (local), DeepInfra Qwen-VL |
+| Memory | SQLite hybrid search (70% vector + 30% BM25) |
+
+## Quick Start
+
+**Via TARS daemon dashboard:**
+1. Open `http://tars.local:8000` → Apps tab → Install
+2. Configure API keys in `.env.local`
+3. Click Start
+
+**Manual:**
+```bash
+git clone https://github.com/latishab/tars-conversation-app.git
+cd tars-conversation-app
+bash install.sh
+cp env.example .env.local   # add API keys
+cp config.ini.example config.ini
+```
+
+## Run
+
+```bash
+# Robot mode (requires Pi running tars_daemon.py)
+python src/tars_bot.py
+
+# Browser mode
+python src/pipecat_service.py
+```
+
+## Configuration
+
+`config.ini` — runtime settings (provider, model, connection):
+```ini
+[LLM]
+provider = cerebras
+model = gpt-oss-120b
+
+[STT]
+provider = deepgram
+
+[TTS]
+provider = elevenlabs
+
+[Connection]
+connection_type = local   # local | manual | tailscale
+auto_connect = true
+```
+
+`.env.local` — API keys:
+```
+CEREBRAS_API_KEY=
+DEEPGRAM_API_KEY=
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+DEEPINFRA_API_KEY=
+GEMINI_API_KEY=
+```
+
+## Robot Connection
+
+| Type | How |
+|------|-----|
+| `local` | `tars.local` via mDNS (default) |
+| `manual` | Direct IP — set `rpi_ip` in config.ini |
+| `tailscale` | Tailscale MagicDNS hostname `tars` |
+
+If mDNS fails: `ssh tars-pi "hostname -I"` then set `connection_type = manual`.
 
 ## Project Structure
 
 ```
-tars-conversation-app/
-├── src/
-│   ├── tars_bot.py             # Robot mode entry point
-│   ├── bot.py                  # Browser mode entry point
-│   ├── pipecat_service.py      # FastAPI WebRTC signaling backend
-│   ├── shared_state.py         # Thread-safe metrics store
-│   ├── character/              # TARS personality and prompts
-│   ├── config/                 # Configuration management
-│   ├── observers/              # Pipeline observers (8 files)
-│   ├── processors/             # Pipeline frame processors
-│   ├── services/               # STT, TTS, memory, robot services
-│   │   ├── factories/          # STT/TTS provider factories
-│   │   ├── memory/             # Hybrid memory (SQLite + ChromaDB)
-│   │   └── tts/                # Qwen3-TTS local service
-│   ├── tools/                  # LLM callable tools (robot, vision, persona)
-│   ├── transport/              # WebRTC transport (aiortc)
-│   └── ui/                     # Gradio dashboard
-├── config.ini                  # User configuration
-├── config.ini.example          # Configuration template
-├── app.json                    # App manifest for daemon dashboard
-├── requirements.txt
-└── install.sh
+src/
+├── tars_bot.py          # Robot mode entry point
+├── bot.py               # Browser mode entry point
+├── character/           # TARS persona and prompts
+├── processors/          # Pipeline filters (silence, express tags, reasoning)
+├── services/            # STT/TTS/LLM factories, memory, robot client
+├── tools/               # LLM-callable tools (robot, vision, persona)
+├── transport/           # aiortc WebRTC client
+└── ui/                  # Gradio metrics dashboard
 ```
 
-## Operation Modes
-
-### WebRTC Mode (`src/bot.py`)
-- **Use case**: Browser-based voice AI conversations
-- **Transport**: SmallWebRTC (browser ↔ Pipecat)
-- **Features**: Full pipeline with STT, LLM, TTS, Memory
-- **UI**: Gradio dashboard for metrics and transcription
-- **Best for**: Development, testing, remote conversations
-
-### Robot Mode (`src/tars_bot.py`)
-- **Use case**: Physical TARS robot on Raspberry Pi
-- **Transport**: aiortc (RPi ↔ Pipecat) + gRPC (commands)
-- **Features**: Same pipeline + robot control (eyes, gestures, movement)
-- **Hardware**: Requires TARS robot with servos and display
-- **Best for**: Physical robot interactions, demos
-
-## Quick Start
-
-### Installation on TARS Robot (Recommended)
-
-Install via the TARS daemon dashboard:
-
-1. Open TARS dashboard at `http://tars.local:8000`
-2. Go to **Apps** tab
-3. Find "TARS Conversation App" in the list
-4. Click **Install** (clones from GitHub and runs `install.sh`)
-5. Configure API keys in `.env.local`
-6. Click **Start**
-7. Access metrics dashboard at `http://your-pi:7860`
-
-### Easy Installation (Manual)
-
-For first-time setup on Raspberry Pi:
-
-```bash
-# Clone and install
-git clone https://github.com/latishab/tars-conversation-app.git
-cd tars-conversation-app
-bash install.sh
-```
-
-The installer handles:
-- System dependencies (portaudio, ffmpeg)
-- Python virtual environment
-- All Python packages
-- Configuration file setup
-
-### Manual Installation
-
-```bash
-# Python dependencies
-pip install -r requirements.txt
-
-# For robot mode, install TARS SDK
-pip install tars-robot[sdk]
-```
-
-### 2. Configure Environment
-
-```bash
-# Copy and edit environment file with your API keys
-cp env.example .env.local
-
-# Copy and edit configuration file
-cp config.ini.example config.ini
-```
-
-Required API Keys (in `.env.local`):
-- `SPEECHMATICS_API_KEY` or `DEEPGRAM_API_KEY` - For speech-to-text
-- `DEEPINFRA_API_KEY` - For LLM
-- `ELEVENLABS_API_KEY` - Optional (if using ElevenLabs TTS)
-
-Settings (in `config.ini`):
-```ini
-[LLM]
-model = meta-llama/Llama-3.3-70B-Instruct
-
-[STT]
-provider = deepgram  # or speechmatics
-
-[TTS]
-provider = qwen3  # or elevenlabs
-```
-
-### 3. Run
-
-#### WebRTC Mode (Browser)
-
-**Terminal 1: Python backend**
-```bash
-python src/pipecat_service.py
-```
-
-**Terminal 2: Gradio UI (optional)**
-```bash
-python src/ui/gradio_app.py
-```
-
-Then:
-1. Open WebRTC client in browser (connect to pipecat_service)
-2. Open Gradio dashboard at http://localhost:7861 (for metrics)
-3. Start talking
-
-#### Robot Mode (Raspberry Pi)
-
-Prerequisites:
-- Raspberry Pi TARS robot running tars_daemon.py
-- Network connection (home WiFi, Tailscale, or direct IP)
-- TARS SDK installed
-
-Configuration in `config.ini`:
-```ini
-[Connection]
-mode = robot
-
-# Connection type: local, manual, or tailscale
-connection_type = local  # Default - uses tars.local (mDNS)
-
-# Manual IP (only used when connection_type = manual)
-rpi_ip = 192.168.1.100
-
-auto_connect = true
-
-[Display]
-enabled = true
-```
-
-Connection options:
-- `local`: Uses `tars.local` (mDNS - works on most home WiFi)
-- `manual`: Uses direct IP address (for networks where mDNS doesn't work)
-- `tailscale`: Uses Tailscale MagicDNS hostname `tars` (for remote access)
-
-If mDNS doesn't work (dorm WiFi, enterprise networks):
-1. Find Pi's IP: `ssh tars-pi "hostname -I"`
-2. Set `connection_type = manual` and `rpi_ip = <your-pi-ip>`
-
-For remote access via Tailscale:
-1. Install Tailscale on both Pi and your computer
-2. On Pi: `sudo tailscale set --hostname=tars`
-3. Set `connection_type = tailscale`
-
-Deployment detection:
-- **Remote** (Mac/computer): Uses connection_type settings
-- **Local** (on RPi): Auto-detects localhost:50051
-
-Run:
-```bash
-python src/tars_bot.py
-```
-
-## Gradio Dashboard
-
-The Gradio UI (`src/ui/gradio_app.py`) provides real-time monitoring:
-
-### Latency Dashboard
-- Service configuration (STT, Memory, LLM, TTS)
-- TTFB metrics with min/max/avg/last stats
-- Line chart: Latency trends over time
-- Bar chart: Stacked latency breakdown
-- Metrics table: Last 15 turns
-
-### Conversation Tab
-- Live user and assistant transcriptions
-- Auto-updates every second
-
-### Connection Tab
-- Architecture documentation
-- Usage instructions
-
-## Architecture
-
-### WebRTC Mode Data Flow
-```
-Browser (WebRTC client)
-    ↕ (audio)
-SmallWebRTC Transport
-    ↓
-Pipeline: STT → Memory → LLM → TTS
-    ↓
-Observers (metrics, transcription, assistant)
-    ↓
-shared_state.py
-    ↓
-Gradio UI (http://localhost:7861)
-```
-
-### Robot Mode Data Flow
-```
-RPi Mic → WebRTC → Pipecat Pipeline → WebRTC → RPi Speaker
-          (audio)        ↓              (audio)
-                        STT → Memory → LLM → TTS
-                                ↓
-                         LLM Tools (set_emotion, do_gesture)
-                                ↓
-                        gRPC → RPi Hardware
-                            (eyes, servos, display)
-```
-
-Communication channels (Robot Mode):
-
-| Channel | Protocol | Purpose | Latency |
-|---------|----------|---------|---------|
-| Audio | WebRTC (aiortc) | Voice conversation | ~20ms |
-| Commands | gRPC | Hardware control | ~5-10ms |
-| State | DataChannel | Battery, movement status | ~10ms |
-
-## Development
-
-See [docs/DEVELOPING_APPS.md](docs/DEVELOPING_APPS.md) for comprehensive guide on creating TARS SDK apps.
-
-### Adding Metrics
-1. Emit `MetricsFrame` in your service/processor
-2. `MetricsObserver` will capture it automatically
-3. Metrics appear in Gradio dashboard
-
-### Adding Tools
-1. Create function in `src/tools/`
-2. Create schema with `create_*_schema()`
-3. Register in `src/bot.py` or `src/tars_bot.py`
-4. LLM can now call your tool
-
-### Modifying UI
-1. Edit `src/ui/gradio_app.py`
-2. Gradio hot-reloads automatically
-3. Access `metrics_store` for data
-
-### Uninstalling
-
-```bash
-bash uninstall.sh
-```
-
-Removes virtual environment and optionally data/config files.
-
-## Troubleshooting
-
-### No metrics in Gradio UI
-- Ensure bot is running (`src/bot.py` or `src/tars_bot.py`)
-- Check WebRTC client is connected
-- Verify at least one conversation turn completed
-
-### Robot mode connection issues
-- Check RPi is reachable: `ping <rpi-ip>`
-- Verify tars_daemon is running on RPi
-- Check gRPC port 50051 is open
-- Review config.ini addresses
-
-### Import errors
-```bash
-pip install -r requirements.txt
-pip install gradio plotly  # For UI
-```
-
-### Audio issues (robot mode)
-- Check RPi mic/speaker with `arecord`/`aplay`
-- Verify WebRTC connection in logs
-- Test with `tests/test_hardware.py`
-
-## Contributing
-
-Contributions welcome.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with `python tests/gradio/test_gradio.py`
-5. Commit with clear messages (see CLAUDE.md for style)
-6. Push to your fork
-7. Open a Pull Request
-
-Code Style:
-- Python: Follow PEP 8
-- Add comments for complex logic
-- Update docs for new features
-- See CLAUDE.md for guidelines (concise, technical, no fluff)
+## Docs
+
+- [Installation](docs/INSTALLATION_GUIDE.md)
+- [App Development](docs/DEVELOPING_APPS.md)
+- [Daemon Integration](docs/DAEMON_INTEGRATION.md)
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT
