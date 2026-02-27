@@ -2,6 +2,7 @@
 
 from .robot import (
     # Expression and movement
+    fire_expression,
     express,
     execute_movement,
     # Rate limiting
@@ -34,6 +35,7 @@ from .persona import (
 
 __all__ = [
     # Robot tools
+    "fire_expression",
     "express",
     "execute_movement",
     "set_rate_limiter",

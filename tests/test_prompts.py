@@ -44,6 +44,7 @@ PROVIDERS = {
         "api_key_env": "GEMINI_API_KEY",
         "models":      ["gemini-2.5-flash"],
         "default":     "gemini-2.5-flash",
+        "extra_params": {"reasoning_effort": "none"},
     },
     "deepinfra": {
         "base_url":    "https://api.deepinfra.com/v1/openai",
@@ -259,7 +260,7 @@ class Result:
 # Core call
 # ---------------------------------------------------------------------------
 
-def run_single(client: OpenAI, model: str, system: str, user_msg: str, extra_body: dict = None) -> Result:
+def run_single(client: OpenAI, model: str, system: str, user_msg: str, extra_body: dict = None, extra_params: dict = None) -> Result:
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user_msg},
@@ -277,6 +278,8 @@ def run_single(client: OpenAI, model: str, system: str, user_msg: str, extra_bod
     )
     if extra_body:
         call_kwargs["extra_body"] = extra_body
+    if extra_params:
+        call_kwargs.update(extra_params)
 
     # First attempt: with parallel_tool_calls=False
     try:
@@ -343,7 +346,7 @@ def run_single(client: OpenAI, model: str, system: str, user_msg: str, extra_bod
 # Per-model/variant test runner
 # ---------------------------------------------------------------------------
 
-def test_model(client: OpenAI, model: str, variant: str, runs_per_case: int, extra_body: dict = None):
+def test_model(client: OpenAI, model: str, variant: str, runs_per_case: int, extra_body: dict = None, extra_params: dict = None):
     system = VARIANTS[variant]
     print(f"\n{'=' * 60}")
     print(f"  {model} | variant: {variant}")
@@ -362,7 +365,7 @@ def test_model(client: OpenAI, model: str, variant: str, runs_per_case: int, ext
         case_tool_present = 0
 
         for run_idx in range(runs_per_case):
-            r = run_single(client, model, system, user_msg, extra_body=extra_body)
+            r = run_single(client, model, system, user_msg, extra_body=extra_body, extra_params=extra_params)
 
             # Determine content display
             if r.raw_content is None:
@@ -505,17 +508,20 @@ def main():
 
     client = OpenAI(api_key=api_key, base_url=provider["base_url"])
     extra_body = provider.get("model_extra_body", {}).get(model)
+    extra_params = provider.get("extra_params")
     if extra_body:
         print(f"extra_body for {model}: {extra_body}")
+    if extra_params:
+        print(f"extra_params for {model}: {extra_params}")
 
     if args.all_variants:
         for variant in VARIANTS:
-            test_model(client, model, variant, args.runs, extra_body=extra_body)
+            test_model(client, model, variant, args.runs, extra_body=extra_body, extra_params=extra_params)
             if variant != list(VARIANTS.keys())[-1]:
                 print("\n--- sleeping 2s between variants ---")
                 time.sleep(2.0)
     else:
-        test_model(client, model, args.variant, args.runs, extra_body=extra_body)
+        test_model(client, model, args.variant, args.runs, extra_body=extra_body, extra_params=extra_params)
 
 
 if __name__ == "__main__":
