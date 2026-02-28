@@ -8,11 +8,21 @@ Two camera sources:
 import asyncio
 import base64
 import io
+import random
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.frames.frames import UserImageRequestFrame
+from pipecat.frames.frames import TTSSpeakFrame, UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import FunctionCallParams, FunctionCallResultProperties
 from loguru import logger
+from tools.robot import fire_expression
+
+
+_CAMERA_ACKS = [
+    "Looking.",
+    "Give me a second.",
+    "Let me see.",
+    "One moment.",
+]
 
 
 _moondream_model = None
@@ -128,7 +138,7 @@ async def capture_user_camera(params: FunctionCallParams):
 
 
 async def capture_robot_camera(params: FunctionCallParams):
-    """Capture image from TARS' Pi camera and describe using DeepInfra Qwen VL."""
+    """Capture image from TARS' Pi camera and describe using local Moondream model."""
     import time as _time
     from shared_state import metrics_store, CameraEvent
 
@@ -137,6 +147,9 @@ async def capture_robot_camera(params: FunctionCallParams):
     metrics_store.add_camera_event(CameraEvent(
         timestamp=_t0, question=question, status="capturing"
     ))
+
+    await params.llm.push_frame(TTSSpeakFrame(random.choice(_CAMERA_ACKS), append_to_context=False))
+    asyncio.create_task(fire_expression("neutral", "low"))
 
     try:
         from services import tars_robot
@@ -166,11 +179,12 @@ async def capture_robot_camera(params: FunctionCallParams):
             return
 
         img_bytes = base64.b64decode(img_base64)
-        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running DeepInfra vision...")
-        description = await _describe_image_deepinfra(img_bytes, question)
-        logger.info(f"DeepInfra vision result: {description[:120]}")
+        logger.info(f"Camera frame captured ({result.get('width')}x{result.get('height')}), running Moondream...")
+        description = await _describe_image(img_bytes, question)
+        logger.info(f"Moondream result: {description[:120]}")
 
         _lat = (_time.time() - _t0) * 1000
+        metrics_store.set_vision_latency(_lat)
         metrics_store.add_camera_event(CameraEvent(
             timestamp=_time.time(), question=question, status="ok",
             result_preview=description[:80], latency_ms=_lat,

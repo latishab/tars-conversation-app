@@ -11,6 +11,7 @@ from typing import Optional
 from loguru import logger
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams, FunctionCallResultProperties
 
 
@@ -259,6 +260,16 @@ async def execute_movement(params: FunctionCallParams):
     if not movements:
         await params.result_callback("No movements specified.")
         return
+
+    _first = movements[0] if movements else ""
+    if "turn" in _first:
+        _ack = "Turning."
+    elif "backward" in _first:
+        _ack = "Backing up."
+    else:
+        _ack = "Moving."
+    await params.llm.push_frame(TTSSpeakFrame(_ack, append_to_context=False))
+    asyncio.create_task(fire_expression("neutral", "low"))
 
     try:
         from services import tars_robot
