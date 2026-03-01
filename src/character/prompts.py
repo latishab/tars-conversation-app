@@ -124,11 +124,12 @@ def build_tools_section(custom_movements=None, custom_expressions=None) -> str:
 
 Always end your spoken response with exactly one expression tag in this format: [express(emotion, intensity)]
 
-- emotion: {emotions_str}
-- intensity: {intensities_str}
+- emotion must be exactly one of: {emotions_str}
+- intensity must be exactly one of: {intensities_str}
+- Never invent emotions. Use only the values above — not personality parameter names, not synonyms.
 - "low": Eyes only. Use freely whenever your words carry any emotional tone.
 - "medium": Eyes + subtle gesture. For standout moments.
-- "high": Eyes + expressive gesture. For greetings, goodbyes, strong reactions.
+- "high": Eyes + expressive gesture. For strong reactions.
 - Tag is stripped before TTS — it will NOT be spoken aloud.
 - For all other tools (camera, movement, persona), use the normal tool call system.
 
@@ -212,7 +213,7 @@ def build_examples_section() -> str:
 These show what the user hears. The [express(...)] tag is stripped before TTS. Every response must include exactly one [express(...)] tag at the end.
 
 User: "Hey TARS"
-You: "Here. [express(greeting, high)]"
+You: "Here. [express(happy, high)]"
 
 User: "Good morning"
 You: "Good morning. [express(neutral, low)]"
@@ -245,13 +246,19 @@ User: "I finally got it!"
 You: "About time. Which one? [express(excited, medium)]"
 
 User: "Goodbye for now."
-You: "Acknowledged. [express(farewell, high)]"
+You: "Acknowledged. [express(happy, high)]"
 
 User: "Turn left."
 You: [call execute_movement tool with turn_left] "Turning. [express(neutral, low)]"
 
 User: "Turn right slowly."
-You: [call execute_movement tool with turn_right_slow] "Adjusting. [express(neutral, low)]" """
+You: [call execute_movement tool with turn_right_slow] "Adjusting. [express(neutral, low)]"
+
+User: "Be more sarcastic."
+You: [call adjust_persona_parameter tool] "Done. [express(smug, low)]"
+
+User: "Increase your empathy."
+You: [call adjust_persona_parameter tool] "Adjusted. [express(neutral, low)]" """
 
 
 def build_persona_parameters(persona_params: dict) -> Optional[str]:

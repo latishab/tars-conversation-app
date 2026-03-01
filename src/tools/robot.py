@@ -19,58 +19,26 @@ from pipecat.services.llm_service import FunctionCallParams, FunctionCallResultP
 # EXPRESSION CONSTANTS
 # =============================================================================
 
-# Hardware-native states + semantic aliases the LLM can use
 VALID_EMOTIONS = [
-    # Hardware-native (fallback passes name directly to hardware)
     "neutral", "happy", "sad", "angry", "excited",
     "afraid", "sleepy", "side eye L", "side eye R",
     "curious", "skeptical", "smug", "surprised",
-    # Semantic aliases (resolve via ALIAS_TO_EYES)
-    "greeting", "farewell", "celebration", "apologetic",
 ]
 VALID_INTENSITIES = ["low", "medium", "high"]
 
-# Maps semantic aliases to their default hardware eye state
-ALIAS_TO_EYES = {
-    "greeting":    "happy",
-    "farewell":    "happy",
-    "celebration": "excited",
-    "apologetic":  "sad",
-    "side eye L":  "sideeye_left",
-    "side eye R":  "sideeye_right",
-}
-
 # Sparse map: only entries that differ from default (eyes=emotion, gesture=None)
 EXPRESSION_MAP = {
-    ("happy",        "high"):    {"eyes": "happy",     "gesture": "side_side"},
-    ("sad",          "high"):    {"eyes": "sad",        "gesture": "bow"},
-    ("angry",        "medium"):  {"eyes": "angry",      "gesture": "side_side"},
-    ("angry",        "high"):    {"eyes": "angry",      "gesture": "side_side"},
-    ("excited",      "medium"):  {"eyes": "excited",    "gesture": "side_side"},
-    ("excited",      "high"):    {"eyes": "excited",    "gesture": "excited"},
-    ("afraid",       "high"):    {"eyes": "afraid",     "gesture": "side_side"},
-    ("curious",      "medium"):  {"eyes": "curious",    "gesture": None},
-    ("curious",      "high"):    {"eyes": "curious",    "gesture": "tilt_head"},
-    ("skeptical",    "medium"):  {"eyes": "skeptical",  "gesture": None},
-    ("skeptical",    "high"):    {"eyes": "skeptical",  "gesture": "side_side"},
-    ("smug",         "medium"):  {"eyes": "smug",       "gesture": None},
-    ("smug",         "high"):    {"eyes": "smug",       "gesture": "side_side"},
-    ("surprised",    "medium"):  {"eyes": "surprised",  "gesture": None},
-    ("surprised",    "high"):    {"eyes": "surprised",  "gesture": "side_side"},
-    ("greeting",     "high"):    {"eyes": "happy",      "gesture": "wave_right"},
-    ("farewell",     "high"):    {"eyes": "happy",      "gesture": "bow"},
-    ("celebration",  "medium"):  {"eyes": "excited",    "gesture": "side_side"},
-    ("celebration",  "high"):    {"eyes": "excited",    "gesture": "excited"},
-    ("apologetic",   "high"):    {"eyes": "sad",        "gesture": "bow"},
-}
-
-# Gesture name → movement sequence
-GESTURE_MOVEMENTS = {
-    "bow":        ["bow"],
-    "side_side":  ["tilt_left", "tilt_right"],
-    "wave_right": ["wave_right"],
-    "tilt_head":  ["tilt_left"],
-    "excited":    ["tilt_left", "tilt_right", "tilt_left", "tilt_right"],
+    ("happy",     "high"):   {"eyes": "happy",     "gesture": "Wave Fast"},
+    ("sad",       "high"):   {"eyes": "sad",        "gesture": "Bow Fast"},
+    ("angry",     "medium"): {"eyes": "angry",      "gesture": "Wiggle"},
+    ("angry",     "high"):   {"eyes": "angry",      "gesture": "Wiggle"},
+    ("excited",   "medium"): {"eyes": "excited",    "gesture": "Wiggle"},
+    ("excited",   "high"):   {"eyes": "excited",    "gesture": "Laugh Fast"},
+    ("afraid",    "high"):   {"eyes": "afraid",     "gesture": "Wiggle"},
+    ("curious",   "high"):   {"eyes": "curious",    "gesture": "Tilt R Fast"},
+    ("skeptical", "high"):   {"eyes": "skeptical",  "gesture": "Wiggle"},
+    ("smug",      "high"):   {"eyes": "smug",       "gesture": "Tilt R Fast"},
+    ("surprised", "high"):   {"eyes": "surprised",  "gesture": "Tilt L Fast"},
 }
 
 
@@ -79,8 +47,8 @@ def get_expression(emotion: str, intensity: str) -> dict:
     mapping = EXPRESSION_MAP.get((emotion, intensity))
     if mapping:
         return mapping
-    eyes = ALIAS_TO_EYES.get(emotion, emotion)
-    return {"eyes": eyes, "gesture": None}
+    return {"eyes": emotion, "gesture": None}
+
 
 
 # =============================================================================
@@ -206,8 +174,7 @@ async def fire_expression(emotion: str, intensity: str) -> None:
             await tars_robot.set_emotion(eyes_state)
             logger.info(f"express (inline): emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
             if had_gesture:
-                movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
-                await tars_robot.execute_movement(movements)
+                await tars_robot.execute_movement([gesture])
             await asyncio.sleep(3.0 if had_gesture else 2.0)
             await tars_robot.set_emotion("neutral")
         except Exception as e:
@@ -220,69 +187,11 @@ async def express(params: FunctionCallParams):
     """Unified expression tool: sets eyes and optionally triggers a gesture."""
     emotion = params.arguments.get("emotion", "neutral")
     intensity = params.arguments.get("intensity", "low")
-
-    if emotion in _custom_expressions:
-        await params.result_callback(
-            "Expression set.",
-            properties=FunctionCallResultProperties(run_llm=False),
-        )
-        async def _run_custom():
-            try:
-                from services import tars_robot
-                await tars_robot.execute_movement([emotion])
-            except Exception as e:
-                logger.error(f"express custom sequence error: {e}", exc_info=True)
-        asyncio.create_task(_run_custom())
-        return
-
-    # Validate inputs; fall back to safe defaults
-    if emotion not in VALID_EMOTIONS:
-        logger.warning(f"Invalid emotion '{emotion}', falling back to neutral")
-        emotion = "neutral"
-    if intensity not in VALID_INTENSITIES:
-        logger.warning(f"Invalid intensity '{intensity}', falling back to low")
-        intensity = "low"
-
-    limiter = get_rate_limiter()
-    can_do, reason = limiter.can_express(intensity)
-    if not can_do:
-        # Downgrade to low (eyes only) rather than blocking entirely
-        logger.warning(f"Expression downgraded to low: {reason}")
-        intensity = "low"
-
-    mapping = get_expression(emotion, intensity)
-    eyes_state = mapping["eyes"]
-    gesture = mapping["gesture"]
-
-    had_gesture = bool(gesture and intensity in ("medium", "high"))
-    limiter.record_expression(intensity, had_gesture)
-
-    # Fire-and-forget: don't trigger a second LLM completion after this tool result.
-    # The LLM already generated its spoken response alongside the tool call.
     await params.result_callback(
         "Expression set.",
         properties=FunctionCallResultProperties(run_llm=False),
     )
-
-    async def _do_expression():
-        try:
-            from services import tars_robot
-
-            await tars_robot.set_emotion(eyes_state)
-            logger.info(f"express: emotion={emotion} intensity={intensity} eyes={eyes_state} gesture={gesture}")
-
-            if had_gesture:
-                movements = GESTURE_MOVEMENTS.get(gesture, [gesture])
-                await tars_robot.execute_movement(movements)
-
-            # Return to neutral after expression completes
-            await asyncio.sleep(3.0 if had_gesture else 2.0)
-            await tars_robot.set_emotion("neutral")
-
-        except Exception as e:
-            logger.error(f"Background expression error: {e}", exc_info=True)
-
-    asyncio.create_task(_do_expression())
+    await fire_expression(emotion, intensity)
 
 
 # =============================================================================
@@ -339,10 +248,9 @@ def create_express_schema(custom_expressions: list = None) -> FunctionSchema:
             "Set TARS eye expression to match the emotional tone of your response. "
             "low = eyes only, costs nothing, use whenever your words carry emotion. "
             "medium = eyes + gesture, for notable moments. "
-            "high = eyes + expressive gesture, for greetings and strong reactions. "
+            "high = eyes + expressive gesture, for strong reactions. "
             "Valid emotions: neutral, happy, sad, angry, excited, afraid, sleepy, "
-            "side eye L, side eye R, curious, skeptical, smug, surprised, "
-            f"greeting, farewell, celebration, apologetic.{custom_str}"
+            f"side eye L, side eye R, curious, skeptical, smug, surprised.{custom_str}"
         ),
         properties={
             "emotion": {

@@ -33,8 +33,9 @@ from math import gcd
 from aiortc import MediaStreamTrack
 from av import AudioFrame as AVAudioFrame
 
-from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, TTSStoppedFrame, Frame
-from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, CancelFrame, Frame, FunctionCallResultFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from tools.robot import fire_expression
 
 
 class RPiAudioInputTrack:
@@ -298,20 +299,42 @@ class AudioBridge(FrameProcessor):
         self,
         rpi_input_track: Optional[RPiAudioInputTrack] = None,
         rpi_output_track: Optional[RPiAudioOutputTrack] = None,
+        express_filter=None,
     ):
         super().__init__()
         self.rpi_input_track = rpi_input_track
         self.rpi_output_track = rpi_output_track
+        self._express_filter = express_filter
+        self._tts_started = False   # armed by TTSStartedFrame, consumed by first audio
         self._diag_tts_active = False
+        self._audio_frame_count = 0  # frames received this utterance (for streaming diag)
 
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
-            is_first = not self._diag_tts_active
+        if isinstance(frame, TTSStartedFrame):
+            # Arm the first-audio trigger for this utterance. Resetting here ensures
+            # stale _diag_tts_active from a previous turn (where TTSStoppedFrame
+            # arrived before the last buffered audio chunk) can't suppress is_first.
+            self._tts_started = True
+            self._audio_frame_count = 0
+
+        elif isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
+            self._audio_frame_count += 1
+            is_first = self._tts_started
             if is_first:
+                self._tts_started = False
                 self._diag_tts_active = True
                 logger.debug(f"[AudioDiag] First TTS frame arrived at bridge")
+                # Notify TTS service that bot started speaking (unblocks websocket reconnect logic)
+                await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+                # Fire deferred expression now — synchronized with speech onset
+                if self._express_filter:
+                    expr = self._express_filter.pop_pending_expression()
+                    if expr:
+                        emotion, intensity = expr
+                        asyncio.create_task(fire_expression(emotion, intensity))
+                        logger.debug(f"[AudioDiag] Expression fired on first audio: {emotion}/{intensity}")
 
             audio_bytes = frame.audio
             src_rate = frame.sample_rate
@@ -321,7 +344,8 @@ class AudioBridge(FrameProcessor):
                 pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
                 g = gcd(src_rate, dst_rate)
                 up, down = dst_rate // g, src_rate // g
-                pcm = resample_poly(pcm, up, down)
+                loop = asyncio.get_event_loop()
+                pcm = await loop.run_in_executor(None, resample_poly, pcm, up, down)
                 audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
 
             if is_first:
@@ -336,9 +360,21 @@ class AudioBridge(FrameProcessor):
 
             await self.rpi_output_track.add_audio(audio_bytes)
 
-        elif self._diag_tts_active and isinstance(frame, TTSStoppedFrame):
+        elif isinstance(frame, (TTSStoppedFrame, CancelFrame)):
+            if self._audio_frame_count > 0:
+                logger.debug(f"[AudioDiag] Utterance done: {self._audio_frame_count} audio frames received from TTS")
+            self._tts_started = False
             self._diag_tts_active = False
+            if isinstance(frame, TTSStoppedFrame):
+                # Unfreeze TTS pause_processing_frames() — called after TTSSpeakFrame.
+                # Without this, FunctionCallResultFrame from long-running tools (e.g.
+                # camera/Moondream) gets stuck behind the pause and the second LLM
+                # call never triggers. Standard transports emit this automatically;
+                # we must do it explicitly since AudioBridge acts as the transport sink.
+                await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
 
+        if isinstance(frame, FunctionCallResultFrame):
+            logger.debug(f"[AudioBridge] passing FunctionCallResultFrame [{frame.function_name}:{frame.tool_call_id}] {direction}")
         await self.push_frame(frame, direction)
 
     def set_input_track(self, track: RPiAudioInputTrack):
