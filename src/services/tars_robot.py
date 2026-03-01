@@ -159,6 +159,12 @@ async def capture_camera_view() -> Dict[str, Any]:
 # ============== Helper Functions ==============
 
 
+_EMOTION_NAME_MAP = {
+    "side eye L": "sideeye_left",
+    "side eye R": "sideeye_right",
+}
+
+
 async def set_emotion(emotion: str) -> str:
     """
     Set robot facial emotion.
@@ -174,8 +180,9 @@ async def set_emotion(emotion: str) -> str:
         logger.warning("Cannot set emotion - robot not available")
         return "TARS robot not available. Cannot set emotion."
 
+    grpc_emotion = _EMOTION_NAME_MAP.get(emotion, emotion)
     try:
-        client.set_emotion(emotion)
+        client.set_emotion(grpc_emotion)
         logger.debug(f"Emotion set to: {emotion}")
         return f"Emotion set to {emotion}"
     except Exception as e:

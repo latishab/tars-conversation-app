@@ -9,6 +9,7 @@ import asyncio
 import base64
 import io
 import random
+import threading
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import TTSSpeakFrame, UserImageRequestFrame
 from pipecat.processors.frame_processor import FrameDirection
@@ -26,13 +27,13 @@ _CAMERA_ACKS = [
 
 
 _moondream_model = None
+_moondream_lock = None  # initialized lazily to avoid import-time issues
 
 _state_sync_ref = None  # set by tars_bot.py after StateSync is created
 
 
 def prewarm_moondream():
     """Load Moondream in a background thread at startup to avoid cold-start delay."""
-    import threading
     threading.Thread(target=_get_moondream, daemon=True, name="MoondreamPrewarm").start()
 
 
@@ -50,28 +51,35 @@ def _notify_display(status: str, text: str, latency_ms: float = None):
 
 
 def _get_moondream():
-    """Load Moondream model once and reuse."""
-    global _moondream_model
-    if _moondream_model is None:
-        import torch
-        from transformers import AutoModelForCausalLM
+    """Load Moondream model once and reuse. Thread-safe."""
+    global _moondream_model, _moondream_lock
+    if _moondream_lock is None:
+        # Create lock on first call; safe because GIL protects this assignment
+        _moondream_lock = threading.Lock()
 
-        if torch.backends.mps.is_available():
-            device, dtype = torch.device("mps"), torch.float16
-        elif torch.cuda.is_available():
-            device, dtype = torch.device("cuda"), torch.float16
-        else:
-            device, dtype = torch.device("cpu"), torch.float32
+    with _moondream_lock:
+        if _moondream_model is None:
+            import torch
+            from transformers import AutoModelForCausalLM
 
-        logger.info(f"Loading Moondream model on {device}...")
-        _moondream_model = AutoModelForCausalLM.from_pretrained(
-            "vikhyatk/moondream2",
-            trust_remote_code=True,
-            revision="2025-01-09",
-            device_map={"": device},
-            dtype=dtype,
-        ).eval()
-        logger.info("Moondream model ready")
+            if torch.backends.mps.is_available():
+                device, dtype = torch.device("mps"), torch.float16
+            elif torch.cuda.is_available():
+                device, dtype = torch.device("cuda"), torch.float16
+            else:
+                device, dtype = torch.device("cpu"), torch.float32
+
+            logger.info(f"Loading Moondream model on {device} ({dtype})...")
+            # moondream2 custom code uses `dtype`, not `torch_dtype`.
+            # Avoid device_map — unreliable on MPS; use .to(device) instead.
+            _moondream_model = AutoModelForCausalLM.from_pretrained(
+                "vikhyatk/moondream2",
+                trust_remote_code=True,
+                revision="2025-01-09",
+                dtype=dtype,
+            ).to(device).eval()
+            actual_device = next(_moondream_model.parameters()).device
+            logger.info(f"Moondream ready — device={actual_device} dtype={dtype}")
     return _moondream_model
 
 
@@ -193,11 +201,16 @@ async def capture_robot_camera(params: FunctionCallParams):
         # run_llm=True: vision always needs a second LLM pass to verbalize the result.
         # express()/movement() use run_llm=False because they speak alongside the tool call,
         # but the camera can't know what it sees until after capture.
+        logger.debug("capture_robot_camera: calling result_callback (run_llm=True)")
         await params.result_callback(
             description,
             properties=FunctionCallResultProperties(run_llm=True),
         )
+        logger.debug("capture_robot_camera: result_callback returned")
 
+    except asyncio.CancelledError:
+        logger.warning("capture_robot_camera: task cancelled before result_callback completed — tool result lost")
+        raise
     except Exception as e:
         logger.error(f"Robot camera error: {e}", exc_info=True)
         metrics_store.add_camera_event(CameraEvent(

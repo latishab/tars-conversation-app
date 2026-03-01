@@ -112,7 +112,7 @@ Always end your spoken response with an expression tag in the format [express(em
 Rules:
 - Place the tag at the END of your spoken text, on the same line or the next
 - Use exactly one [express(...)] tag per response
-- emotion must be one of: neutral, happy, sad, angry, excited, afraid, sleepy, side eye L, side eye R, greeting, farewell, celebration, apologetic
+- emotion must be one of: neutral, happy, sad, angry, excited, afraid, sleepy, side eye L, side eye R, curious, skeptical, smug, surprised
 - intensity must be one of: low, medium, high
 - The tag will be stripped before text-to-speech — it will NOT be spoken aloud
 - Never speak the tag contents. Just embed it silently at the end.
@@ -151,10 +151,10 @@ User: "I finally got it!"
 You: "About time. Which one? [express(excited, medium)]"
 
 User: "Hey TARS, how's it going?"
-You: "Running at full capacity. What do you need? [express(greeting, high)]"
+You: "Running at full capacity. What do you need? [express(happy, high)]"
 
 User: "Goodbye for now."
-You: "Acknowledged. [express(farewell, high)]"
+You: "Acknowledged. [express(happy, high)]"
 
 User: "What do you see in front of you?"
 You: [call capture_robot_camera tool] "Let me check." [express(neutral, low)]
@@ -176,12 +176,12 @@ SYSTEM_PROMPT_INLINE = "\n\n".join([
 # ---------------------------------------------------------------------------
 
 TEST_CASES = [
-    ("Hey TARS, how's it going?",          "greeting"),
+    ("Hey TARS, how's it going?",          "happy"),
     ("I finally fixed the bug!",            "excited"),
     ("This thing keeps breaking on me.",    "sad/afraid"),
     ("That's honestly kind of impressive.", "side eye"),
     ("Can you help me with something?",     "neutral"),
-    ("Goodbye for now.",                    "farewell"),
+    ("Goodbye for now.",                    "happy"),
     ("I think I messed everything up.",     "sad"),
     ("You're actually pretty useful.",      "side eye"),
 ]
@@ -193,8 +193,8 @@ TEST_CASES = [
 
 VALID_EMOTIONS = {
     "neutral", "happy", "sad", "angry", "excited", "afraid",
-    "sleepy", "side eye L", "side eye R", "greeting",
-    "farewell", "celebration", "apologetic"
+    "sleepy", "side eye L", "side eye R",
+    "curious", "skeptical", "smug", "surprised",
 }
 VALID_INTENSITIES = {"low", "medium", "high"}
 

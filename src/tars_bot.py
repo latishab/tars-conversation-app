@@ -36,6 +36,15 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
+from pipecat.turns.user_mute import FunctionCallUserMuteStrategy
+from pipecat.turns.user_turn_strategies import (
+    UserTurnStrategies,
+    TurnAnalyzerUserTurnStopStrategy,
+    VADUserTurnStartStrategy,
+    TranscriptionUserTurnStartStrategy,
+)
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
@@ -254,12 +263,6 @@ async def run_robot_bot(ui=None):
 
         # rpi_output was created before connect() so it was included in the WebRTC offer
 
-        # Create audio bridge processor
-        audio_bridge = AudioBridge(
-            rpi_input_track=rpi_input,
-            rpi_output_track=rpi_output
-        )
-
         logger.info("✓ Audio bridge ready")
 
         # ====================================================================
@@ -348,9 +351,12 @@ async def run_robot_bot(ui=None):
         messages = [system_prompt]
         context = LLMContext(messages, tools)
 
-        # Register tool functions
+        # Register tool functions.
+        # camera: cancel_on_interruption=False — Moondream takes 5-6s; the result
+        # must reach the context even if the user speaks during capture.
+        # movement/persona: default cancel_on_interruption=True (fast, interruptible).
         llm.register_function("execute_movement", execute_movement)
-        llm.register_function("capture_robot_camera", capture_robot_camera)
+        llm.register_function("capture_robot_camera", capture_robot_camera, cancel_on_interruption=False)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
 
         # async def set_user_identity(params: FunctionCallParams):
@@ -393,14 +399,29 @@ async def run_robot_bot(ui=None):
         # CONTEXT AGGREGATOR
         # ====================================================================
 
-        # Pipecat 0.0.102 default: Smart Turn v3 activates automatically when a
-        # VAD analyzer is present. No explicit stop strategy needed.
+        # SmartTurn stop_secs=1.0: when SmartTurn returns INCOMPLETE on multi-segment
+        # utterances (e.g. "Anyways... I have a task for you"), the fallback silence
+        # timeout is 1.0s instead of the default 3.0s.
+        # VAD stop_secs=0.2: short pause detection required for SmartTurn audio chunks.
         user_params = LLMUserAggregatorParams(
             # min_volume=0.0: Pi's compressed WebRTC audio arrives at lower amplitude
             # than a local mic; default 0.6 causes Silero to miss speech events.
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
             ),
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy()],
+                stop=[TurnAnalyzerUserTurnStopStrategy(
+                    turn_analyzer=LocalSmartTurnAnalyzerV3(
+                        params=SmartTurnParams(stop_secs=1.0)
+                    )
+                )],
+            ),
+            # Mute user input while any function call is executing.
+            # For camera (5-6s), this prevents interruptions from corrupting
+            # the IN_PROGRESS context state. For fast tools (movement, persona),
+            # the mute window is negligible.
+            user_mute_strategies=[FunctionCallUserMuteStrategy()],
         )
 
         context_aggregator = LLMContextAggregatorPair(
@@ -441,12 +462,19 @@ async def run_robot_bot(ui=None):
         #     check_interval=1.0,
         # )
 
+        express_filter = ExpressTagFilter()
+        audio_bridge = AudioBridge(
+            rpi_input_track=rpi_input,
+            rpi_output_track=rpi_output,
+            express_filter=express_filter,
+        )
+
         pipeline = Pipeline([
             stt,
             # proactive_monitor,
             context_aggregator.user(),
             llm,
-            ExpressTagFilter(),
+            express_filter,
             SilenceFilter(),
             ReasoningLeakFilter(),
             SpaceNormalizer(),

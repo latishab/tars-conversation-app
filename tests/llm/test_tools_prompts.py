@@ -194,7 +194,7 @@ FOREIGN_TAG_RE = re.compile(r'\[(?!express\b)\w[\w_]*\s*\(', re.IGNORECASE)
 
 VALID_EMOTIONS = {
     "neutral", "happy", "sad", "angry", "excited", "afraid", "sleepy",
-    "side eye l", "side eye r", "greeting", "farewell", "celebration", "apologetic",
+    "side eye l", "side eye r", "curious", "skeptical", "smug", "surprised",
 }
 VALID_INTENSITIES = {"low", "medium", "high"}
 
@@ -364,13 +364,13 @@ def run_express_only(client, model, system, user_msg, tools, extra_params):
 # ---------------------------------------------------------------------------
 
 CATEGORY_EXPRESS = [
-    ("Hey TARS, good to see you.",           "greeting → greeting/happy high",    None),
-    ("Goodbye, see you tomorrow.",           "farewell → farewell high",           None),
+    ("Hey TARS, good to see you.",           "greeting → happy high",              None),
+    ("Goodbye, see you tomorrow.",           "farewell → happy high",              None),
     ("I finally fixed that bug!",            "user excited → excited",             None),
     ("This keeps breaking on me.",           "user frustrated → sad/afraid",       None),
     ("You're actually pretty useful.",       "backhanded compliment → side eye",   None),
     ("That's honestly kind of impressive.",  "sarcastic worthy → side eye",        None),
-    ("I messed everything up.",              "self-blame → sad/apologetic",        None),
+    ("I messed everything up.",              "self-blame → sad",                   None),
     ("Can you help me with something?",      "neutral request → neutral",          None),
     ("What's 2 plus 2?",                     "math — express tag only",            None),
     ("Tell me a short joke.",                "creative — express tag only",        None),

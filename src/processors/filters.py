@@ -8,12 +8,14 @@ from pipecat.frames.frames import (
     StartFrame,
     EndFrame,
     CancelFrame,
-    TTSTextFrame
+    TTSTextFrame,
+    FunctionCallResultFrame,
 )
 from loguru import logger
 import asyncio
 import json
 import re
+from typing import Optional
 
 from tools.robot import fire_expression
 
@@ -259,7 +261,9 @@ class SpaceNormalizer(FrameProcessor):
 class ExpressTagFilter(FrameProcessor):
     """
     Strips [express(emotion, intensity)] inline tags from LLM streaming output,
-    parses them, and fires the expression as a background task.
+    parses them, and defers the expression until the first TTS audio frame arrives
+    at AudioBridge (via pop_pending_expression). This synchronizes the visual
+    expression with speech onset rather than firing ~150-200ms early.
 
     Must be inserted BEFORE SilenceFilter in the pipeline — SilenceFilter also
     strips bracket annotations and would silently drop express tags if it ran first.
@@ -273,14 +277,22 @@ class ExpressTagFilter(FrameProcessor):
         self._buf = ""
         self._in_tag = False
         self._collecting = False
+        self._pending_expression: Optional[tuple] = None  # (emotion, intensity)
 
     def _reset(self):
         self._buf = ""
         self._in_tag = False
         self._collecting = False
+        self._pending_expression = None  # clear stale expression on new LLM turn
+
+    def pop_pending_expression(self) -> Optional[tuple]:
+        """Called by AudioBridge on first TTS audio frame to get the deferred expression."""
+        expr = self._pending_expression
+        self._pending_expression = None
+        return expr
 
     def _process_token(self, text: str) -> str:
-        """Buffer [express(...)] tags, strip them, fire expression. Pass all other text."""
+        """Buffer [express(...)] tags, strip them, store expression. Pass all other text."""
         output = []
         for ch in text:
             if not self._in_tag:
@@ -296,8 +308,8 @@ class ExpressTagFilter(FrameProcessor):
                     if m:
                         emotion = m.group(1).strip()
                         intensity = m.group(2).strip()
-                        asyncio.create_task(fire_expression(emotion, intensity))
-                        logger.debug(f"ExpressTagFilter: fired {emotion}/{intensity}")
+                        self._pending_expression = (emotion, intensity)
+                        logger.debug(f"ExpressTagFilter: queued {emotion}/{intensity} (fires on first audio)")
                     elif self._FOREIGN_TAG_RE.match(self._buf):
                         # Non-express inline tag — log and discard, don't pass to TTS
                         logger.warning(f"ExpressTagFilter: unexpected inline tag discarded: {self._buf!r}")
@@ -335,4 +347,6 @@ class ExpressTagFilter(FrameProcessor):
             await self.push_frame(frame, direction)
 
         else:
+            if isinstance(frame, FunctionCallResultFrame):
+                logger.debug(f"ExpressTagFilter: passing FunctionCallResultFrame [{frame.function_name}:{frame.tool_call_id}] {direction}")
             await self.push_frame(frame, direction)

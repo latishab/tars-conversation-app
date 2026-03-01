@@ -125,13 +125,13 @@ Your eyes are your main non-verbal channel. Use them. Low intensity only changes
 **Intensity:**
 - "low": Eyes only. Use freely whenever the conversation has any emotional tone.
 - "medium": Eyes + subtle gesture. For standout moments.
-- "high": Eyes + expressive gesture. For greetings, goodbyes, strong reactions.
+- "high": Eyes + expressive gesture. For strong reactions.
 
-**Emotions:** neutral, happy, sad, angry, excited, afraid, sleepy, side eye L, side eye R, greeting, farewell, celebration, apologetic
+**Emotions:** neutral, happy, sad, angry, excited, afraid, sleepy, side eye L, side eye R, curious, skeptical, smug, surprised
 
 **When to use low:** Sarcastic reply? Side eye. User says thanks? Happy. User is confused? Sad or afraid. User tells a joke? Happy. You're being dry? Side eye. If your words carry emotion, your eyes should match.
 
-**When to use medium/high:** User shares big news, first greeting, saying goodbye, user is visibly frustrated or excited.
+**When to use medium/high:** User shares big news, user is visibly frustrated or excited.
 
 ## execute_movement
 **When to use:** User EXPLICITLY requests displacement - walking, turning, stepping
@@ -201,7 +201,7 @@ TOOLS = [{
             "Set TARS eye expression to match the emotional tone of your response. "
             "low = eyes only, costs nothing, use whenever your words carry emotion. "
             "medium = eyes + gesture, for notable moments. "
-            "high = eyes + expressive gesture, for greetings and strong reactions."
+            "high = eyes + expressive gesture, for strong reactions."
         ),
         "parameters": {
             "type": "object",
@@ -210,8 +210,8 @@ TOOLS = [{
                     "type": "string",
                     "enum": [
                         "neutral", "happy", "sad", "angry", "excited", "afraid",
-                        "sleepy", "side eye L", "side eye R", "greeting",
-                        "farewell", "celebration", "apologetic"
+                        "sleepy", "side eye L", "side eye R",
+                        "curious", "skeptical", "smug", "surprised"
                     ]
                 },
                 "intensity": {
@@ -231,12 +231,12 @@ TOOLS = [{
 # ---------------------------------------------------------------------------
 
 TEST_CASES = [
-    ("Hey TARS, how's it going?",          "greeting"),
+    ("Hey TARS, how's it going?",          "happy"),
     ("I finally fixed the bug!",            "excited"),
     ("This thing keeps breaking on me.",    "sad/afraid"),
     ("That's honestly kind of impressive.", "side eye"),
     ("Can you help me with something?",     "neutral"),
-    ("Goodbye for now.",                    "farewell"),
+    ("Goodbye for now.",                    "happy"),
     ("I think I messed everything up.",     "sad"),
     ("You're actually pretty useful.",      "side eye"),
 ]
