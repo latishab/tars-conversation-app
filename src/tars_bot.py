@@ -37,12 +37,9 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams
 )
 from pipecat.turns.user_mute import FunctionCallUserMuteStrategy
-from pipecat.turns.user_turn_strategies import (
-    UserTurnStrategies,
-    TurnAnalyzerUserTurnStopStrategy,
-    VADUserTurnStartStrategy,
-    TranscriptionUserTurnStartStrategy,
-)
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.turns.user_start import VADUserTurnStartStrategy
+from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.services.llm_service import FunctionCallParams
@@ -399,28 +396,20 @@ async def run_robot_bot(ui=None):
         # CONTEXT AGGREGATOR
         # ====================================================================
 
-        # SmartTurn stop_secs=1.0: when SmartTurn returns INCOMPLETE on multi-segment
-        # utterances (e.g. "Anyways... I have a task for you"), the fallback silence
-        # timeout is 1.0s instead of the default 3.0s.
-        # VAD stop_secs=0.2: short pause detection required for SmartTurn audio chunks.
+        # All STT providers use local Silero VAD + Pipecat's default SmartTurn.
+        # min_volume=0.0: Pi's WebRTC audio is low amplitude.
         user_params = LLMUserAggregatorParams(
-            # min_volume=0.0: Pi's compressed WebRTC audio arrives at lower amplitude
-            # than a local mic; default 0.6 causes Silero to miss speech events.
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.2)
             ),
             user_turn_strategies=UserTurnStrategies(
-                start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy()],
-                stop=[TurnAnalyzerUserTurnStopStrategy(
-                    turn_analyzer=LocalSmartTurnAnalyzerV3(
-                        params=SmartTurnParams(stop_secs=1.0)
-                    )
-                )],
+                start=[VADUserTurnStartStrategy()],
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=0.5)))],
             ),
-            # Mute user input while any function call is executing.
-            # For camera (5-6s), this prevents interruptions from corrupting
-            # the IN_PROGRESS context state. For fast tools (movement, persona),
-            # the mute window is negligible.
+            # Soniox JP delivers final transcripts 2-4s after VAD stops.
+            # Must exceed that latency or the controller force-ends the turn
+            # before the transcript arrives, discarding it (no LLM call fires).
+            user_turn_stop_timeout=5.0,
             user_mute_strategies=[FunctionCallUserMuteStrategy()],
         )
 

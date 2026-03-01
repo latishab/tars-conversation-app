@@ -33,7 +33,7 @@ from math import gcd
 from aiortc import MediaStreamTrack
 from av import AudioFrame as AVAudioFrame
 
-from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, CancelFrame, Frame, FunctionCallResultFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame
+from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, CancelFrame, Frame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from tools.robot import fire_expression
 
@@ -213,19 +213,33 @@ class RPiAudioOutputTrack(MediaStreamTrack):
         self._timestamp = 0
         self._running = True
         self._time_base = fractions.Fraction(1, sample_rate)
-        # Diagnostics: track silence vs real samples in first frames after audio starts
-        self._diag_frames_logged = 0
-        self._diag_active = False
-        _DIAG_FRAMES = 5  # log this many frames when audio starts
+        self._next_frame_time: Optional[float] = None  # wall-clock time for next recv() return
 
     async def recv(self) -> AVAudioFrame:
-        buf_samples_before = len(self._buf)  # real samples already buffered
+        # Pace output at exactly one Opus frame (20ms) per call so aiortc sends
+        # frames in real-time rather than bursting the entire utterance at once.
+        # Without this, all Opus packets arrive at the Pi simultaneously, filling
+        # SpeakerOutput._queue with 2s+ of audio before playback begins.
+        now = asyncio.get_event_loop().time()
+        if self._next_frame_time is None:
+            self._next_frame_time = now
+        wait = self._next_frame_time - now
+        if wait < -0.1:
+            # Event loop stalled >100ms behind — reset to avoid rapid-fire catch-up burst
+            self._next_frame_time = now
+            wait = 0
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._next_frame_time += self.FRAME_SAMPLES / self.sample_rate
+
         timed_out = False
 
         while len(self._buf) < self.FRAME_SAMPLES and self._running:
             try:
-                audio_bytes = await asyncio.wait_for(self._queue.get(), timeout=0.02)
-            except asyncio.TimeoutError:
+                # Non-blocking: if queue is empty, fill with silence immediately.
+                # Pacing is handled above; don't double-wait with a timeout here.
+                audio_bytes = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
                 silence = np.zeros(self.FRAME_SAMPLES - len(self._buf), dtype=np.int16)
                 self._buf = np.concatenate([self._buf, silence])
                 timed_out = True
@@ -239,33 +253,9 @@ class RPiAudioOutputTrack(MediaStreamTrack):
             self._buf = np.concatenate([self._buf, chunk])
 
         n = min(self.FRAME_SAMPLES, len(self._buf))
-        real_n = min(n, buf_samples_before + (self.FRAME_SAMPLES - buf_samples_before if not timed_out else len(self._buf) - buf_samples_before if len(self._buf) > buf_samples_before else 0))
         samples = np.zeros(self.FRAME_SAMPLES, dtype=np.int16)
         samples[:n] = self._buf[:n]
         self._buf = self._buf[n:]
-
-        # Detect transition from silence to audio and log fill ratios
-        is_silent = timed_out and buf_samples_before == 0
-        if is_silent:
-            if self._diag_active:
-                self._diag_active = False
-                self._diag_frames_logged = 0
-        elif not self._diag_active:
-            self._diag_active = True
-
-        if self._diag_active and self._diag_frames_logged < 5:
-            silence_samples = self.FRAME_SAMPLES - n
-            real_samples = n
-            chunk_size_before = buf_samples_before
-            logger.debug(
-                f"[RecvDiag] frame={self._diag_frames_logged} "
-                f"real={real_samples}/{self.FRAME_SAMPLES} "
-                f"silence_pad={silence_samples} "
-                f"timeout={timed_out} "
-                f"buf_before={chunk_size_before} "
-                f"queue_depth={self._queue.qsize()}"
-            )
-            self._diag_frames_logged += 1
 
         frame = AVAudioFrame(format="s16", layout="mono", samples=self.FRAME_SAMPLES)
         frame.sample_rate = self.sample_rate
@@ -305,27 +295,20 @@ class AudioBridge(FrameProcessor):
         self.rpi_input_track = rpi_input_track
         self.rpi_output_track = rpi_output_track
         self._express_filter = express_filter
-        self._tts_started = False   # armed by TTSStartedFrame, consumed by first audio
-        self._diag_tts_active = False
-        self._audio_frame_count = 0  # frames received this utterance (for streaming diag)
+        self._tts_started = False   # armed by TTSStartedFrame, consumed by first audio frame
 
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TTSStartedFrame):
-            # Arm the first-audio trigger for this utterance. Resetting here ensures
-            # stale _diag_tts_active from a previous turn (where TTSStoppedFrame
-            # arrived before the last buffered audio chunk) can't suppress is_first.
+            # Arm the first-audio trigger. TTSStartedFrame arrives before audio chunks,
+            # so resetting here prevents stale state from a previous turn bleeding over.
             self._tts_started = True
-            self._audio_frame_count = 0
 
         elif isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
-            self._audio_frame_count += 1
             is_first = self._tts_started
             if is_first:
                 self._tts_started = False
-                self._diag_tts_active = True
-                logger.debug(f"[AudioDiag] First TTS frame arrived at bridge")
                 # Notify TTS service that bot started speaking (unblocks websocket reconnect logic)
                 await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
                 # Fire deferred expression now — synchronized with speech onset
@@ -334,7 +317,6 @@ class AudioBridge(FrameProcessor):
                     if expr:
                         emotion, intensity = expr
                         asyncio.create_task(fire_expression(emotion, intensity))
-                        logger.debug(f"[AudioDiag] Expression fired on first audio: {emotion}/{intensity}")
 
             audio_bytes = frame.audio
             src_rate = frame.sample_rate
@@ -348,23 +330,10 @@ class AudioBridge(FrameProcessor):
                 pcm = await loop.run_in_executor(None, resample_poly, pcm, up, down)
                 audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
 
-            if is_first:
-                samples_after_resample = len(audio_bytes) // 2
-                frame_samples = self.rpi_output_track.FRAME_SAMPLES
-                logger.debug(
-                    f"[AudioDiag] First chunk: {samples_after_resample} samples "
-                    f"({samples_after_resample * 1000 // dst_rate}ms) "
-                    f"vs frame_size={frame_samples} ({frame_samples * 1000 // dst_rate}ms) "
-                    f"— {'full frame' if samples_after_resample >= frame_samples else 'PARTIAL, recv() will wait'}"
-                )
-
             await self.rpi_output_track.add_audio(audio_bytes)
 
         elif isinstance(frame, (TTSStoppedFrame, CancelFrame)):
-            if self._audio_frame_count > 0:
-                logger.debug(f"[AudioDiag] Utterance done: {self._audio_frame_count} audio frames received from TTS")
             self._tts_started = False
-            self._diag_tts_active = False
             if isinstance(frame, TTSStoppedFrame):
                 # Unfreeze TTS pause_processing_frames() — called after TTSSpeakFrame.
                 # Without this, FunctionCallResultFrame from long-running tools (e.g.
@@ -373,8 +342,6 @@ class AudioBridge(FrameProcessor):
                 # we must do it explicitly since AudioBridge acts as the transport sink.
                 await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
 
-        if isinstance(frame, FunctionCallResultFrame):
-            logger.debug(f"[AudioBridge] passing FunctionCallResultFrame [{frame.function_name}:{frame.tool_call_id}] {direction}")
         await self.push_frame(frame, direction)
 
     def set_input_track(self, track: RPiAudioInputTrack):
