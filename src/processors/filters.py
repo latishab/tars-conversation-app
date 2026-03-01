@@ -10,6 +10,9 @@ from pipecat.frames.frames import (
     CancelFrame,
     TTSTextFrame,
     FunctionCallResultFrame,
+    TranscriptionFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 from loguru import logger
 import asyncio
@@ -350,3 +353,49 @@ class ExpressTagFilter(FrameProcessor):
             if isinstance(frame, FunctionCallResultFrame):
                 logger.debug(f"ExpressTagFilter: passing FunctionCallResultFrame [{frame.function_name}:{frame.tool_call_id}] {direction}")
             await self.push_frame(frame, direction)
+
+
+class TranscriptionGate(FrameProcessor):
+    """
+    Guards against Soniox stt-rt-v4's multi-finalization behavior: after one
+    VAD-triggered turn, the STT keeps emitting successive TranscriptionFrames for
+    the same utterance over several seconds, each re-triggering
+    TranscriptionUserTurnStartStrategy → InterruptionTaskFrame and killing the
+    LLM response in progress.
+
+    Two-layer defence:
+    1. Drop frames shorter than min_chars (pure noise).
+    2. After any frame passes, block further frames for post_turn_cooldown seconds
+       UNLESS VAD reports fresh user speech — which resets the cooldown so real
+       interruptions always get through.
+    """
+
+    def __init__(self, min_chars: int = 3, post_turn_cooldown: float = 3.0):
+        super().__init__()
+        self._min_chars = min_chars
+        self._cooldown = post_turn_cooldown
+        self._last_passed_at: float = 0.0
+        self._vad_active: bool = False
+
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+
+        # Track real VAD speech events (flow upstream through this processor)
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            self._vad_active = True
+            self._last_passed_at = 0.0  # reset cooldown — real speech detected
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._vad_active = False
+
+        if isinstance(frame, TranscriptionFrame):
+            text = frame.text.strip()
+            if len(text) < self._min_chars:
+                logger.debug(f"TranscriptionGate: drop short {text!r}")
+                return
+            now = asyncio.get_event_loop().time()
+            if not self._vad_active and (now - self._last_passed_at) < self._cooldown:
+                logger.debug(f"TranscriptionGate: cooldown drop {text!r}")
+                return
+            self._last_passed_at = now
+
+        await self.push_frame(frame, direction)

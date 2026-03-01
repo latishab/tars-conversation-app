@@ -36,15 +36,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams
 )
-from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.llm_service import FunctionCallParams
 from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
@@ -156,25 +153,6 @@ class IdentityUnifier(FrameProcessor):
 # HELPER FUNCTIONS
 # ============================================================================
 
-def _make_smart_turn_analyzer() -> LocalSmartTurnAnalyzerV3:
-    """Create SmartTurn analyzer with patched analyze_end_of_turn for buffer diagnostics."""
-    analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=0.5))
-    _orig_analyze = analyzer.analyze_end_of_turn
-
-    async def _patched_analyze():
-        buf = analyzer._audio_buffer
-        if buf:
-            total_samples = sum(len(chunk) for _, chunk in buf)
-            duration_ms = int(total_samples / analyzer.sample_rate * 1000)
-        else:
-            duration_ms = 0
-        result = await _orig_analyze()
-        logger.debug(f"[SmartTurn] analyze_end_of_turn: buffer={duration_ms}ms → {result[0]}")
-        return result
-
-    analyzer.analyze_end_of_turn = _patched_analyze
-    return analyzer
-
 
 async def _cleanup_services(service_refs: dict):
     if service_refs.get("stt"):
@@ -226,18 +204,7 @@ async def run_bot(webrtc_connection):
         # ====================================================================
         # TRANSPORT INITIALIZATION
         # ====================================================================
-        # Note: STT providers handle their own turn detection:
-        # - Speechmatics: SMART_TURN mode
-        # - Deepgram: endpointing parameter (300ms silence detection)
-        # - Deepgram Flux: built-in turn detection with ExternalUserTurnStrategies (deprecated)
-
-        logger.info(f"Initializing transport with {STT_PROVIDER} turn detection...")
-
-        # Parakeet (SegmentedSTTService) needs local VAD + SmartTurn to emit
-        # UserStartedSpeakingFrame / UserStoppedSpeakingFrame for audio segmentation.
-        # Other providers handle turn detection themselves (Speechmatics: SMART_TURN,
-        # Deepgram: server-side VAD via WebSocket).
-        use_local_vad = STT_PROVIDER == "parakeet"
+        logger.info(f"Initializing transport ({STT_PROVIDER})...")
 
         transport_params = TransportParams(
             audio_in_enabled=True,
@@ -245,9 +212,8 @@ async def run_bot(webrtc_connection):
             video_in_enabled=False,
             video_out_enabled=False,
             video_out_is_live=False,
-            vad_enabled=use_local_vad,
-            vad_analyzer=SileroVADAnalyzer() if use_local_vad else None,
-            turn_analyzer=_make_smart_turn_analyzer() if use_local_vad else None,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
         )
 
         pipecat_transport = SmallWebRTCTransport(
@@ -344,7 +310,9 @@ async def run_bot(webrtc_connection):
             persona_tool = create_adjust_persona_schema()
             # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
             movement_tool = create_movement_schema(custom_movements=_custom_movements)
-            express_tool = create_express_schema(custom_expressions=_custom_expressions)
+            # express_tool omitted: express is handled via inline [express(...)] tags,
+            # not as a real tool call. Having it in the schema causes the model to
+            # call it as a tool (returning no text), which produces silent hangs.
             camera_capture_tool = create_robot_camera_schema()
 
             # Pass FunctionSchema objects directly to standard_tools
@@ -353,7 +321,6 @@ async def run_bot(webrtc_connection):
                     user_camera_tool,
                     persona_tool,
                     # identity_tool,
-                    express_tool,
                     movement_tool,
                     camera_capture_tool,
                 ]
@@ -363,7 +330,6 @@ async def run_bot(webrtc_connection):
 
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
-            llm.register_function("express", express)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_robot_camera", capture_robot_camera)
 
@@ -437,17 +403,9 @@ async def run_bot(webrtc_connection):
         # CONTEXT AGGREGATOR & PERSONA STORAGE
         # ====================================================================
 
-        # Configure user turn aggregation.
-        # Cloud STT providers (Deepgram, Speechmatics, Soniox) handle turn
-        # detection server-side and emit UserStartedSpeakingFrame /
-        # UserStoppedSpeakingFrame. ExternalUserTurnStrategies listens to those
-        # frames directly instead of relying on local VAD + SmartTurn, which
-        # requires VADUserStoppedSpeakingFrame that these providers never send.
-        # Parakeet uses local VAD so it keeps the default SmartTurn strategy.
-        use_external_turn = STT_PROVIDER != "parakeet"
         user_params = LLMUserAggregatorParams(
-            user_turn_strategies=ExternalUserTurnStrategies() if use_external_turn else None,
-            user_turn_stop_timeout=1.5,
+            vad_analyzer=SileroVADAnalyzer(),
+            user_turn_stop_timeout=0.5,
         )
 
         context_aggregator = LLMContextAggregatorPair(
