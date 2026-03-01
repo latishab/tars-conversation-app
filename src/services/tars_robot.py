@@ -5,6 +5,7 @@ Provides LLM tools and helper functions for controlling TARS robot via gRPC.
 Replaces HTTP REST-based tars_client.py with low-latency gRPC SDK.
 """
 
+import asyncio
 import base64
 from typing import Dict, Any, List, Optional
 from loguru import logger
@@ -83,9 +84,10 @@ async def execute_movement(movements: List[str]) -> str:
         return "TARS robot not available. Cannot execute movements."
 
     try:
+        loop = asyncio.get_event_loop()
         results = []
         for movement in movements:
-            result = client.move(movement)
+            result = await loop.run_in_executor(None, client.move, movement)
             if result.success:
                 results.append(f"{movement} (took {result.duration:.2f}s)")
             else:
@@ -246,3 +248,27 @@ def is_robot_available() -> bool:
     except Exception as e:
         logger.debug(f"Robot availability check failed: {e}")
         return False
+
+
+async def fetch_custom_sequences() -> dict:
+    """Returns {name: {"type": ..., "quick": bool}} for all saved sequences from Pi HTTP API."""
+    import httpx
+    import os
+    pi_url = os.environ.get("TARS_PI_URL", "http://tars.local:8000")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{pi_url}/api/control/saved-sequences")
+            data = resp.json()
+        result = {}
+        for name, entry in data.items():
+            if isinstance(entry, dict):
+                result[name] = {
+                    "type": entry.get("type", "movement"),
+                    "quick": bool(entry.get("quick", False)),
+                }
+            else:
+                result[name] = {"type": "movement", "quick": False}
+        return result
+    except Exception as e:
+        logger.warning(f"Could not fetch custom sequences: {e}")
+        return {}

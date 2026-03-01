@@ -1,60 +1,46 @@
-# TARS Hardware Tests
+# TARS Tests
 
-Test scripts for validating TARS robot hardware functionality.
+## Structure
 
-## Test Scripts
-
-### `test_gesture.py`
-Tests TARS physical movements and gestures.
-
-**Tests:**
-- `side_side` - Side-to-side head movement
-- `wave_right` - Right arm wave gesture
-
-**Usage:**
-```bash
-python tests/test_gesture.py
+```
+tests/
+├── hardware/       # Pi hardware: gestures, audio, expressions
+├── latency/        # STT/TTS provider latency benchmarks
+├── llm/            # LLM prompt and expression diagnostics
+└── gradio/         # Gradio UI integration
 ```
 
-### `test_speaker.py`
-Tests audio hardware: speaker output and microphone input.
+## hardware/
 
-**Tests:**
-1. Speaker device detection
-2. Friendly test melody playback (C-E-G)
-3. Microphone device detection
-4. 5-second audio recording
-5. Playback of recorded audio
+| File | Description |
+|------|-------------|
+| `test_gesture.py` | Physical movements (head, arm) |
+| `test_speaker.py` | Speaker output and mic recording |
+| `test_expressions.py` | Facial emotions and eye states |
+| `test_audio_bridge.py` | WebRTC mic loopback to Mac/Pi speakers |
 
-**Usage:**
-```bash
-python tests/test_speaker.py
-```
+Requires TARS daemon running on Pi. Connects via `tars.local` (mDNS) or Tailscale.
 
-### `test_expressions.py`
-Tests TARS facial expressions: emotions and eye states.
+## latency/
 
-**Emotions tested:**
-- default, happy, angry, tired, surprised, confused
+| File | Description |
+|------|-------------|
+| `test_deepgram_latency.py` | Deepgram STT latency |
+| `test_soniox_latency.py` | Soniox STT latency |
+| `test_parakeet_latency.py` | Parakeet local STT latency |
+| `test_cartesia_latency.py` | Cartesia TTS latency |
+| `test_elevenlabs_latency.py` | ElevenLabs TTS latency |
 
-**Eye states tested:**
-- idle, listening, thinking, speaking
+## llm/
 
-**Usage:**
-```bash
-python tests/test_expressions.py
-```
+| File | Description |
+|------|-------------|
+| `test_inline_express.py` | Inline `[express(emotion, intensity)]` tag reliability |
+| `test_prompts.py` | Express tool call + co-occurrence diagnostics |
+| `test_tools_prompts.py` | Comprehensive prompt + tool diagnostic |
 
 ## Requirements
 
-- TARS daemon must be running on Raspberry Pi
-- SSH access configured to `tars-pi`
-- Python dependencies installed (see `requirements.txt`)
-
-## Configuration
-
-Tests connect to Pi using `tars.local` by default (mDNS).
-
-If mDNS doesn't work on your network, update the connection addresses in test files:
-- Replace `tars.local:50051` with your Pi's IP (e.g., `192.168.1.100:50051`)
-- Find your Pi's IP by running `hostname -I` on the Pi
+- TARS daemon running on Pi (for hardware tests)
+- API keys set in environment or `.env`
+- Python dependencies: `pip install -r requirements.txt`

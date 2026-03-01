@@ -2,7 +2,7 @@
 
 import time
 from pipecat.observers.base_observer import BaseObserver, FramePushed
-from pipecat.frames.frames import MetricsFrame, TranscriptionFrame
+from pipecat.frames.frames import MetricsFrame, TranscriptionFrame, VADUserStoppedSpeakingFrame, TTSStartedFrame
 from pipecat.metrics.metrics import TTFBMetricsData
 from loguru import logger
 from shared_state import metrics_store
@@ -34,9 +34,21 @@ class MetricsObserver(BaseObserver):
         self._pending_stt_ttfb = None
         self._seen_frame_ids: set = set()
         self._turn_has_transcription = False  # True after TranscriptionFrame for current turn
+        self._vad_stop_time: float | None = None  # Wall-clock time user actually stopped speaking
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
+
+        # VADUserStoppedSpeakingFrame: record corrected stop time for TTFA.
+        # Goes upstream in Soniox setup so we watch any direction.
+        if isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._vad_stop_time = frame.timestamp - frame.stop_secs
+
+        # TTSStartedFrame: first audio from TTS → compute TTFA.
+        elif isinstance(frame, TTSStartedFrame) and self._vad_stop_time is not None:
+            ttfa_ms = (time.time() - self._vad_stop_time) * 1000
+            self._vad_stop_time = None
+            self.record_ttfa(ttfa_ms)
 
         # TranscriptionFrame marks a new user turn; apply any buffered STT TTFB.
         # Only start a new turn if the previous turn already received LLM metrics —

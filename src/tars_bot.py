@@ -71,9 +71,8 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, ProactiveMonitor
+from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, ProactiveMonitor
 from observers import StateObserver, MetricsObserver
-from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from character.prompts import (
     load_character,
     get_introduction_instruction,
@@ -88,6 +87,7 @@ from tools import (
     create_movement_schema,
     get_persona_storage,
     set_rate_limiter,
+    set_custom_expressions,
     ExpressionRateLimiter,
 )
 
@@ -311,7 +311,20 @@ async def run_robot_bot(ui=None):
         )
         logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 
-        persona_params, tars_data, system_prompt = load_character()
+        # Fetch custom sequences from Pi to wire into prompt + schemas
+        from services import tars_robot as _tars_robot
+        _custom_seq = await _tars_robot.fetch_custom_sequences()
+        _custom_movements = [n for n, v in _custom_seq.items() if v["type"] == "movement"]
+        _quick_expressions = [n for n, v in _custom_seq.items() if v["type"] == "expression" and v["quick"]]
+        _long_expressions = [n for n, v in _custom_seq.items() if v["type"] == "expression" and not v["quick"]]
+        if _custom_seq:
+            logger.info(f"Custom sequences: movements={_custom_movements}, quick_expressions={_quick_expressions}, long_expressions={_long_expressions} (hidden from LLM)")
+        set_custom_expressions(_quick_expressions)
+
+        persona_params, tars_data, system_prompt = load_character(
+            custom_movements=_custom_movements,
+            custom_expressions=_quick_expressions,
+        )
 
         # Initialize expression rate limiter
         rate_limiter = ExpressionRateLimiter(
@@ -325,7 +338,7 @@ async def run_robot_bot(ui=None):
         # Create tool schemas
         tools = ToolsSchema(
             standard_tools=[
-                create_movement_schema(),
+                create_movement_schema(custom_movements=_custom_movements),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
                 # create_identity_schema(),  # disabled: name recognition unreliable
@@ -407,12 +420,6 @@ async def run_robot_bot(ui=None):
         state_observer = StateObserver(state_sync=state_sync)
         metrics_observer = MetricsObserver()
 
-        latency_observer = UserBotLatencyObserver()
-
-        @latency_observer.event_handler("on_latency_measured")
-        async def on_latency_measured(observer, latency_s: float):
-            metrics_observer.record_ttfa(latency_s * 1000)
-
         # ====================================================================
         # PIPELINE ASSEMBLY
         # ====================================================================
@@ -442,6 +449,7 @@ async def run_robot_bot(ui=None):
             ExpressTagFilter(),
             SilenceFilter(),
             ReasoningLeakFilter(),
+            SpaceNormalizer(),
             tts,
             audio_bridge,  # Captures TTS output and sends to RPi speaker
             context_aggregator.assistant(),
@@ -474,7 +482,7 @@ async def run_robot_bot(ui=None):
                 enable_usage_metrics=True,
                 report_only_initial_ttfb=False,
             ),
-            observers=[state_observer, metrics_observer, latency_observer],
+            observers=[state_observer, metrics_observer],
         )
 
         task_ref["task"] = task

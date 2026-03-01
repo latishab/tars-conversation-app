@@ -191,6 +191,71 @@ class SilenceFilter(FrameProcessor):
             await self.push_frame(frame, direction)
 
 
+class SpaceNormalizer(FrameProcessor):
+    """
+    Fixes missing spaces in Cerebras LLM output before text reaches TTS.
+
+    Cerebras gpt-oss-120b sometimes emits tokens without the expected leading
+    space, causing adjacent words to fuse ("forsupport", "TARSrobot", etc.).
+
+    Two complementary fixes, both zero-latency (per-token, no buffering):
+
+    1. Token-boundary fix: if the previous token ended with a letter and the
+       current token starts with a letter (no leading space), prepend one.
+       Covers cross-token merges like "for"+"support" → "for support".
+
+    2. Within-token regex fix: splits ALL_CAPS runs immediately followed by a
+       lowercase letter — e.g. "TARSrobot" → "TARS robot", "CPUa" → "CPU a".
+    """
+    # ALL_CAPS (2+ chars) immediately followed by a lowercase letter
+    _CAPS_LOWER_RE = re.compile(r'([A-Z]{2,})([a-z])')
+
+    def __init__(self):
+        super().__init__()
+        self._last_char = ""
+        self._collecting = False
+
+    def _reset(self):
+        self._last_char = ""
+        self._collecting = False
+
+    def _fix(self, text: str) -> str:
+        # 1. Token-boundary fix: missing space between previous and current token
+        if self._last_char.isalpha() and text and text[0].isalpha():
+            text = " " + text
+
+        # 2. Within-token fix: "TARSrobot" → "TARS robot", "CPUa" → "CPU a"
+        text = self._CAPS_LOWER_RE.sub(r'\1 \2', text)
+
+        return text
+
+    async def process_frame(self, frame: Frame, direction):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
+            self._reset()
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._reset()
+            self._collecting = True
+            await self.push_frame(frame, direction)
+
+        elif isinstance(frame, LLMTextFrame) and self._collecting:
+            fixed = self._fix(frame.text)
+            if fixed:
+                self._last_char = fixed[-1]
+                await self.push_frame(LLMTextFrame(text=fixed), direction)
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._collecting = False
+            await self.push_frame(frame, direction)
+
+        else:
+            await self.push_frame(frame, direction)
+
+
 class ExpressTagFilter(FrameProcessor):
     """
     Strips [express(emotion, intensity)] inline tags from LLM streaming output,

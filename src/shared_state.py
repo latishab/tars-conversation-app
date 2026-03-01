@@ -62,6 +62,14 @@ class MetricsStore:
             else:
                 self.metrics[turn] = MetricEntry(**metric)
 
+    def set_vision_latency(self, latency_ms: float):
+        """Patch vision_latency_ms onto the most recent turn entry."""
+        with self.lock:
+            if not self.metrics:
+                return
+            latest_turn = max(self.metrics.keys())
+            self.metrics[latest_turn].vision_latency_ms = latency_ms
+
     def get_metrics(self) -> List[MetricEntry]:
         """Get all stored metrics sorted by turn number."""
         with self.lock:
