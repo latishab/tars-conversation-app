@@ -338,10 +338,11 @@ class TarsGradioUI:
         if not recent:
             return "No metrics recorded yet."
 
-        rows = ["| Turn | STT | LLM | TTS | TTFA | Total |", "|------|-----|-----|-----|------|-------|"]
+        rows = ["| Turn | STT | LLM | TTS | Vision | TTFA | Total |", "|------|-----|-----|-----|--------|------|-------|"]
 
         for m in reversed(recent):  # Most recent first
-            rows.append(f"| {m.turn_number} | {self.format_ms(m.stt_ttfb_ms)} | {self.format_ms(m.llm_ttfb_ms)} | {self.format_ms(m.tts_ttfb_ms)} | {self.format_ms(m.ttfa_ms)} | {self.format_ms(m.total_ms)} |")
+            vision = self.format_ms(m.vision_latency_ms) if m.vision_latency_ms else "-"
+            rows.append(f"| {m.turn_number} | {self.format_ms(m.stt_ttfb_ms)} | {self.format_ms(m.llm_ttfb_ms)} | {self.format_ms(m.tts_ttfb_ms)} | {vision} | {self.format_ms(m.ttfa_ms)} | {self.format_ms(m.total_ms)} |")
 
         return "\n".join(rows)
 

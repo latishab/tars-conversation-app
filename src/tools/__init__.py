@@ -8,6 +8,8 @@ from .robot import (
     # Rate limiting
     set_rate_limiter,
     ExpressionRateLimiter,
+    # Custom sequences
+    set_custom_expressions,
     # Constants
     VALID_EMOTIONS,
     VALID_INTENSITIES,
@@ -40,6 +42,7 @@ __all__ = [
     "execute_movement",
     "set_rate_limiter",
     "ExpressionRateLimiter",
+    "set_custom_expressions",
     "VALID_EMOTIONS",
     "VALID_INTENSITIES",
     "create_express_schema",

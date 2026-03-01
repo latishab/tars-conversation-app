@@ -4,7 +4,7 @@ This module contains processors that transform, filter, or process data.
 For logging/monitoring processors, see loggers.py module.
 """
 
-from .filters import SilenceFilter, InputAudioFilter, ReasoningLeakFilter, ExpressTagFilter
+from .filters import SilenceFilter, InputAudioFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer
 from .proactive_monitor import ProactiveMonitor
 
 __all__ = [
@@ -12,5 +12,6 @@ __all__ = [
     "InputAudioFilter",
     "ReasoningLeakFilter",
     "ExpressTagFilter",
+    "SpaceNormalizer",
     "ProactiveMonitor",
 ]

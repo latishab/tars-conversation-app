@@ -44,6 +44,7 @@ from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
@@ -72,6 +73,7 @@ from processors import (
     InputAudioFilter,
     ReasoningLeakFilter,
     ExpressTagFilter,
+    SpaceNormalizer,
     ProactiveMonitor,
 )
 from observers import (
@@ -89,14 +91,17 @@ from character.prompts import (
 from tools import (
     capture_user_camera,
     adjust_persona_parameter,
+    express,
     execute_movement,
     capture_robot_camera,
     create_user_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
+    create_express_schema,
     create_robot_camera_schema,
     get_persona_storage,
+    set_custom_expressions,
 )
 from shared_state import metrics_store
 
@@ -150,6 +155,26 @@ class IdentityUnifier(FrameProcessor):
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def _make_smart_turn_analyzer() -> LocalSmartTurnAnalyzerV3:
+    """Create SmartTurn analyzer with patched analyze_end_of_turn for buffer diagnostics."""
+    analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=0.5))
+    _orig_analyze = analyzer.analyze_end_of_turn
+
+    async def _patched_analyze():
+        buf = analyzer._audio_buffer
+        if buf:
+            total_samples = sum(len(chunk) for _, chunk in buf)
+            duration_ms = int(total_samples / analyzer.sample_rate * 1000)
+        else:
+            duration_ms = 0
+        result = await _orig_analyze()
+        logger.debug(f"[SmartTurn] analyze_end_of_turn: buffer={duration_ms}ms → {result[0]}")
+        return result
+
+    analyzer.analyze_end_of_turn = _patched_analyze
+    return analyzer
+
 
 async def _cleanup_services(service_refs: dict):
     if service_refs.get("stt"):
@@ -222,7 +247,7 @@ async def run_bot(webrtc_connection):
             video_out_is_live=False,
             vad_enabled=use_local_vad,
             vad_analyzer=SileroVADAnalyzer() if use_local_vad else None,
-            turn_analyzer=LocalSmartTurnAnalyzerV3() if use_local_vad else None,
+            turn_analyzer=_make_smart_turn_analyzer() if use_local_vad else None,
         )
 
         pipecat_transport = SmallWebRTCTransport(
@@ -298,13 +323,28 @@ async def run_bot(webrtc_connection):
             )
             logger.info(f"✓ LLM initialized: {_LLM_PROVIDER} / {_LLM_MODEL}")
 
-            persona_params, tars_data, system_prompt = load_character()
+            # Fetch custom sequences from Pi to wire into prompt + schemas
+            from services import tars_robot as _tars_robot
+            _custom_seq = await _tars_robot.fetch_custom_sequences()
+            _custom_movements = [n for n, v in _custom_seq.items() if v["type"] == "movement"]
+            _quick_expressions = [n for n, v in _custom_seq.items() if v["type"] == "expression" and v["quick"]]
+            _long_expressions = [n for n, v in _custom_seq.items() if v["type"] == "expression" and not v["quick"]]
+            if _custom_seq:
+                logger.info(f"Custom sequences: movements={_custom_movements}, quick_expressions={_quick_expressions}, long_expressions={_long_expressions} (hidden from LLM)")
+            _custom_expressions = _quick_expressions
+            set_custom_expressions(_custom_expressions)
+
+            persona_params, tars_data, system_prompt = load_character(
+                custom_movements=_custom_movements,
+                custom_expressions=_custom_expressions,
+            )
 
             # Create tool schemas (these return FunctionSchema objects)
             user_camera_tool = create_user_camera_schema()
             persona_tool = create_adjust_persona_schema()
             # identity_tool = create_identity_schema()  # disabled: name recognition unreliable
-            movement_tool = create_movement_schema()
+            movement_tool = create_movement_schema(custom_movements=_custom_movements)
+            express_tool = create_express_schema(custom_expressions=_custom_expressions)
             camera_capture_tool = create_robot_camera_schema()
 
             # Pass FunctionSchema objects directly to standard_tools
@@ -313,6 +353,7 @@ async def run_bot(webrtc_connection):
                     user_camera_tool,
                     persona_tool,
                     # identity_tool,
+                    express_tool,
                     movement_tool,
                     camera_capture_tool,
                 ]
@@ -322,6 +363,7 @@ async def run_bot(webrtc_connection):
 
             llm.register_function("capture_user_camera", capture_user_camera)
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+            llm.register_function("express", express)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_robot_camera", capture_robot_camera)
 
@@ -484,6 +526,7 @@ async def run_bot(webrtc_connection):
             ExpressTagFilter(),
             SilenceFilter(),
             ReasoningLeakFilter(),
+            SpaceNormalizer(),
             tts,
             pipecat_transport.output(),
             context_aggregator.assistant(),

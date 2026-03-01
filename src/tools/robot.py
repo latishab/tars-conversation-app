@@ -24,6 +24,7 @@ VALID_EMOTIONS = [
     # Hardware-native (fallback passes name directly to hardware)
     "neutral", "happy", "sad", "angry", "excited",
     "afraid", "sleepy", "side eye L", "side eye R",
+    "curious", "skeptical", "smug", "surprised",
     # Semantic aliases (resolve via ALIAS_TO_EYES)
     "greeting", "farewell", "celebration", "apologetic",
 ]
@@ -41,17 +42,26 @@ ALIAS_TO_EYES = {
 
 # Sparse map: only entries that differ from default (eyes=emotion, gesture=None)
 EXPRESSION_MAP = {
-    ("happy",        "high"):    {"eyes": "happy",    "gesture": "side_side"},
-    ("sad",          "high"):    {"eyes": "sad",       "gesture": "bow"},
-    ("angry",        "high"):    {"eyes": "angry",     "gesture": "side_side"},
-    ("excited",      "medium"):  {"eyes": "excited",   "gesture": "side_side"},
-    ("excited",      "high"):    {"eyes": "excited",   "gesture": "excited"},
-    ("afraid",       "high"):    {"eyes": "afraid",    "gesture": "side_side"},
-    ("greeting",     "high"):    {"eyes": "happy",     "gesture": "wave_right"},
-    ("farewell",     "high"):    {"eyes": "happy",     "gesture": "bow"},
-    ("celebration",  "medium"):  {"eyes": "excited",   "gesture": "side_side"},
-    ("celebration",  "high"):    {"eyes": "excited",   "gesture": "excited"},
-    ("apologetic",   "high"):    {"eyes": "sad",       "gesture": "bow"},
+    ("happy",        "high"):    {"eyes": "happy",     "gesture": "side_side"},
+    ("sad",          "high"):    {"eyes": "sad",        "gesture": "bow"},
+    ("angry",        "medium"):  {"eyes": "angry",      "gesture": "side_side"},
+    ("angry",        "high"):    {"eyes": "angry",      "gesture": "side_side"},
+    ("excited",      "medium"):  {"eyes": "excited",    "gesture": "side_side"},
+    ("excited",      "high"):    {"eyes": "excited",    "gesture": "excited"},
+    ("afraid",       "high"):    {"eyes": "afraid",     "gesture": "side_side"},
+    ("curious",      "medium"):  {"eyes": "curious",    "gesture": None},
+    ("curious",      "high"):    {"eyes": "curious",    "gesture": "tilt_head"},
+    ("skeptical",    "medium"):  {"eyes": "skeptical",  "gesture": None},
+    ("skeptical",    "high"):    {"eyes": "skeptical",  "gesture": "side_side"},
+    ("smug",         "medium"):  {"eyes": "smug",       "gesture": None},
+    ("smug",         "high"):    {"eyes": "smug",       "gesture": "side_side"},
+    ("surprised",    "medium"):  {"eyes": "surprised",  "gesture": None},
+    ("surprised",    "high"):    {"eyes": "surprised",  "gesture": "side_side"},
+    ("greeting",     "high"):    {"eyes": "happy",      "gesture": "wave_right"},
+    ("farewell",     "high"):    {"eyes": "happy",      "gesture": "bow"},
+    ("celebration",  "medium"):  {"eyes": "excited",    "gesture": "side_side"},
+    ("celebration",  "high"):    {"eyes": "excited",    "gesture": "excited"},
+    ("apologetic",   "high"):    {"eyes": "sad",        "gesture": "bow"},
 }
 
 # Gesture name → movement sequence
@@ -59,6 +69,7 @@ GESTURE_MOVEMENTS = {
     "bow":        ["bow"],
     "side_side":  ["tilt_left", "tilt_right"],
     "wave_right": ["wave_right"],
+    "tilt_head":  ["tilt_left"],
     "excited":    ["tilt_left", "tilt_right", "tilt_left", "tilt_right"],
 }
 
@@ -133,6 +144,14 @@ class ExpressionRateLimiter:
 # Global rate limiter singleton
 _rate_limiter: Optional[ExpressionRateLimiter] = None
 
+# Custom expression sequence names (populated at startup from Pi API)
+_custom_expressions: list = []
+
+
+def set_custom_expressions(names: list) -> None:
+    global _custom_expressions
+    _custom_expressions = names
+
 
 def set_rate_limiter(limiter: ExpressionRateLimiter):
     global _rate_limiter
@@ -152,6 +171,16 @@ def get_rate_limiter() -> ExpressionRateLimiter:
 
 async def fire_expression(emotion: str, intensity: str) -> None:
     """Execute expression directly — used by ExpressTagFilter for inline tags."""
+    if emotion in _custom_expressions:
+        async def _run_custom():
+            try:
+                from services import tars_robot
+                await tars_robot.execute_movement([emotion])
+            except Exception as e:
+                logger.error(f"fire_expression custom sequence error: {e}", exc_info=True)
+        asyncio.create_task(_run_custom())
+        return
+
     if emotion not in VALID_EMOTIONS:
         logger.warning(f"Invalid emotion '{emotion}', falling back to neutral")
         emotion = "neutral"
@@ -191,6 +220,20 @@ async def express(params: FunctionCallParams):
     """Unified expression tool: sets eyes and optionally triggers a gesture."""
     emotion = params.arguments.get("emotion", "neutral")
     intensity = params.arguments.get("intensity", "low")
+
+    if emotion in _custom_expressions:
+        await params.result_callback(
+            "Expression set.",
+            properties=FunctionCallResultProperties(run_llm=False),
+        )
+        async def _run_custom():
+            try:
+                from services import tars_robot
+                await tars_robot.execute_movement([emotion])
+            except Exception as e:
+                logger.error(f"express custom sequence error: {e}", exc_info=True)
+        asyncio.create_task(_run_custom())
+        return
 
     # Validate inputs; fall back to safe defaults
     if emotion not in VALID_EMOTIONS:
@@ -286,20 +329,25 @@ async def execute_movement(params: FunctionCallParams):
 # SCHEMAS
 # =============================================================================
 
-def create_express_schema() -> FunctionSchema:
+def create_express_schema(custom_expressions: list = None) -> FunctionSchema:
     """Create the express function schema."""
+    all_emotions = VALID_EMOTIONS + (custom_expressions or [])
+    custom_str = f" Custom sequences: {', '.join(custom_expressions)}." if custom_expressions else ""
     return FunctionSchema(
         name="express",
         description=(
             "Set TARS eye expression to match the emotional tone of your response. "
             "low = eyes only, costs nothing, use whenever your words carry emotion. "
             "medium = eyes + gesture, for notable moments. "
-            "high = eyes + expressive gesture, for greetings and strong reactions."
+            "high = eyes + expressive gesture, for greetings and strong reactions. "
+            "Valid emotions: neutral, happy, sad, angry, excited, afraid, sleepy, "
+            "side eye L, side eye R, curious, skeptical, smug, surprised, "
+            f"greeting, farewell, celebration, apologetic.{custom_str}"
         ),
         properties={
             "emotion": {
                 "type": "string",
-                "enum": VALID_EMOTIONS,
+                "enum": all_emotions,
                 "description": "The emotion to express"
             },
             "intensity": {
@@ -313,8 +361,9 @@ def create_express_schema() -> FunctionSchema:
     )
 
 
-def create_movement_schema() -> FunctionSchema:
+def create_movement_schema(custom_movements: list = None) -> FunctionSchema:
     """Create the execute_movement function schema."""
+    custom_str = f" Custom: {', '.join(custom_movements)}." if custom_movements else ""
     return FunctionSchema(
         name="execute_movement",
         description=(
@@ -326,7 +375,7 @@ def create_movement_schema() -> FunctionSchema:
             "Examples: 'walk forward' → ['walk_forward'], "
             "'turn around' → ['turn_left', 'turn_left'], "
             "'turn left' → ['turn_left'], "
-            "'turn right slowly' → ['turn_right_slow']. "
+            f"'turn right slowly' → ['turn_right_slow'].{custom_str} "
             "Do NOT use for expressions — use [express(...)] inline tag instead."
         ),
         properties={

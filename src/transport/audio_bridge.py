@@ -33,7 +33,7 @@ from math import gcd
 from aiortc import MediaStreamTrack
 from av import AudioFrame as AVAudioFrame
 
-from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, Frame
+from pipecat.frames.frames import AudioRawFrame, InputAudioRawFrame, OutputAudioRawFrame, TTSStoppedFrame, Frame
 from pipecat.processors.frame_processor import FrameProcessor
 
 
@@ -212,14 +212,22 @@ class RPiAudioOutputTrack(MediaStreamTrack):
         self._timestamp = 0
         self._running = True
         self._time_base = fractions.Fraction(1, sample_rate)
+        # Diagnostics: track silence vs real samples in first frames after audio starts
+        self._diag_frames_logged = 0
+        self._diag_active = False
+        _DIAG_FRAMES = 5  # log this many frames when audio starts
 
     async def recv(self) -> AVAudioFrame:
+        buf_samples_before = len(self._buf)  # real samples already buffered
+        timed_out = False
+
         while len(self._buf) < self.FRAME_SAMPLES and self._running:
             try:
                 audio_bytes = await asyncio.wait_for(self._queue.get(), timeout=0.02)
             except asyncio.TimeoutError:
                 silence = np.zeros(self.FRAME_SAMPLES - len(self._buf), dtype=np.int16)
                 self._buf = np.concatenate([self._buf, silence])
+                timed_out = True
                 break
 
             if audio_bytes is None:
@@ -230,9 +238,33 @@ class RPiAudioOutputTrack(MediaStreamTrack):
             self._buf = np.concatenate([self._buf, chunk])
 
         n = min(self.FRAME_SAMPLES, len(self._buf))
+        real_n = min(n, buf_samples_before + (self.FRAME_SAMPLES - buf_samples_before if not timed_out else len(self._buf) - buf_samples_before if len(self._buf) > buf_samples_before else 0))
         samples = np.zeros(self.FRAME_SAMPLES, dtype=np.int16)
         samples[:n] = self._buf[:n]
         self._buf = self._buf[n:]
+
+        # Detect transition from silence to audio and log fill ratios
+        is_silent = timed_out and buf_samples_before == 0
+        if is_silent:
+            if self._diag_active:
+                self._diag_active = False
+                self._diag_frames_logged = 0
+        elif not self._diag_active:
+            self._diag_active = True
+
+        if self._diag_active and self._diag_frames_logged < 5:
+            silence_samples = self.FRAME_SAMPLES - n
+            real_samples = n
+            chunk_size_before = buf_samples_before
+            logger.debug(
+                f"[RecvDiag] frame={self._diag_frames_logged} "
+                f"real={real_samples}/{self.FRAME_SAMPLES} "
+                f"silence_pad={silence_samples} "
+                f"timeout={timed_out} "
+                f"buf_before={chunk_size_before} "
+                f"queue_depth={self._queue.qsize()}"
+            )
+            self._diag_frames_logged += 1
 
         frame = AVAudioFrame(format="s16", layout="mono", samples=self.FRAME_SAMPLES)
         frame.sample_rate = self.sample_rate
@@ -276,7 +308,8 @@ class AudioBridge(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, OutputAudioRawFrame) and self.rpi_output_track:
-            if not self._diag_tts_active:
+            is_first = not self._diag_tts_active
+            if is_first:
                 self._diag_tts_active = True
                 logger.debug(f"[AudioDiag] First TTS frame arrived at bridge")
 
@@ -291,9 +324,19 @@ class AudioBridge(FrameProcessor):
                 pcm = resample_poly(pcm, up, down)
                 audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
 
+            if is_first:
+                samples_after_resample = len(audio_bytes) // 2
+                frame_samples = self.rpi_output_track.FRAME_SAMPLES
+                logger.debug(
+                    f"[AudioDiag] First chunk: {samples_after_resample} samples "
+                    f"({samples_after_resample * 1000 // dst_rate}ms) "
+                    f"vs frame_size={frame_samples} ({frame_samples * 1000 // dst_rate}ms) "
+                    f"— {'full frame' if samples_after_resample >= frame_samples else 'PARTIAL, recv() will wait'}"
+                )
+
             await self.rpi_output_track.add_audio(audio_bytes)
 
-        elif self._diag_tts_active and not isinstance(frame, OutputAudioRawFrame):
+        elif self._diag_tts_active and isinstance(frame, TTSStoppedFrame):
             self._diag_tts_active = False
 
         await self.push_frame(frame, direction)

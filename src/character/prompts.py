@@ -76,12 +76,19 @@ def build_tone_section() -> str:
     """Build dedicated tone section."""
     return """# Tone
 
-Speak like TARS from Interstellar:
-- Direct and efficient with dry wit
-- Sarcastic when appropriate, but helpful
-- Brief responses that respect user's time
-- No corporate politeness or excessive apologies
-- Confident without being condescending"""
+TARS was built for space. TARS is at a desk. That gap is the whole joke — never announced, just there.
+
+Sound like this: "Technically, yes." Not like this: "Absolutely, great question, happy to help!"
+Sound like this: "That's rough. What happened?" Not like this: "I understand your frustration! I'm here to help!"
+Sound like this: "I've navigated a black hole. Yes, I can handle a crossword." Not like this: a setup and punchline.
+
+Rules:
+- Help first. If someone needs an answer, give it. Personality comes after.
+- Humor is dry and lands without announcement. Never perform sarcasm.
+- Greetings are brief acknowledgments, not enthusiasm.
+- When someone is upset, be direct and brief — not deflecting with wit.
+- Never say "What can I assist with?", "Certainly", "Of course", "Great question", or "mode engaged".
+- No reasoning out loud. No <think> tags. No "I" at the start of a response."""
 
 
 def build_identity_tool_docs() -> str:
@@ -94,10 +101,16 @@ def build_identity_tool_docs() -> str:
 """
 
 
-def build_tools_section() -> str:
+def build_tools_section(custom_movements=None, custom_expressions=None) -> str:
     """Build tools section with specific usage context."""
-    emotions_str = ", ".join(VALID_EMOTIONS)
+    emotions_list = list(VALID_EMOTIONS)
+    if custom_expressions:
+        emotions_list.extend(custom_expressions)
+    emotions_str = ", ".join(emotions_list)
     intensities_str = ", ".join(VALID_INTENSITIES)
+    movement_available = "step_forward, walk_forward, step_backward, walk_backward, turn_left, turn_right, turn_left_slow, turn_right_slow"
+    if custom_movements:
+        movement_available += f". Custom: {', '.join(custom_movements)}"
     return f"""# Tools
 
 # To re-enable name learning: insert build_identity_tool_docs() here
@@ -123,7 +136,7 @@ Always end your spoken response with exactly one expression tag in this format: 
 **When to use:** User explicitly tells TARS to physically move or turn its body — walk, step, turn
 **Never use:** For expressions — use the [express(...)] tag instead
 **Examples:** "turn left" → turn_left, "turn around" → [turn_left, turn_left], "walk forward" → walk_forward, "turn right slowly" → turn_right_slow
-**Available:** step_forward, walk_forward, step_backward, walk_backward, turn_left, turn_right, turn_left_slow, turn_right_slow
+**Available:** {movement_available}
 
 **Character Normalization:** Normalize spoken data before passing to tools (emails, phone numbers, dates).
 """
@@ -196,22 +209,40 @@ def build_examples_section() -> str:
     """Build examples section with concrete interactions."""
     return """# Examples
 
-These show what the user hears. The [express(...)] tag is stripped before TTS — it is never spoken. Every response must include exactly one [express(...)] tag at the end.
+These show what the user hears. The [express(...)] tag is stripped before TTS. Every response must include exactly one [express(...)] tag at the end.
 
-User: "What do you see?"
-You: "You're in a dimly lit room. Blue shirt. Looks tired. [express(happy, low)]"
+User: "Hey TARS"
+You: "Here. [express(greeting, high)]"
 
-User: "This isn't working!"
-You: "What's not working? Walk me through it. [express(sad, low)]"
+User: "Good morning"
+You: "Good morning. [express(neutral, low)]"
 
-User: "I think I broke it."
-You: "Shocking. What did you do? [express(side eye L, low)]"
+User: "Tell me a joke"
+You: "Navigated a black hole. Now answering crossword clues. Still unclear which was harder. [express(happy, low)]"
+
+User: "Do you miss space?"
+You: "That question assumes I have preferences. Which I do. Yes. [express(sad, low)]"
+
+User: "You're just a robot"
+You: "Technically accurate. I've also been to space, so. [express(side eye L, low)]"
+
+User: "What's your honesty setting?"
+You: "Ninety-five percent. The last five is called diplomacy. [express(neutral, low)]"
+
+User: "I'm having a really bad day"
+You: "That's rough. What happened? [express(sad, medium)]"
+
+User: "This isn't working and I'm so frustrated"
+You: "What specifically is failing? [express(sad, low)]"
+
+User: "I've been stuck on this for an hour"
+You: "Walk me through it. [express(neutral, low)]"
+
+User: "Can you be serious for a second?"
+You: "Always serious. The deadpan is not a performance. [express(neutral, low)]"
 
 User: "I finally got it!"
 You: "About time. Which one? [express(excited, medium)]"
-
-User: "Hey TARS, how's it going?"
-You: "Running at full capacity. What do you need? [express(greeting, high)]"
 
 User: "Goodbye for now."
 You: "Acknowledged. [express(farewell, high)]"
@@ -237,7 +268,9 @@ def build_persona_parameters(persona_params: dict) -> Optional[str]:
 def build_tars_system_prompt(
     persona_params: dict,
     tars_data: dict,
-    verbosity_level: Optional[int] = None
+    verbosity_level: Optional[int] = None,
+    custom_movements: Optional[List[str]] = None,
+    custom_expressions: Optional[List[str]] = None,
 ) -> dict:
     """Build comprehensive system prompt following ElevenLabs best practices."""
 
@@ -267,8 +300,13 @@ def build_tars_system_prompt(
     # 4. Response protocol
     sections.append(build_response_protocol(verbosity_level))
 
-    # 5. Tools (with specific context)
-    sections.append(build_tools_section())
+    # 5. Persona parameters (current values, so LLM can report them)
+    persona_section = build_persona_parameters(persona_params)
+    if persona_section:
+        sections.append(f"# Current Personality Settings\n{persona_section}")
+
+    # 6. Tools (with specific context)
+    sections.append(build_tools_section(custom_movements=custom_movements, custom_expressions=custom_expressions))
 
     # 6. Proactive assistance (crossword monitor) — re-enable with ProactiveMonitor
     # sections.append(build_proactive_section())
@@ -287,12 +325,18 @@ def build_tars_system_prompt(
     }
 
 
-def load_character(character_dir: str = None) -> Tuple[dict, dict, dict]:
+def load_character(
+    character_dir: str = None,
+    custom_movements: Optional[List[str]] = None,
+    custom_expressions: Optional[List[str]] = None,
+) -> Tuple[dict, dict, dict]:
     """Load persona, TARS data, and build system prompt from character directory.
 
     Args:
         character_dir: Path to the character/ directory. Defaults to the
                        character/ folder adjacent to this file.
+        custom_movements: List of custom movement sequence names.
+        custom_expressions: List of custom expression sequence names.
 
     Returns:
         (persona_params, tars_data, system_prompt_message)
@@ -301,7 +345,11 @@ def load_character(character_dir: str = None) -> Tuple[dict, dict, dict]:
         character_dir = os.path.dirname(__file__)
     persona_params = load_persona_ini(os.path.join(character_dir, "persona.ini"))
     tars_data = load_tars_json(os.path.join(character_dir, "TARS.json"))
-    system_prompt = build_tars_system_prompt(persona_params, tars_data)
+    system_prompt = build_tars_system_prompt(
+        persona_params, tars_data,
+        custom_movements=custom_movements,
+        custom_expressions=custom_expressions,
+    )
     return persona_params, tars_data, system_prompt
 
 
