@@ -16,7 +16,6 @@ from pipecat.frames.frames import (
 )
 from loguru import logger
 import asyncio
-import json
 import re
 from typing import Optional
 
@@ -119,11 +118,19 @@ class SilenceFilter(FrameProcessor):
     Intercepts LLM responses. If response is {"action": "silence"}, drops it.
     Also strips [functionName({...})] tool-call annotations that the LLM
     occasionally leaks into its text stream.
+
+    Uses a buffer-then-flush approach: LLMTextFrames are held until
+    LLMFullResponseEndFrame arrives. The full accumulated text is checked via
+    regex (not json.loads, which fails on mixed output). If silence is detected,
+    the buffer is discarded; otherwise frames are flushed downstream.
     """
+    _SILENCE_RE = re.compile(r'\{"action"\s*:\s*"silence"\}', re.IGNORECASE)
+
     def __init__(self):
         super().__init__()
         self.current_response_text = ""
         self.is_collecting = False
+        self._frame_buffer: list = []
         self._annot_buf = ""   # chars buffered inside a potential [func(...)]
         self._in_annot = False
 
@@ -153,6 +160,7 @@ class SilenceFilter(FrameProcessor):
         if isinstance(frame, (StartFrame, EndFrame, CancelFrame)):
             self.current_response_text = ""
             self.is_collecting = False
+            self._frame_buffer.clear()
             self._annot_buf = ""
             self._in_annot = False
             await self.push_frame(frame, direction)
@@ -162,35 +170,38 @@ class SilenceFilter(FrameProcessor):
         if isinstance(frame, LLMFullResponseStartFrame):
             self.current_response_text = ""
             self.is_collecting = True
+            self._frame_buffer.clear()
             self._annot_buf = ""
             self._in_annot = False
             await self.push_frame(frame, direction)
 
-        # Accumulate and filter text tokens
+        # Buffer text tokens — don't push until EndFrame confirms it's not silence
         elif isinstance(frame, LLMTextFrame) and self.is_collecting:
             self.current_response_text += frame.text
             filtered = self._process_text_token(frame.text)
             if filtered:
-                await self.push_frame(LLMTextFrame(text=filtered), direction)
-            
-        # Check the full response
+                self._frame_buffer.append(LLMTextFrame(text=filtered))
+
+        # Check the full accumulated response before releasing anything
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self.is_collecting:
-                text = self.current_response_text.strip()
-                try:
-                    # Check for silence JSON
-                    if "action" in text and "silence" in text:
-                        clean_json = text.replace("```json", "").replace("```", "").strip()
-                        data = json.loads(clean_json)
-                        if data.get("action") == "silence":
-                            logger.info("SilenceFilter: Suppressing silent response.")
-                            self.is_collecting = False
-                            return # Drop the EndFrame (silence the turn)
-                except:
-                    pass
+                if self._SILENCE_RE.search(self.current_response_text):
+                    # Pure {"action":"silence"} or mixed output — drop everything
+                    logger.info(
+                        f"SilenceFilter: suppressing silence response "
+                        f"({len(self.current_response_text)} chars, "
+                        f"{len(self._frame_buffer)} buffered frames)"
+                    )
+                    self._frame_buffer.clear()
+                    self.is_collecting = False
+                    return  # Drop the EndFrame too
+                # Not silence — flush buffered frames then let EndFrame through
+                for buffered_frame in self._frame_buffer:
+                    await self.push_frame(buffered_frame, direction)
+                self._frame_buffer.clear()
                 self.is_collecting = False
             await self.push_frame(frame, direction)
-            
+
         # Pass everything else (like Audio or System messages)
         else:
             await self.push_frame(frame, direction)

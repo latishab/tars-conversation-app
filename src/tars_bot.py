@@ -600,7 +600,10 @@ def run_browser_mode(port: int = 7860):
 
     logger.info(f"Browser mode at http://localhost:{port}")
     logger.info(f"  WebRTC offer: http://localhost:{port}/api/offer")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+
+    # loop="asyncio" disables uvloop, which causes issues on macOS.
+    # access_log=False suppresses Gradio's constant /gradio_api/queue polling spam.
+    uvicorn.run(app, host="0.0.0.0", port=port, loop="asyncio", access_log=False)
 
 
 if __name__ == "__main__":
@@ -637,10 +640,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Set log level
+    # Set log level (always reconfigure to replace loguru's DEBUG default)
+    logger.remove()
     if args.debug:
-        logger.remove()
-        logger.add(sys.stderr, level="DEBUG")
+        # Filter out pipecat's per-turn LLM context dump even in debug mode
+        def _debug_filter(record):
+            return not (
+                record["level"].name == "DEBUG"
+                and "_stream_chat_completions" in record.get("function", "")
+            )
+        logger.add(sys.stderr, level="DEBUG", filter=_debug_filter)
+    else:
+        logger.add(sys.stderr, level="INFO")
 
     # Check for unsupported options
     if args.local_audio:

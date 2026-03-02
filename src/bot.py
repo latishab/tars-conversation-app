@@ -39,7 +39,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.llm_service import FunctionCallParams
-from services.memory_hybrid import HybridMemoryService
+from services.memory.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.transports.base_transport import TransportParams
@@ -444,8 +444,6 @@ async def run_bot(webrtc_connection):
         async def on_turn_started(*args, **kwargs):
             turn_number = args[1] if len(args) > 1 else kwargs.get('turn_number', 0)
             logger.info(f"🗣️  [TurnObserver] Turn STARTED: {turn_number}")
-            # Notify metrics observer of new turn
-            metrics_observer.start_turn(turn_number)
 
         @turn_observer.event_handler("on_turn_ended")
         async def on_turn_ended(*args, **kwargs):
@@ -496,7 +494,7 @@ async def run_bot(webrtc_connection):
 
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            logger.info("Pipecat Client connected")
+            logger.info(f"Pipecat Client connected (session {client_id})")
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})

@@ -315,8 +315,8 @@ def build_tars_system_prompt(
     # 6. Tools (with specific context)
     sections.append(build_tools_section(custom_movements=custom_movements, custom_expressions=custom_expressions))
 
-    # 6. Proactive assistance (crossword monitor) — re-enable with ProactiveMonitor
-    # sections.append(build_proactive_section())
+    # 6. Proactive assistance — instructions for [PROACTIVE DETECTION] system messages
+    sections.append(build_proactive_section())
 
     # 7. Game mode — re-enable when game pipeline is active
     # sections.append(build_game_protocols())

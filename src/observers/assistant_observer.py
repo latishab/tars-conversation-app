@@ -30,13 +30,10 @@ class AssistantResponseObserver(BaseObserver):
         """Watch frames as they're pushed through the pipeline."""
         frame = data.frame
 
-        # Debug: Log all frame types to see what's coming through
-        frame_type = type(frame).__name__
-        if "Audio" not in frame_type and "Video" not in frame_type and "Image" not in frame_type:
-            logger.debug(f"🔍 [AssistantObserver] Received {frame_type}")
-
-        # Only listen to LLMTextFrame to avoid duplicates (same text goes to TTSTextFrame after)
-        if isinstance(frame, LLMTextFrame):
+        # Only process LLMTextFrame when it comes directly from the LLM service.
+        # The observer fires at every processor boundary, so without this filter
+        # the same frame triggers once per downstream hop (4-5x per response).
+        if isinstance(frame, LLMTextFrame) and "LLM" in type(data.src).__name__:
             text = getattr(frame, "text", "") or ""
             logger.debug(f"📝 [AssistantObserver] LLMTextFrame: '{text}' | Buffer before: '{self._buffer[:50]}'")
             self._ingest_text(text)
