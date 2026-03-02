@@ -8,7 +8,8 @@ from loguru import logger
 from pipecat.frames.frames import (
     Frame, StartFrame, EndFrame, CancelFrame,
     TranscriptionFrame, InterimTranscriptionFrame,
-    LLMRunFrame, LLMFullResponseEndFrame, TTSStartedFrame,
+    LLMRunFrame, LLMFullResponseEndFrame, BotStartedSpeakingFrame,
+    LLMMessagesUpdateFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
@@ -83,7 +84,7 @@ class ProactiveMonitor(FrameProcessor):
                 self._speaking_reset_task.cancel()
             self._speaking_reset_task = self.create_task(self._reset_speaking_flag(), "speaking_reset")
 
-        elif isinstance(frame, (TTSStartedFrame, LLMFullResponseEndFrame)):
+        elif isinstance(frame, (BotStartedSpeakingFrame, LLMFullResponseEndFrame)):
             self._last_bot_speech_time = time.time()
 
         await self.push_frame(frame, direction)
@@ -172,6 +173,22 @@ class ProactiveMonitor(FrameProcessor):
     async def _fire_intervention(self, trigger_type: str, context_snippet: str):
         self._last_intervention_time = time.time()
 
+        # Strip previous probe-response pairs to prevent context explosion.
+        # Walk linearly so we can drop the assistant message that immediately
+        # follows each proactive system message (the LLM's reply to the probe).
+        filtered = []
+        skip_next_assistant = False
+        for m in self._context.messages:
+            is_probe = m.get("role") == "system" and "[PROACTIVE DETECTION" in m.get("content", "")
+            if is_probe:
+                skip_next_assistant = True
+                continue  # drop probe system message
+            if skip_next_assistant and m.get("role") == "assistant":
+                skip_next_assistant = False
+                continue  # drop orphaned assistant response to that probe
+            skip_next_assistant = False
+            filtered.append(m)
+
         system_msg = {
             "role": "system",
             "content": (
@@ -186,11 +203,16 @@ class ProactiveMonitor(FrameProcessor):
                 f"Default to Notification (option 1). Never give the answer directly."
             ),
         }
-        self._context.messages.append(system_msg)
+        filtered.append(system_msg)
 
         task = self._task_ref.get("task")
         if task:
-            await task.queue_frames([LLMRunFrame()])
+            # LLMMessagesUpdateFrame is the official compaction pattern: it
+            # replaces the LLM service's context in-place before triggering.
+            await task.queue_frames([
+                LLMMessagesUpdateFrame(messages=filtered, run_llm=False),
+                LLMRunFrame(),
+            ])
 
         logger.info(f"ProactiveMonitor: fired {trigger_type} trigger, context: {context_snippet[:80]}")
         self._log_event("intervention_fired", trigger_type, True, {"context_snippet": context_snippet})
