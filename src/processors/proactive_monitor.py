@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
@@ -290,7 +291,18 @@ class ProactiveMonitor(FrameProcessor):
             "context_snippet": details.get("context_snippet", ""),
             "suppression_reason": details.get("suppression_reason", None),
         }
-        log_path = Path("logs/proactive_interventions.jsonl")
-        log_path.parent.mkdir(exist_ok=True)
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_path = log_dir / f"proactive_interventions_{today}.jsonl"
         with open(log_path, "a") as f:
             f.write(json.dumps(event) + "\n")
+        # Delete files older than 7 days
+        cutoff = datetime.now() - timedelta(days=7)
+        for old in log_dir.glob("proactive_interventions_*.jsonl"):
+            try:
+                file_date = datetime.strptime(old.stem.split("_", 2)[2], "%Y-%m-%d")
+                if file_date < cutoff:
+                    old.unlink()
+            except (ValueError, IndexError):
+                pass
