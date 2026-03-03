@@ -30,9 +30,11 @@ from .vision import (
 from .persona import (
     adjust_persona_parameter,
     set_user_identity,
+    set_task_mode,
     get_persona_storage,
     create_adjust_persona_schema,
     create_identity_schema,
+    create_task_mode_schema,
 )
 
 __all__ = [
@@ -55,7 +57,9 @@ __all__ = [
     # Persona tools
     "adjust_persona_parameter",
     "set_user_identity",
+    "set_task_mode",
     "get_persona_storage",
     "create_adjust_persona_schema",
     "create_identity_schema",
+    "create_task_mode_schema",
 ]

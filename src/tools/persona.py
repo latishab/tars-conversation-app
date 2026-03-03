@@ -10,7 +10,9 @@ _persona_storage = {
     "persona_params": {},
     "tars_data": {},
     "context_aggregator": None,
-    "character_dir": None
+    "character_dir": None,
+    "proactive_monitor": None,
+    "task_mode": None,
 }
 
 
@@ -142,4 +144,59 @@ def create_identity_schema():
             }
         },
         required=["name"],
+    )
+
+
+async def set_task_mode(params: FunctionCallParams):
+    """Toggle task mode on/off. Adjusts system prompt and proactive monitor."""
+    from character.prompts import build_tars_system_prompt
+
+    mode = (params.arguments.get("mode") or "").strip().lower()
+    active = mode not in ("", "off", "none", "disable", "disabled")
+    mode_value = mode if active else None
+
+    monitor = _persona_storage.get("proactive_monitor")
+    if monitor:
+        monitor.set_task_mode(mode_value)
+
+    _persona_storage["task_mode"] = mode_value
+
+    context_aggregator = _persona_storage.get("context_aggregator")
+    persona_params = _persona_storage.get("persona_params", {})
+    tars_data = _persona_storage.get("tars_data", {})
+
+    if context_aggregator and hasattr(context_aggregator, 'context'):
+        try:
+            new_system_prompt = build_tars_system_prompt(
+                persona_params, tars_data, task_mode=mode_value
+            )
+            if context_aggregator.context.messages:
+                context_aggregator.context.messages[0] = new_system_prompt
+        except Exception as e:
+            logger.error(f"Error updating system prompt for task mode: {e}")
+
+    label = mode if active else "off"
+    logger.info(f"Task mode set: {label}")
+    await params.result_callback(f"Task mode: {label}.")
+
+
+def create_task_mode_schema() -> FunctionSchema:
+    return FunctionSchema(
+        name="set_task_mode",
+        description=(
+            "Toggle task mode when the user starts or stops a focused activity. "
+            "Call with a mode like 'crossword', 'coding', 'reading', 'thinking' "
+            "when the user announces they're working on something. "
+            "Call with 'off' when they're done."
+        ),
+        properties={
+            "mode": {
+                "type": "string",
+                "description": (
+                    "The task type (e.g. 'crossword', 'coding', 'reading', 'thinking') "
+                    "or 'off' to exit task mode."
+                ),
+            },
+        },
+        required=["mode"],
     )
