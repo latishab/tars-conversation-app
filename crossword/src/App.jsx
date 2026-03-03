@@ -79,6 +79,7 @@ export default function App() {
   const [selectedDirection, setSelectedDirection] = useState('across')
   const [selectedClue, setSelectedClue] = useState(null)
   const [incorrectCells, setIncorrectCells] = useState([])
+  const [correctCells, setCorrectCells] = useState([])
   const [timerSeconds, setTimerSeconds] = useState(0)
   const [sessionActive, setSessionActive] = useState(false)
   const [sessionEnded, setSessionEnded] = useState(false)
@@ -242,6 +243,7 @@ export default function App() {
   function handleCheckAnswers() {
     ensureSessionStarted()
     const wrong = []
+    const right = []
     const results = []
     allCluesFlat(puzzle).forEach(({ direction, ...clue }) => {
       let correct = true
@@ -252,6 +254,8 @@ export default function App() {
         if (entered && entered !== puzzle.solution[r][c]) {
           wrong.push({ row: r, col: c })
           correct = false
+        } else if (entered && entered === puzzle.solution[r][c]) {
+          right.push({ row: r, col: c })
         }
       }
       results.push({ clueNumber: clue.number, direction, correct })
@@ -259,8 +263,12 @@ export default function App() {
 
     logEvent('check_triggered', { results })
     setIncorrectCells(wrong)
+    setCorrectCells(right)
     clearTimeout(incorrectTimerRef.current)
-    incorrectTimerRef.current = setTimeout(() => setIncorrectCells([]), 3000)
+    incorrectTimerRef.current = setTimeout(() => {
+      setIncorrectCells([])
+      setCorrectCells([])
+    }, 3000)
   }
 
   // ── End Session ──────────────────────────────────────────────────────────
@@ -299,6 +307,7 @@ export default function App() {
             selectedDirection={selectedDirection}
             selectedClue={selectedClue}
             incorrectCells={incorrectCells}
+            correctCells={correctCells}
             onCellClick={selectCell}
             onKeyDown={handleKeyDown}
           />
