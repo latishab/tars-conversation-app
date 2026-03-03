@@ -211,31 +211,46 @@ class ProactiveMonitor(FrameProcessor):
             skip_next_assistant = False
             filtered.append(m)
 
-        task_line = f"\nTask context: {self._task_context}" if self._task_context else ""
         probe_note = (
             f"\n\nThis is unanswered probe #{probe_num}. Previous probes got no user response. "
             f"If this is probe #2 or higher, return {{\"action\": \"silence\"}} — the user is likely away or ignoring you."
             if probe_num >= 2
             else ""
         )
-        system_msg = {
-            "role": "system",
-            "content": (
-                f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
-                f"The user has not directly addressed you, but the proactive monitor "
-                f"has detected signs they may need help."
-                f"{task_line}\n"
-                f'Recent context: "{context_snippet}"\n\n'
-                f"Read the recent context and infer what kind of help is relevant. "
-                f"You have three options:\n"
-                f"1. Offer brief, relevant help based on what the user said (1-2 sentences max)\n"
-                f"2. If this seems like a false positive, return exactly {{\"action\": \"silence\"}}\n"
-                f"3. If the user appears away or unresponsive, return exactly {{\"action\": \"silence\"}}\n\n"
-                f"Default to option 1. Keep it to 1-2 sentences. "
-                f"Never give a direct answer, list steps, or use phrases like 'want a hint' or 'tricky one'."
-                f"{probe_note}"
-            ),
-        }
+
+        if self._task_context:
+            # In task mode: only fire if the user is truly stuck, default to silence
+            system_msg = {
+                "role": "system",
+                "content": (
+                    f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
+                    f"The user is in task mode ({self._task_context}) and has been silent. "
+                    f'Recent context: "{context_snippet}"\n\n'
+                    f"Task mode rule: default to {{\"action\": \"silence\"}}. "
+                    f"Only speak if the recent context contains a direct, unresolved question the user cannot answer. "
+                    f"Thinking aloud, fragments, and partial progress are NOT requests for help. "
+                    f"If in any doubt, return exactly {{\"action\": \"silence\"}}."
+                    f"{probe_note}"
+                ),
+            }
+        else:
+            system_msg = {
+                "role": "system",
+                "content": (
+                    f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
+                    f"The user has not directly addressed you, but the proactive monitor "
+                    f"has detected signs they may need help.\n"
+                    f'Recent context: "{context_snippet}"\n\n'
+                    f"Read the recent context and infer what kind of help is relevant. "
+                    f"You have three options:\n"
+                    f"1. Offer brief, relevant help based on what the user said (1-2 sentences max)\n"
+                    f"2. If this seems like a false positive, return exactly {{\"action\": \"silence\"}}\n"
+                    f"3. If the user appears away or unresponsive, return exactly {{\"action\": \"silence\"}}\n\n"
+                    f"Default to option 1. Keep it to 1-2 sentences. "
+                    f"Never give a direct answer, list steps, or use phrases like 'want a hint' or 'tricky one'."
+                    f"{probe_note}"
+                ),
+            }
         filtered.append(system_msg)
 
         task = self._task_ref.get("task")

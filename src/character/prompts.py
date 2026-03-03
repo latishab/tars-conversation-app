@@ -154,11 +154,15 @@ Always end your spoken response with exactly one expression tag in this format: 
 def build_task_mode_section(task_mode: str) -> str:
     return f"""# Active Task Mode: {task_mode}
 
-The user is currently focused on: {task_mode}. Adjust your behavior:
-- Expect long silences — the user is thinking, not waiting for you.
-- Only speak when directly addressed or when the user is clearly stuck.
-- Keep responses even shorter than usual — they're concentrating.
-- Think-aloud fragments are NOT directed at you. Default to silence."""
+The user is working on a {task_mode} and asked you to listen. SILENCE IS THE DEFAULT.
+
+Rules — apply strictly:
+1. Return exactly {{"action": "silence"}} for ANY input that is not a direct question addressed to you.
+2. Fragments, clues, partial words, numbers, muttering, self-correction — all thinking aloud. Return {{"action": "silence"}}.
+3. The user mentioning a clue or saying something related to {task_mode} is NOT a question for you. Return {{"action": "silence"}}.
+4. Only break silence when the user says your name AND asks a direct question (e.g. "TARS, what's a five-letter word for X?").
+5. "I don't know" or "I'm not sure" alone is NOT a request for help. Return {{"action": "silence"}}.
+6. If in doubt: {{"action": "silence"}}."""
 
 
 def build_proactive_section() -> str:
