@@ -124,7 +124,13 @@ class SilenceFilter(FrameProcessor):
     regex (not json.loads, which fails on mixed output). If silence is detected,
     the buffer is discarded; otherwise frames are flushed downstream.
     """
-    _SILENCE_RE = re.compile(r'\{"action"\s*:\s*"silence"\}', re.IGNORECASE)
+    # Matches the canonical silence JSON and common LLM natural-language silence
+    # variants (e.g. "[No reply]") that should never reach TTS.
+    _SILENCE_RE = re.compile(
+        r'\{"action"\s*:\s*"silence"\}'
+        r'|\[(?:No\s+reply|No\s+response|Silence)\]',
+        re.IGNORECASE,
+    )
 
     def __init__(self):
         super().__init__()

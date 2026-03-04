@@ -404,6 +404,7 @@ async def run_bot(webrtc_connection):
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
+        persona_storage["context"] = context  # direct reference for system prompt updates
 
         # ====================================================================
         # LOGGING PROCESSORS

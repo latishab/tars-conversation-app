@@ -122,6 +122,7 @@ class ProactiveMonitor(FrameProcessor):
         now = time.time()
         trigger_type = None
         context_snippet = ""
+        hesitation_score = 0
 
         # Trigger 1: silence
         # Silence = neither user nor TARS has been active for silence_threshold.
@@ -148,6 +149,8 @@ class ProactiveMonitor(FrameProcessor):
             if score >= self._hesitation_threshold:
                 trigger_type = "hesitation"
                 context_snippet = " ".join(e["text"] for e in recent)
+                hesitation_score = score
+                logger.info(f"ProactiveMonitor: hesitation threshold reached score={score}")
 
         # Trigger 3: confusion patterns (highest priority)
         # Only check transcripts newer than last check to avoid re-firing on stale text
@@ -160,6 +163,7 @@ class ProactiveMonitor(FrameProcessor):
                 if pattern in combined:
                     trigger_type = "confusion"
                     context_snippet = combined[:200]
+                    logger.info(f"ProactiveMonitor: confusion pattern matched: '{pattern}'")
                     break
 
         if trigger_type:
@@ -205,9 +209,9 @@ class ProactiveMonitor(FrameProcessor):
                 return
 
             self._last_checked_transcript_time = time.time()
-            await self._fire_intervention(trigger_type, context_snippet)
+            await self._fire_intervention(trigger_type, context_snippet, hesitation_score)
 
-    async def _fire_intervention(self, trigger_type: str, context_snippet: str):
+    async def _fire_intervention(self, trigger_type: str, context_snippet: str, hesitation_score: int = 0):
         now = time.time()
         self._last_intervention_time = now
         if trigger_type == "confusion":
@@ -239,17 +243,24 @@ class ProactiveMonitor(FrameProcessor):
         )
 
         if self._task_context:
-            # In task mode: only fire if the user is truly stuck, default to silence
+            # In task mode: default silence, never give answer directly
             system_msg = {
                 "role": "system",
                 "content": (
                     f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
-                    f"The user is in task mode ({self._task_context}) and has been silent. "
+                    f"The user is in task mode ({self._task_context}) and has been silent.\n"
                     f'Recent context: "{context_snippet}"\n\n'
-                    f"Task mode rule: default to {{\"action\": \"silence\"}}. "
-                    f"Only speak if the recent context contains a direct, unresolved question the user cannot answer. "
-                    f"Thinking aloud, fragments, and partial progress are NOT requests for help. "
-                    f"If in any doubt, return exactly {{\"action\": \"silence\"}}."
+                    f"Default: {{\"action\": \"silence\"}}. "
+                    f"Thinking aloud, fragments, stated answers (right or wrong), and partial progress are NOT requests for help.\n"
+                    f"If the context is the user correcting your behavior or giving you instructions, return silence.\n"
+                    f"Only speak if the context contains a clear, unresolved question the user cannot answer.\n"
+                    f"If you do speak, use this hierarchy:\n"
+                    f"  Notification — signal you're available. Brief, non-intrusive. Preferred.\n"
+                    f"  Suggestion — a nudge or hint, not the answer.\n"
+                    f"  Never give the answer directly. If the user wants it, they will ask — "
+                    f"that becomes a reactive request and is handled normally.\n"
+                    f"Do not prefix your response with 'Notification:', 'Suggestion:', or 'Hint:'. Just respond naturally.\n"
+                    f"If in any doubt: {{\"action\": \"silence\"}}."
                     f"{probe_note}"
                 ),
             }
@@ -258,16 +269,16 @@ class ProactiveMonitor(FrameProcessor):
                 "role": "system",
                 "content": (
                     f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
-                    f"The user has not directly addressed you, but the proactive monitor "
-                    f"has detected signs they may need help.\n"
+                    f"The user has not addressed you. The monitor detected they may need help.\n"
                     f'Recent context: "{context_snippet}"\n\n'
-                    f"Read the recent context and infer what kind of help is relevant. "
-                    f"You have three options:\n"
-                    f"1. Offer brief, relevant help based on what the user said (1-2 sentences max)\n"
-                    f"2. If this seems like a false positive, return exactly {{\"action\": \"silence\"}}\n"
-                    f"3. If the user appears away or unresponsive, return exactly {{\"action\": \"silence\"}}\n\n"
-                    f"Default to option 1. Keep it to 1-2 sentences. "
-                    f"Never give a direct answer, list steps, or use phrases like 'want a hint' or 'tricky one'."
+                    f"This is a proactive intervention. Apply this hierarchy:\n"
+                    f"  Notification — signal you're available. Brief, non-intrusive. Preferred.\n"
+                    f"  Suggestion — a nudge or hint, not the answer.\n"
+                    f"  Never give the answer directly. If the user wants it, they will ask — "
+                    f"that becomes a reactive request and is handled normally.\n"
+                    f"Do not prefix your response with 'Notification:', 'Suggestion:', or 'Hint:'. Just respond naturally.\n"
+                    f"If context is ambiguous or this is a false positive: {{\"action\": \"silence\"}}.\n"
+                    f"1-2 sentences maximum."
                     f"{probe_note}"
                 ),
             }
@@ -283,7 +294,10 @@ class ProactiveMonitor(FrameProcessor):
             ])
 
         logger.info(f"ProactiveMonitor: fired {trigger_type} trigger, context: {context_snippet[:80]}")
-        self._log_event("intervention_fired", trigger_type, True, {"context_snippet": context_snippet})
+        self._log_event("intervention_fired", trigger_type, True, {
+            "context_snippet": context_snippet,
+            "hesitation_score": hesitation_score,
+        })
 
     def set_task_mode(self, mode: str | None):
         """Adjust monitor behavior for task mode. None = exit task mode."""
