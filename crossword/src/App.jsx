@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import puzzle from '@/data/puzzle1.json'
+import puzzle1 from '@/data/puzzle1.json'
+import puzzle2 from '@/data/puzzle2.json'
 import CrosswordGrid from '@/components/CrosswordGrid'
 import ClueList from '@/components/ClueList'
 import Header from '@/components/Header'
+import PuzzlePicker from '@/components/PuzzlePicker'
 import { startSession, logEvent, downloadLog } from '@/utils/eventLogger'
+
+const PUZZLES = { puzzle1, puzzle2 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -74,6 +78,10 @@ function formatTime(seconds) {
 // ─── App ────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [puzzleId, setPuzzleId] = useState('puzzle1')
+  const [showPicker, setShowPicker] = useState(false)
+  const puzzle = PUZZLES[puzzleId]
+
   const [userGrid, setUserGrid] = useState(() => buildInitialGrid(puzzle.solution))
   const [selectedCell, setSelectedCell] = useState(null)
   const [selectedDirection, setSelectedDirection] = useState('across')
@@ -91,6 +99,22 @@ export default function App() {
     clearInterval(timerRef.current)
     clearTimeout(incorrectTimerRef.current)
   }, [])
+
+  function handleSelectPuzzle(id) {
+    if (id === puzzleId) return
+    clearInterval(timerRef.current)
+    clearTimeout(incorrectTimerRef.current)
+    setPuzzleId(id)
+    setUserGrid(buildInitialGrid(PUZZLES[id].solution))
+    setSelectedCell(null)
+    setSelectedDirection('across')
+    setSelectedClue(null)
+    setIncorrectCells([])
+    setCorrectCells([])
+    setTimerSeconds(0)
+    setSessionActive(false)
+    setSessionEnded(false)
+  }
 
   function ensureSessionStarted() {
     if (!sessionActive && !sessionEnded) {
@@ -295,6 +319,7 @@ export default function App() {
         onCheckAnswers={handleCheckAnswers}
         onDownloadLog={downloadLog}
         onEndSession={handleEndSession}
+        onSelectPuzzle={() => setShowPicker(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -326,6 +351,14 @@ export default function App() {
           />
         </div>
       </div>
+
+      {showPicker && (
+        <PuzzlePicker
+          currentId={puzzleId}
+          onSelect={handleSelectPuzzle}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
 
       {sessionEnded && (
         <div className="fixed inset-0 bg-white/80 flex items-center justify-center z-50">
