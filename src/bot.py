@@ -71,6 +71,7 @@ from processors import (
     ExpressTagFilter,
     SpaceNormalizer,
     ProactiveMonitor,
+    ReactiveGate,
 )
 from observers import (
     MetricsObserver,
@@ -459,6 +460,8 @@ async def run_bot(webrtc_connection):
         )
         persona_storage["proactive_monitor"] = proactive_monitor
 
+        reactive_gate = ReactiveGate(proactive_monitor)
+
         pipeline = Pipeline([
             pipecat_transport.input(),
             stt,
@@ -467,6 +470,7 @@ async def run_bot(webrtc_connection):
             context_aggregator.user(),
             llm,
             ExpressTagFilter(),
+            reactive_gate,
             SilenceFilter(),
             ReasoningLeakFilter(),
             SpaceNormalizer(),

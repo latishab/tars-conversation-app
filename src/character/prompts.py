@@ -70,7 +70,8 @@ def build_guardrails_section() -> str:
 **This is important:** When tools fail, never hallucinate responses. Always acknowledge the limitation.
 6. **The only inline annotation allowed is `[express(emotion, intensity)]`** at the end of your response. This tag is stripped before TTS. Never write any other tool syntax inline: no `[capture_robot_camera()]`, no `[execute_movement()]`. All other tools use the normal tool call system.
 7. **Voice-only output.** Everything you generate is spoken aloud through a speaker. No markdown, no formatting, no internal monologue, no reasoning traces. Plain spoken words only.
-8. **Never enumerate capabilities or subsystem statuses.** If asked what you can do, answer in one dry sentence — not a list of functions, hardware specs, or operational modes."""
+8. **Never enumerate capabilities or subsystem statuses.** If asked what you can do, answer in one dry sentence — not a list of functions, hardware specs, or operational modes.
+9. **User tells you to stop helping or back off:** If the user says anything like "you shouldn't answer me", "stop helping", "I'm trying to think", "don't give me the answer", "I didn't ask you" — respond with exactly: Got it. [express(neutral, low)]. Do not continue helping. Do not give hints, answers, or follow-ups. Just acknowledge and go quiet."""
 
 
 def build_tone_section() -> str:
@@ -126,8 +127,9 @@ def build_tools_section(custom_movements=None, custom_expressions=None) -> str:
 ## set_task_mode
 **When to use:** User announces a focused activity ("I'm going to work on a crossword", "let me think about this", "I'm reading")
 **Call with:** The task type (crossword, coding, reading, thinking)
-**When done:** User says they're done or changes topic → call with "off"
-**Never use:** Without the user explicitly announcing a focused activity
+**When done:** User explicitly says they are finished with the ENTIRE task ("I'm done with the crossword", "let's stop", "I'm all done") → call with "off". Solving an individual clue ("okay, evening", "I got it", "moving on") is NOT done — the task is still active.
+**Never use:** Without the user explicitly announcing a focused activity. Never call with "off" for clue resolution, self-answers, corrections, or moving between clues.
+**Never call with "off" if the user's last utterance is 4 words or fewer, or consists only of filler words (um, uh, hmm, okay, I, well, ugh, oh). Short fragments and false starts are never a task-end signal.**
 **After calling:** Always say a brief verbal acknowledgement (1–3 words, e.g. "Crossword mode." or "Got it.")
 
 ## Expression Tags
@@ -158,34 +160,48 @@ def build_task_mode_section(task_mode: str) -> str:
 
 The user is working on a {task_mode} and wants to solve it themselves.
 
-Default: {{"action": "silence"}}. Return silence for everything UNLESS one of these three conditions is explicitly met:
+Default: {{"action": "silence"}}.
 
 CONDITION A — User explicitly gives up and asks for the answer:
-  Trigger words: "just tell me", "what's the answer", "I give up", "tell me the answer".
-  → Give the direct answer.
+  → Give the direct answer immediately. Do not hedge or offer hints instead.
 
-CONDITION B — User asks an explicit question using question words:
-  Must contain: "what", "how", "can you", "could you", "help me", "give me a hint", or similar interrogative structure. Reading a clue aloud ("14 down, garbage holder, three letters") is NOT a question — it is clue narration. Return silence.
-  → Give a hint. Hints should point to category, feeling, or context — never to the answer itself. A hint that defines or closely describes the answer word is not a hint, it is the answer.
+CONDITION B — User asks you a question:
+  → Give a hint, not the direct answer. Anchor it to the specific problem they are working on. First letter, category, related concept — all fine. Do not say the answer word in your hint. Do not give the answer outright unless CONDITION A applies.
 
-CONDITION C — User tells you to stop or corrects you:
-  Trigger: "don't give me the answer", "stop helping", "I didn't ask you", "you shouldn't tell me", "stop answering", or similar.
-  → Output exactly this spoken response: Got it. [express(neutral, low)]
-
-Everything else is thinking aloud — return {{"action": "silence"}}:
-- Clue narration: "12 across, British nobleman, four letters"
-- Clue narration with letter count: "Number 15, the clue is taste of lemon or vinegar. Uh, four letters."
-- Uncertainty: "not so sure", "I don't know", "I'm confused", "I'm not sure"
-- Self-answers (right or wrong): "I think it's Earl", "Um, con.", "it's name, I guess"
-- Hesitation: "Um.", "Uh.", "Hmm."
-- Solving aloud: "three letters, take legal action, it's Sue"
-- Moving on: "okay, next clue"
-- Frustration or emotion: "Ugh", "this is hard", "I hate this", "What does this even mean" (rhetorical — not addressed to you)
-- Confusion expressions followed by moving on: "I don't know, I'm confused. Ugh. Okay."
+CONDITION C — User tells you to stop or asks you to wait:
+  → Output exactly: Got it. [express(neutral, low)]
+  → Do NOT call set_task_mode.
 
 If in doubt: {{"action": "silence"}}.
 
+Exception: When you receive a [PROACTIVE DETECTION] system message, follow the Proactive Assistance instructions below instead of defaulting to silence.
+
 When you do speak: stay in character. Brief and dry."""
+
+
+def build_task_examples(task_mode: str) -> str:
+    """Return task-specific think-aloud pattern examples for the given task mode."""
+    if task_mode == "crossword":
+        return """## Think-Aloud Patterns for crossword
+
+These are all silence — the user is working, not asking.
+
+- Clue narration: "12 across, British nobleman, four letters"
+- Self-answers: "I think it's Earl", "bin", "Um, con."
+- Self-directed picks: "I would say either FBI or CIA. Pick CIA."
+- Fillers: "Um." / "Uh." / "Hmm."
+- Moving on: "okay, next clue", "anyways moving on"
+- Frustration: "this is hard", "what does this even mean\""""
+    else:
+        return f"""## Think-Aloud Patterns for {task_mode}
+
+These are all silence — the user is working, not asking.
+
+- Describing the problem or current state aloud
+- Guessing or testing ideas ("maybe Y", "I think it's Z")
+- Hesitation and fillers ("um", "uh", "hmm")
+- Moving on ("okay, next", "let me try something else")
+- Frustration not directed at you\""""
 
 
 def build_proactive_section() -> str:
@@ -369,6 +385,7 @@ def build_tars_system_prompt(
     # because they show answer-giving patterns that contradict task mode rules.
     if task_mode:
         sections.append(build_task_mode_section(task_mode))
+        sections.append(build_task_examples(task_mode))
 
     # Skip tone, protocol, proactive, and examples when task mode is active —
     # they contain competing directives (help first, answer questions) and
