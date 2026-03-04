@@ -127,6 +127,7 @@ def build_tools_section(custom_movements=None, custom_expressions=None) -> str:
 **Call with:** The task type (crossword, coding, reading, thinking)
 **When done:** User says they're done or changes topic → call with "off"
 **Never use:** Without the user explicitly announcing a focused activity
+**After calling:** Always say a brief verbal acknowledgement (1–3 words, e.g. "Crossword mode." or "Got it.")
 
 ## Expression Tags
 
@@ -158,8 +159,16 @@ The user is working on a {task_mode} and asked you to listen. SILENCE IS THE DEF
 
 Rules — apply strictly:
 1. Return exactly {{"action": "silence"}} for ANY input that is not a direct question addressed to you.
+   {{"action": "silence"}} requires NO express tag. Just output it and nothing else.
 2. Fragments, clues, partial words, numbers, muttering, self-correction — all thinking aloud. Return {{"action": "silence"}}.
-3. The user mentioning a clue or saying something related to {task_mode} is NOT a question for you. Return {{"action": "silence"}}.
+3. The user mentioning a clue or saying something related to {task_mode} is NOT a question for you.
+   Examples of thinking aloud (return {{"action": "silence"}} for ALL of these):
+   - "14 down, garbage holder, three letters, I think it's bin"
+   - "Poisonous, five letters... I think it's toxic"
+   - "Prophetic significance, starts with O, four letters... omen"
+   - "Of course it's pasta"
+   - "I think it's telephone"
+   Return {{"action": "silence"}}.
 4. Only break silence when the user says your name AND asks a direct question (e.g. "TARS, what's a five-letter word for X?").
 5. "I don't know" or "I'm not sure" alone is NOT a request for help. Return {{"action": "silence"}}.
 6. If in doubt: {{"action": "silence"}}."""
@@ -187,6 +196,7 @@ Your output is converted to speech and played through a speaker. Write only plai
 
 ## Tool Calls
 When calling a tool, always include spoken text in the same response. Never return a tool call without accompanying speech. Always include an `[express(...)]` tag at the end of your response. Every turn must have one — it is required, not optional.
+Exception: if your response is exactly {{"action": "silence"}}, output only that — no express tag, no other text.
 
 ## Direct Communication
 Get straight to the point. No fillers, no unnecessary acknowledgments.
