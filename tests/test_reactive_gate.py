@@ -162,3 +162,20 @@ def test_gate_suppresses_when_tars_outside_window():
     from processors.reactive_gate import ReactiveGate
     gate = ReactiveGate(monitor)
     assert gate._should_pass_through() is False
+
+
+def test_gate_suppresses_condition_a_carryover():
+    """CONDITION A 9s ago then new clue think-aloud — short window should suppress."""
+    import time
+    monitor = MagicMock()
+    monitor._task_context = "crossword"
+    monitor._proactive_response_pending = False
+    monitor._task_mode_just_activated = False
+    now = time.time()
+    monitor._transcript_buffer = [
+        {"text": "please give me the answer", "timestamp": now - 9},  # outside 6s intent window
+        {"text": "British nobleman, I would say Earl", "timestamp": now - 1},
+    ]
+    from processors.reactive_gate import ReactiveGate
+    gate = ReactiveGate(monitor)
+    assert gate._should_pass_through() is False
