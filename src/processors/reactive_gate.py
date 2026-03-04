@@ -19,8 +19,17 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
-# Seconds to look back in the transcript buffer when checking intent.
-_INTENT_WINDOW_SECS = 15.0
+# Seconds to look back when checking direct address / directed questions.
+# Needs to be long enough to cover STT split segments (e.g. "Hey Tars, um."
+# followed by the actual question 2-5s later).
+_ADDRESS_WINDOW_SECS = 15.0
+
+# Seconds to look back when checking surrender (CONDITION A) and correction
+# (CONDITION C). These are immediate intent signals — if the user said "give me
+# the answer" 10s ago and has since moved on to a new clue, that intent has
+# expired. Keep this short so carry-over doesn't trigger passthrough on the
+# next clue's think-aloud.
+_INTENT_WINDOW_SECS = 6.0
 
 
 # Phrases that mean the user is surrendering and wants the answer.
@@ -74,9 +83,9 @@ class ReactiveGate(FrameProcessor):
         self._buffer: list = []
         self._buffering = False
 
-    def _recent_window(self) -> str:
-        """Return lowercased text of all transcript entries within _INTENT_WINDOW_SECS."""
-        cutoff = time.time() - _INTENT_WINDOW_SECS
+    def _window(self, secs: float) -> str:
+        """Return lowercased text of all transcript entries within the given seconds."""
+        cutoff = time.time() - secs
         parts = [
             e.get("text", "")
             for e in self._monitor._transcript_buffer
@@ -103,21 +112,29 @@ class ReactiveGate(FrameProcessor):
         if not buf:
             return True
 
-        window = self._recent_window()
+        # Surrender and correction intent expires quickly — if the user said
+        # "give me the answer" 8s ago and has already moved on to a new clue,
+        # that intent should not carry over to the new think-aloud.
+        short_window = self._window(_INTENT_WINDOW_SECS)
 
         for phrase in _CONDITION_A:
-            if phrase in window:
+            if phrase in short_window:
                 return True
-
-        if "tars" in window:
-            return True
 
         for phrase in _CONDITION_C:
-            if phrase in window:
+            if phrase in short_window:
                 return True
 
+        # Direct address and directed questions use a longer window to handle
+        # STT split segments (e.g. "Hey Tars, um." arrives 2-5s before the
+        # actual question in the next STT segment).
+        long_window = self._window(_ADDRESS_WINDOW_SECS)
+
+        if "tars" in long_window:
+            return True
+
         for phrase in _DIRECTED_QUESTION:
-            if phrase in window:
+            if phrase in long_window:
                 return True
 
         return False
