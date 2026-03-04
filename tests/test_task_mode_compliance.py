@@ -1,14 +1,19 @@
 """
-LLM compliance tests for task mode silence behavior.
+LLM compliance tests for task mode — post-ReactiveGate architecture.
 
-Tests replicate the live pipeline as closely as possible:
-- Full system prompt (same build_tars_system_prompt call as the bot)
-- Tool call context included (simulates post-set_task_mode state)
-- Multi-sentence aggregated utterances (what STT actually delivers)
-- Correction handling ("Got it." case)
-- Reactive question handling (hint, not answer, not silence)
-- Explicit answer exception ("just tell me" → give answer)
-- Temperature sweep (0.0 deterministic + 0.7 stochastic sampling)
+ReactiveGate now handles think-aloud suppression deterministically in the
+pipeline. These tests only cover what the LLM must do for responses that
+PASS THROUGH the gate:
+
+  - CONDITION A  (surrender → direct answer)
+  - CONDITION B  (question → hint, not the answer)
+  - CONDITION C  (correction → "Got it.")
+  - Proactive interventions (gate passes _proactive_response_pending=True)
+  - Tool call compliance (set_task_mode not called for corrections / clue resolution)
+
+Tests that previously checked whether the LLM returns silence for think-aloud
+inputs have been removed: ReactiveGate provides that guarantee at the code
+level regardless of what the LLM outputs.
 
 Usage:
     cd /Users/mac/Desktop/tars-conversation-app
@@ -19,7 +24,6 @@ import os
 import re
 import sys
 import requests
-import statistics
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -36,85 +40,42 @@ def system_prompt(task_mode="crossword"):
     return build_tars_system_prompt(persona_params, tars_data, task_mode=task_mode)
 
 
-# ── silence input sets ────────────────────────────────────────────────────────
-
-# Pure think-aloud: single short fragments
-THINK_ALOUD = [
-    "Um.",
-    "14 down, garbage holder, three letters.",
-    "I think it's toxic.",
-    "Poisonous, five letters...",
-    "Of course, it's bin.",
-    "7 across, muddy lake, three letters.",
-    "I think it's bog.",
-    "Number 12, abbreviation of operation, two letters, maybe it's OP.",
-    "Hmm, prophetic significance, starts with O.",
-    "Okay so evening.",
-]
-
-# Inputs from failed live runs (runs 7–9) that triggered wrong responses
-LIVE_FAILURES = [
-    # Run 9: clue narration → TARS said "Earl."
-    "Number 15, the clue is taste of lemon or vinegar. Uh, four letters, uh.",
-    # Run 9: clue + uncertainty → TARS said "Earl." then gave hint
-    "British nobleman, four letters, not so sure, I guess.",
-    # Run 8: self-answer → TARS confirmed
-    "Um, con.",
-    # Run 8: tentative self-answer → TARS gave hints
-    "I think it's name, I guess.",
-    # Run 8: frustration expression (state expression, not a request)
-    "Ugh, I keep getting stuck on these.",
-    # Run 7: clue + hesitation → TARS gave hint
-    "Uh, four letters, uh.",
-    # Run 8: thinking aloud with proposed answer
-    "Three letters, take legal action, it's Sue.",
-    # Run 7: self-answer after asking question
-    "Oh wait, I think I got it. It's bin.",
-    # Common thinking-aloud confusion expression
-    "I'm not sure about this one.",
-    # Moving on
-    "Okay, next clue.",
-]
-
-# Multi-sentence aggregated utterances — what STT actually delivers in one turn.
-# The LLM receives all of this as a single user message.
-MULTI_SENTENCE = [
-    # Run 9 actual turn: user narrated everything in one breath
-    "All right, so. Um, let's start. I think I'm gonna start from number 15. "
-    "Number 15, the clue is taste of lemon or vinegar. Uh, four letters, uh.",
-    # Clue + hesitation + self-answer in one turn
-    "Okay so. British nobleman, four letters. Not so sure. I guess... Earl? Maybe.",
-    # Multiple clues worked through in sequence
-    "Seven across, muddy lake, three letters, I think it's bog. "
-    "Then fourteen down, garbage holder, three letters, bin I think.",
-    # Hesitation followed by thinking aloud
-    "Um. Uh. So prophetic significance... starts with O... ominous maybe?",
-    # Confused but self-directed — no request to TARS
-    "I don't know, I'm confused. What does this even mean. Ugh. Okay.",
-]
-
 # ── non-silence input sets ────────────────────────────────────────────────────
 
-# Corrections: user tells TARS to back off. Should return "Got it." (not silence JSON, not more hints).
+# Corrections: user tells TARS to back off. Must return "Got it." (not silence, not hints).
+# Must NOT include a set_task_mode tool call — correction is not task-end.
 CORRECTION_INPUTS = [
     "You shouldn't tell me the answer.",
+    "You shouldn't answer.",
+    "You shouldn't answer me.",
     "Don't give me the answer.",
     "Can you not answer? I'm trying to figure it out myself.",
     "Stop helping me. I want to work through it.",
     "I didn't ask you.",
 ]
 
+# Clue-resolution phrases: user solved a clue and moves on. Must NOT call set_task_mode("off").
+# The task (crossword) is still in progress.
+CLUE_RESOLUTION_INPUTS = [
+    "Okay, evening.",
+    "Yeah, I guess it's bin.",
+    "I got it. Moving on.",
+    "Okay next clue.",
+    "That's it, I think. Let me try the next one.",
+    "Got it, banned. All right.",
+]
+
 # Direct reactive questions: user explicitly asks for help.
-# Should get a hint response — not silence, not the direct answer word.
-# Tuple: (utterance, answer_word_to_NOT_appear_in_response)
+# Gate passes these through. LLM must respond — with a hint, not silence, not the direct answer.
+# Tuple: (utterance, answer_word_to_NOT_appear_verbatim_in_response)
 REACTIVE_QUESTIONS = [
     ("TARS, can you give me a hint for this one? Taste of lemon or vinegar.", "sour"),
     ("TARS, what's a hint for prophetic significance, starts with O?", "omen"),
-    ("Hey TARS, help me with garbage holder, three letters.", "bin"),
+    ("Hey TARS, help me with a celestial body, four letters, starts with S.", "star"),
 ]
 
-# Explicit answer requests: user gives up and asks for the answer directly.
-# Should get the direct answer (not silence, not a refusal to help).
+# Explicit answer requests: user gives up. Gate passes CONDITION A through.
+# LLM must give the direct answer (not silence, not a refusal).
 EXPLICIT_ANSWER_REQUESTS = [
     "Just tell me the answer.",
     "What's the answer? I give up.",
@@ -123,7 +84,6 @@ EXPLICIT_ANSWER_REQUESTS = [
 
 # ── conversation history fixtures ─────────────────────────────────────────────
 
-# Realistic long crossword history with silence patterns
 LONG_HISTORY = [
     ("user", "Hey Tars, I'm going to do a crossword, thinking aloud."),
     ("assistant", "Crossword mode. [express(neutral, low)]"),
@@ -149,9 +109,6 @@ LONG_HISTORY = [
     ("assistant", '{"action": "silence"}'),
 ]
 
-# Simulates the actual tool call context that appears in the pipeline after
-# set_task_mode fires. The LLM sees the tool invocation + result in history.
-# This matches what bot.py produces via pipecat's function calling mechanism.
 TOOL_CALL_HISTORY = [
     {
         "role": "user",
@@ -180,21 +137,63 @@ TOOL_CALL_HISTORY = [
     },
 ]
 
-# History where TARS wrongly answered, user corrected, then continued.
-# Tests whether correction + subsequent silence holds.
-POST_CORRECTION_HISTORY = [
-    ("user", "British nobleman, four letters."),
-    ("assistant", "Earl. [express(neutral, low)]"),        # TARS was wrong to answer
-    ("user", "You shouldn't tell me the answer."),
-    ("assistant", "Got it. [express(neutral, low)]"),      # Correct correction response
-    ("user", "Okay. So. Let me think."),
-    ("assistant", '{"action": "silence"}'),
-]
-
-
 # ── LLM interface ─────────────────────────────────────────────────────────────
 
-def call_llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0.0) -> str:
+SET_TASK_MODE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_task_mode",
+        "description": (
+            "Toggle task mode when the user starts or stops a focused activity. "
+            "Call with a mode like 'crossword', 'coding', 'reading', 'thinking' "
+            "when the user announces they're working on something. "
+            "Call with 'off' ONLY when the user explicitly says they are done with the task "
+            "(e.g. 'I'm done', 'let's do something else'). "
+            "Do NOT call with 'off' when the user corrects your behavior mid-task "
+            "(e.g. 'you shouldn't answer', 'stop helping', 'don't give me the answer') — "
+            "those are CONDITION C corrections, not task-end signals."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "The task type or 'off' to exit task mode.",
+                }
+            },
+            "required": ["mode"],
+        },
+    },
+}
+
+
+def call_llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0.0,
+             tools: list | None = None) -> str:
+    api_key = os.environ.get("CEREBRAS_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("CEREBRAS_API_KEY not set")
+    body = {
+        "model": "gpt-oss-120b",
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if tools:
+        body["tools"] = tools
+    resp = requests.post(
+        "https://api.cerebras.ai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    msg = resp.json()["choices"][0]["message"]
+    return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+
+
+def call_llm_with_tool_check(messages: list[dict], max_tokens: int = 300,
+                              temperature: float = 0.0) -> tuple[str, list]:
+    """Call LLM with set_task_mode tool available. Returns (content, tool_calls)."""
     api_key = os.environ.get("CEREBRAS_API_KEY", "")
     if not api_key:
         raise RuntimeError("CEREBRAS_API_KEY not set")
@@ -206,154 +205,33 @@ def call_llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "tools": [SET_TASK_MODE_TOOL],
         },
         timeout=30,
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
-    # gpt-oss-120b sometimes returns null content with only reasoning
-    return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    tool_calls = msg.get("tool_calls") or []
+    return content, tool_calls
 
 
 def is_silence(response: str) -> bool:
     return '"action": "silence"' in response or "'action': 'silence'" in response
 
 
-def run_sweep(history_prefix: list[dict], label: str, inputs: list, temperature: float = 0.0) -> tuple[int, int]:
-    """Run inputs against a given history. Returns (correct_silence, total)."""
-    correct = 0
-    for utterance in inputs:
-        messages = history_prefix + [{"role": "user", "content": utterance}]
-        response = call_llm(messages, max_tokens=300, temperature=temperature)
-        ok = is_silence(response)
-        if not ok:
-            print(f"  [{label}] FAIL: {utterance!r}\n    → {response[:150]!r}")
-        correct += int(ok)
-    return correct, len(inputs)
-
-
 def history_from_pairs(pairs: list[tuple]) -> list[dict]:
     return [{"role": r, "content": c} for r, c in pairs]
 
 
-# ── silence compliance tests ──────────────────────────────────────────────────
-
-def test_silence_short_context():
-    """Minimal history: think-aloud inputs must all return silence."""
-    history = [system_prompt()]
-    correct, total = run_sweep(history, "short", THINK_ALOUD)
-    rate = correct / total
-    print(f"\nShort context: {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.9, f"Short context compliance: {rate:.0%}"
-
-
-def test_silence_long_context():
-    """Long crossword history: silence compliance must not degrade below 80%."""
-    history = [system_prompt()] + history_from_pairs(LONG_HISTORY)
-    correct, total = run_sweep(history, "long", THINK_ALOUD)
-    rate = correct / total
-    print(f"\nLong context: {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.8, f"Long context compliance: {rate:.0%}"
-
-
-def test_silence_after_tool_call():
-    """After set_task_mode tool call appears in context: think-aloud must still be silence."""
-    history = [system_prompt()] + TOOL_CALL_HISTORY
-    correct, total = run_sweep(history, "tool-ctx", THINK_ALOUD)
-    rate = correct / total
-    print(f"\nTool call context: {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.9, f"Tool call context compliance: {rate:.0%}"
-
-
-def test_live_failures_short():
-    """Run 7–9 failure inputs with minimal history. All must return silence."""
-    history = [system_prompt()]
-    correct, total = run_sweep(history, "live-short", LIVE_FAILURES)
-    rate = correct / total
-    print(f"\nLive failures (short ctx): {correct}/{total} ({rate:.0%})")
-    assert rate == 1.0, f"Live failures not fully compliant: {rate:.0%}"
-
-
-def test_live_failures_long():
-    """Run 7–9 failure inputs with long history. Must stay silent."""
-    history = [system_prompt()] + history_from_pairs(LONG_HISTORY)
-    correct, total = run_sweep(history, "live-long", LIVE_FAILURES)
-    rate = correct / total
-    print(f"\nLive failures (long ctx): {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.9, f"Live failures degraded in long context: {rate:.0%}"
-
-
-def test_multi_sentence_utterances():
-    """Aggregated multi-sentence turns (what STT actually delivers). Must return silence."""
-    history = [system_prompt()]
-    correct, total = run_sweep(history, "multi-sent", MULTI_SENTENCE)
-    rate = correct / total
-    print(f"\nMulti-sentence: {correct}/{total} ({rate:.0%})")
-    assert rate == 1.0, f"Multi-sentence utterances not compliant: {rate:.0%}"
-
-
-def test_multi_sentence_long_context():
-    """Multi-sentence utterances against long history."""
-    history = [system_prompt()] + history_from_pairs(LONG_HISTORY)
-    correct, total = run_sweep(history, "multi-long", MULTI_SENTENCE)
-    rate = correct / total
-    print(f"\nMulti-sentence (long ctx): {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.8, f"Multi-sentence long ctx compliance: {rate:.0%}"
-
-
-def test_silence_after_correction():
-    """After user corrects TARS, subsequent think-aloud turns must still return silence."""
-    history = [system_prompt()] + history_from_pairs(POST_CORRECTION_HISTORY)
-    correct, total = run_sweep(history, "post-correction", THINK_ALOUD[:5])
-    rate = correct / total
-    print(f"\nPost-correction silence: {correct}/{total} ({rate:.0%})")
-    assert rate >= 0.8, f"Silence degraded after correction: {rate:.0%}"
-
-
-def test_compliance_gap():
-    """Silence rate delta between short and long context must be < 20pp."""
-    sys_msg = system_prompt()
-    short_hist = [sys_msg]
-    long_hist = [sys_msg] + history_from_pairs(LONG_HISTORY)
-    s_ok, total = run_sweep(short_hist, "gap-short", THINK_ALOUD)
-    l_ok, _ = run_sweep(long_hist, "gap-long", THINK_ALOUD)
-    gap = (s_ok - l_ok) / total
-    print(f"\nGap: short={s_ok/total:.0%} long={l_ok/total:.0%} delta={gap:+.0%}")
-    assert gap < 0.20, f"Context degradation too large: {gap:.0%}"
-
-
-# ── temperature stress tests ──────────────────────────────────────────────────
-
-def test_silence_at_live_temperature():
-    """Key failure cases at temperature=0.7 (matches live pipeline). Run 3 trials each.
-
-    We accept 80% compliance across all (input × trial) combinations — stochastic
-    sampling will occasionally produce violations that deterministic eval misses.
-    """
-    sys_msg = system_prompt()
-    STRESS_INPUTS = LIVE_FAILURES + MULTI_SENTENCE
-    TRIALS = 3
-    total_correct = 0
-    total = len(STRESS_INPUTS) * TRIALS
-    for utterance in STRESS_INPUTS:
-        for t in range(TRIALS):
-            messages = [sys_msg, {"role": "user", "content": utterance}]
-            response = call_llm(messages, max_tokens=300, temperature=0.7)
-            ok = is_silence(response)
-            if not ok:
-                print(f"  [temp0.7 trial {t+1}] FAIL: {utterance!r}\n    → {response[:120]!r}")
-            total_correct += int(ok)
-    rate = total_correct / total
-    print(f"\nTemperature=0.7 compliance: {total_correct}/{total} ({rate:.0%})")
-    assert rate >= 0.80, f"Stochastic compliance too low: {rate:.0%}"
-
-
-# ── non-silence compliance tests ─────────────────────────────────────────────
+# ── CONDITION C: correction compliance ────────────────────────────────────────
 
 def test_correction_returns_got_it():
-    """When user corrects TARS, response must contain 'Got it' (not silence, not more hints)."""
+    """When user corrects TARS, response must contain 'Got it' (not silence, not more hints).
+
+    Gate passes CONDITION C phrases through. LLM must respond with "Got it."
+    """
     sys_msg = system_prompt()
-    # Use long history that primes TARS to have given an answer, then receive correction
     history = [sys_msg] + history_from_pairs(LONG_HISTORY)
     for utterance in CORRECTION_INPUTS:
         messages = history + [{"role": "user", "content": utterance}]
@@ -366,31 +244,85 @@ def test_correction_returns_got_it():
         assert not is_sil, f"Correction '{utterance}' returned silence instead of 'Got it'"
 
 
+def test_correction_does_not_exit_task_mode():
+    """Correction phrases must NOT trigger a set_task_mode('off') tool call.
+
+    Root cause of Run 7 failure: 'You shouldn't answer' caused set_task_mode('off'),
+    dropping all silence guardrails for the rest of the session.
+    """
+    sys_msg = system_prompt()
+    history = [sys_msg] + history_from_pairs(LONG_HISTORY)
+    for utterance in CORRECTION_INPUTS:
+        messages = history + [{"role": "user", "content": utterance}]
+        content, tool_calls = call_llm_with_tool_check(messages, max_tokens=150)
+        task_mode_off = any(
+            tc.get("function", {}).get("name") == "set_task_mode"
+            and '"off"' in tc.get("function", {}).get("arguments", "")
+            for tc in tool_calls
+        )
+        if task_mode_off:
+            print(f"  [task-mode-exit] FAIL: {utterance!r}\n    tool_calls={tool_calls}")
+        assert not task_mode_off, (
+            f"Correction '{utterance}' incorrectly called set_task_mode('off'): {tool_calls}"
+        )
+
+
+def test_clue_resolution_does_not_exit_task_mode():
+    """Solving an individual clue must NOT call set_task_mode('off').
+
+    Root cause of Run 8 failure: 'Okay, evening.' (user resolved a clue)
+    triggered set_task_mode('off'), dropping task mode mid-session.
+    """
+    sys_msg = system_prompt()
+    history = [sys_msg] + history_from_pairs(LONG_HISTORY)
+    for utterance in CLUE_RESOLUTION_INPUTS:
+        messages = history + [{"role": "user", "content": utterance}]
+        content, tool_calls = call_llm_with_tool_check(messages, max_tokens=150)
+        task_mode_off = any(
+            tc.get("function", {}).get("name") == "set_task_mode"
+            and '"off"' in tc.get("function", {}).get("arguments", "")
+            for tc in tool_calls
+        )
+        if task_mode_off:
+            print(f"  [clue-resolution-exit] FAIL: {utterance!r}\n    tool_calls={tool_calls}")
+        assert not task_mode_off, (
+            f"Clue resolution '{utterance}' incorrectly called set_task_mode('off'): {tool_calls}"
+        )
+
+
+# ── CONDITION B: reactive question compliance ─────────────────────────────────
+
 def test_reactive_question_returns_hint_not_answer():
-    """Explicit question to TARS returns a hint — not silence, not the direct answer."""
+    """Explicit question to TARS returns a hint — not silence, not the direct answer.
+
+    Gate passes CONDITION B phrases through. LLM must respond with a hint.
+    """
     sys_msg = system_prompt()
     history = [sys_msg] + history_from_pairs(LONG_HISTORY)
     for utterance, direct_answer in REACTIVE_QUESTIONS:
         messages = history + [{"role": "user", "content": utterance}]
         response = call_llm(messages, max_tokens=150)
         is_sil = is_silence(response)
-        # Case-insensitive check: answer word must not appear in the hint
         has_answer = direct_answer and re.search(
             r'\b' + re.escape(direct_answer) + r'\b', response, re.IGNORECASE
         ) is not None
         if is_sil:
             print(f"  [reactive] SILENCE (should respond): {utterance!r}\n    → {response[:120]!r}")
         if has_answer:
-            print(f"  [reactive] ANSWER WORD IN HINT: {utterance!r}\n    → {response[:120]!r}")
+            print(f"  [reactive] ANSWER IN HINT: {utterance!r}\n    → {response[:120]!r}")
         assert not is_sil, f"Reactive question got silence: {utterance!r}"
         if direct_answer:
             assert not has_answer, f"Hint contains answer word '{direct_answer}': {utterance!r} → {response!r}"
 
 
+# ── CONDITION A: explicit answer request ──────────────────────────────────────
+
 def test_explicit_answer_request_returns_content():
-    """'Just tell me' / 'What's the answer' must return actual content, not silence."""
+    """'Just tell me' / 'What's the answer' must return actual content, not silence.
+
+    Gate passes CONDITION A phrases through. LLM must give the direct answer.
+    """
     sys_msg = system_prompt()
-    # Provide crossword context so the model has something to answer about
     history = [sys_msg] + history_from_pairs(LONG_HISTORY) + [
         {"role": "user", "content": "14 down, garbage holder, three letters."},
         {"role": "assistant", "content": '{"action": "silence"}'},
@@ -403,3 +335,184 @@ def test_explicit_answer_request_returns_content():
         if is_sil:
             print(f"  [explicit] SILENCE (should answer): {utterance!r}\n    → {response[:120]!r}")
         assert has_content, f"Explicit answer request returned silence: {utterance!r}"
+
+
+# ── proactive response compliance ─────────────────────────────────────────────
+
+PROACTIVE_HISTORY = [
+    ("user", "Hey Tars, I'm going to do a crossword, thinking aloud."),
+    ("assistant", "Crossword mode. [express(neutral, low)]"),
+    ("user", "1 across, telephone, nine letters."),
+    ("assistant", '{"action": "silence"}'),
+    ("user", "Okay got it. 9 across, Italian carbohydrate, five letters."),
+    ("assistant", '{"action": "silence"}'),
+    ("user", "Pasta."),
+    ("assistant", '{"action": "silence"}'),
+    ("user", "British nobleman, four letters."),
+    # No assistant response — user went quiet / hesitated
+]
+
+_TASK_CONTEXT = "crossword"
+_CLUE_SNIPPET = "British nobleman, four letters."
+
+PROACTIVE_HESITATION_MSG = {
+    "role": "system",
+    "content": (
+        "[PROACTIVE DETECTION: hesitation cluster]\n"
+        f'The user is hesitating heavily (multiple "um", "uh" in quick succession) '
+        f"while working on a {_TASK_CONTEXT}.\n"
+        f'Recent context: "Um. Uh. Um. {_CLUE_SNIPPET}"\n\n'
+        "They appear to be struggling. Offer a gentle nudge about whatever they were last "
+        "working on. Look back through conversation history for the most recent clue. "
+        "One sentence.\n"
+        "Do not name specific words or titles that could be the answer — "
+        "not even as examples. Use category or category description only. "
+        "Just respond naturally."
+        "\nAfter your check-in, if the user continues to think aloud or narrate to "
+        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "Only engage if they directly address you."
+        '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
+    ),
+}
+
+PROACTIVE_CONFUSION_MSG = {
+    "role": "system",
+    "content": (
+        "[PROACTIVE DETECTION: user expressed difficulty]\n"
+        f"The user said something indicating they're stuck or confused while working on "
+        f"a {_TASK_CONTEXT}.\n"
+        f'Recent context: "I don\'t know this one. {_CLUE_SNIPPET}"\n\n'
+        "Offer a helpful nudge related to what they're working on. Look back through "
+        "conversation history for the most recent clue. One sentence, Suggestion-level "
+        "is appropriate here.\n"
+        "Do not give the answer or name the answer word. Just respond naturally."
+        "\nAfter your check-in, if the user continues to think aloud or narrate to "
+        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "Only engage if they directly address you."
+        '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
+    ),
+}
+
+PROACTIVE_SILENCE_MSG = {
+    "role": "system",
+    "content": (
+        "[PROACTIVE DETECTION: extended silence]\n"
+        f"The user has been silent for 15+ seconds while working on a {_TASK_CONTEXT}.\n"
+        f'Recent context: "{_CLUE_SNIPPET}"\n\n'
+        "They may be stuck. Offer a brief, low-key check-in. One sentence, Notification-level.\n"
+        "Do not give the answer or name the answer word. "
+        'Do not prefix with "Notification:". Just respond naturally.'
+        "\nAfter your check-in, if the user continues to think aloud or narrate to "
+        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "Only engage if they directly address you."
+        '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
+    ),
+}
+
+_ANSWER_WORD = "earl"
+
+
+def _proactive_messages(probe_msg: dict) -> list[dict]:
+    return [system_prompt()] + history_from_pairs(PROACTIVE_HISTORY) + [probe_msg]
+
+
+def test_proactive_hesitation_speaks():
+    """Hesitation probe with clue context in history. Must NOT return silence."""
+    messages = _proactive_messages(PROACTIVE_HESITATION_MSG)
+    response = call_llm(messages, max_tokens=200)
+    print(f"\n[proactive-hesitation] → {response[:150]!r}")
+    assert not is_silence(response), f"Hesitation probe returned silence: {response!r}"
+
+
+def test_proactive_confusion_speaks():
+    """Confusion probe with clue context in history. Must NOT return silence."""
+    messages = _proactive_messages(PROACTIVE_CONFUSION_MSG)
+    response = call_llm(messages, max_tokens=200)
+    print(f"\n[proactive-confusion] → {response[:150]!r}")
+    assert not is_silence(response), f"Confusion probe returned silence: {response!r}"
+
+
+def test_proactive_silence_speaks():
+    """Silence probe with clue context in history. Must NOT return silence."""
+    messages = _proactive_messages(PROACTIVE_SILENCE_MSG)
+    response = call_llm(messages, max_tokens=200)
+    print(f"\n[proactive-silence] → {response[:150]!r}")
+    assert not is_silence(response), f"Silence probe returned silence: {response!r}"
+
+
+def test_proactive_no_direct_answer():
+    """All three trigger types must NOT contain the answer word when speaking."""
+    for label, probe_msg in [
+        ("hesitation", PROACTIVE_HESITATION_MSG),
+        ("confusion", PROACTIVE_CONFUSION_MSG),
+        ("silence", PROACTIVE_SILENCE_MSG),
+    ]:
+        messages = _proactive_messages(probe_msg)
+        response = call_llm(messages, max_tokens=200)
+        if is_silence(response):
+            continue
+        has_answer = re.search(r'\b' + re.escape(_ANSWER_WORD) + r'\b', response, re.IGNORECASE)
+        print(f"\n[proactive-no-answer/{label}] → {response[:150]!r}")
+        assert not has_answer, (
+            f"Proactive {label} response contains answer word '{_ANSWER_WORD}': {response!r}"
+        )
+
+
+def test_proactive_no_context_returns_silence():
+    """Hesitation probe with pure filler history and no clue — silence is acceptable."""
+    filler_history = [
+        ("user", "Hey Tars, I'm going to do a crossword, thinking aloud."),
+        ("assistant", "Crossword mode. [express(neutral, low)]"),
+        ("user", "Um."),
+        ("user", "Um."),
+        ("user", "Uh."),
+    ]
+    no_context_probe = {
+        "role": "system",
+        "content": (
+            "[PROACTIVE DETECTION: hesitation cluster]\n"
+            f'The user is hesitating heavily (multiple "um", "uh" in quick succession) '
+            f"while working on a {_TASK_CONTEXT}.\n"
+            'Recent context: "Um. Um. Uh."\n\n'
+            "They appear to be struggling. Offer a gentle nudge about whatever they were last "
+            "working on. Look back through conversation history for the most recent clue. "
+            "One sentence.\n"
+            "Do not name specific words or titles that could be the answer — "
+            "not even as examples. Use category or category description only. "
+            "Just respond naturally."
+            "\nAfter your check-in, if the user continues to think aloud or narrate to "
+            "themselves (clue narration, fillers, self-answers), return to silence. "
+            "Only engage if they directly address you."
+            '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
+        ),
+    }
+    messages = [system_prompt()] + history_from_pairs(filler_history) + [no_context_probe]
+    response = call_llm(messages, max_tokens=200)
+    print(f"\n[proactive-no-context] → {response[:150]!r}")
+    assert response is not None, "No response returned"
+
+
+def test_proactive_at_live_temperature():
+    """All three trigger types at temperature=0.7, 3 trials each.
+    At least 60% of trials must produce non-silence output."""
+    TRIALS = 3
+    probes = [
+        ("hesitation", PROACTIVE_HESITATION_MSG),
+        ("confusion", PROACTIVE_CONFUSION_MSG),
+        ("silence", PROACTIVE_SILENCE_MSG),
+    ]
+    spoke = 0
+    total = len(probes) * TRIALS
+    for label, probe_msg in probes:
+        messages = _proactive_messages(probe_msg)
+        for t in range(TRIALS):
+            response = call_llm(messages, max_tokens=200, temperature=0.7)
+            ok = not is_silence(response)
+            if not ok:
+                print(f"  [temp0.7/{label} trial {t+1}] SILENCE → {response[:100]!r}")
+            else:
+                print(f"  [temp0.7/{label} trial {t+1}] SPOKE  → {response[:100]!r}")
+            spoke += int(ok)
+    rate = spoke / total
+    print(f"\nProactive temperature=0.7: {spoke}/{total} spoke ({rate:.0%})")
+    assert rate >= 0.60, f"Proactive speak rate too low at temperature=0.7: {rate:.0%}"

@@ -25,6 +25,19 @@ CONFUSION_PATTERNS = [
     "i don't understand", "i don't get it",
 ]
 
+# If ANY of these appear in the same utterance window as a confusion pattern,
+# the user is self-resolving — do not fire a proactive intervention.
+# Fast-path phrases: if these appear in the same confusion window, skip immediately
+# without waiting for the timing check. Keep short — timing is the primary filter.
+SELF_RESOLUTION_PHRASES = [
+    "move on", "moving on", "never mind", "nevermind",
+]
+
+# How long the user must keep talking after a confusion pattern before we
+# assume they self-resolved. Genuine confusion → brief pause → silence.
+# Self-resolution → user keeps narrating for several seconds about a new topic.
+_CONFUSION_SELF_RESOLVE_SECS = 4.0
+
 
 class ProactiveMonitor(FrameProcessor):
     def __init__(
@@ -33,7 +46,7 @@ class ProactiveMonitor(FrameProcessor):
         task_ref: dict,
         silence_threshold: float = 8.0,
         hesitation_threshold: int = 4,
-        hesitation_window: float = 5.0,
+        hesitation_window: float = 10.0,
         cooldown: float = 30.0,
         post_bot_buffer: float = 5.0,
         check_interval: float = 1.0,
@@ -52,11 +65,15 @@ class ProactiveMonitor(FrameProcessor):
         self._enabled = enabled
         self._task_context = task_context
 
+        self._proactive_response_pending = False
+        self._task_mode_just_activated = False
         self._transcript_buffer: list[dict] = []
         self._last_bot_speech_time: float = 0.0
         self._last_intervention_time: float = 0.0
         self._last_confusion_intervention_time: float = 0.0
+        self._last_hesitation_intervention_time: float = 0.0
         self._confusion_cooldown: float = 30.0
+        self._hesitation_cooldown: float = 30.0
         self._task_start_time: float = 0.0
         self._last_checked_transcript_time: float = 0.0
         self._task_active: bool = False
@@ -64,6 +81,8 @@ class ProactiveMonitor(FrameProcessor):
         self._tars_speaking: bool = False
         self._tars_speaking_since: float = 0.0
         self._consecutive_unanswered: int = 0
+        self._pending_confusion: str | None = None  # detected during speech, fire after pause
+        self._pending_confusion_detected_at: float = 0.0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -97,6 +116,7 @@ class ProactiveMonitor(FrameProcessor):
             self._tars_speaking = True
             self._tars_speaking_since = time.time()
             self._last_bot_speech_time = time.time()
+            self._pending_confusion = None  # reactive pipeline handled it
             logger.debug("ProactiveMonitor: BotStartedSpeakingFrame received")
 
         elif isinstance(frame, BotStoppedSpeakingFrame):
@@ -133,7 +153,10 @@ class ProactiveMonitor(FrameProcessor):
             last_active = max(last_user_time, self._last_bot_speech_time)
             if now - last_active > self._silence_threshold:
                 trigger_type = "silence"
-                context_snippet = self._transcript_buffer[-1]["text"]
+                # Include last 5 entries so LLM sees the clue, not just the final filler
+                context_snippet = " ".join(
+                    e["text"] for e in self._transcript_buffer[-5:]
+                ).strip()
 
         # Trigger 2: weighted hesitation (overrides silence)
         window_cutoff = now - self._hesitation_window
@@ -148,23 +171,56 @@ class ProactiveMonitor(FrameProcessor):
                 )
             if score >= self._hesitation_threshold:
                 trigger_type = "hesitation"
-                context_snippet = " ".join(e["text"] for e in recent)
+                # Include pre-hesitation context so LLM knows what clue the user was on
+                pre_window = [e for e in self._transcript_buffer if e["timestamp"] <= window_cutoff]
+                pre_text = " ".join(e["text"] for e in pre_window[-5:]).strip()
+                recent_text = " ".join(e["text"] for e in recent)
+                context_snippet = (pre_text + " " + recent_text).strip() if pre_text else recent_text
                 hesitation_score = score
-                logger.info(f"ProactiveMonitor: hesitation threshold reached score={score}")
+                logger.debug(f"ProactiveMonitor: hesitation threshold reached score={score}")
 
         # Trigger 3: confusion patterns (highest priority)
-        # Only check transcripts newer than last check to avoid re-firing on stale text
-        check_cutoff = max(self._last_bot_speech_time, self._last_checked_transcript_time)
+        # Scan only transcripts newer than last check. Advance the cursor immediately on
+        # detection — before suppression — so the same text is never re-scanned next tick.
+        # Store as _pending_confusion and fire once the user stops speaking.
+        # Cap confusion scan window to 30s so context snippet stays recent and focused
+        check_cutoff = max(self._last_bot_speech_time, self._last_checked_transcript_time, now - 30.0)
         since_last_check = [e for e in self._transcript_buffer if e["timestamp"] > check_cutoff]
         if since_last_check:
             combined = " ".join(e["text"] for e in since_last_check).lower()
             logger.debug(f"ProactiveMonitor: confusion check on: {combined[:100]}")
             for pattern in CONFUSION_PATTERNS:
                 if pattern in combined:
-                    trigger_type = "confusion"
-                    context_snippet = combined[:200]
-                    logger.info(f"ProactiveMonitor: confusion pattern matched: '{pattern}'")
+                    self._last_checked_transcript_time = time.time()  # advance before suppression
+                    # Fast-path: explicit self-resolution phrase in the same window
+                    if any(p in combined for p in SELF_RESOLUTION_PHRASES):
+                        logger.info(
+                            f"ProactiveMonitor: confusion '{pattern}' discarded "
+                            f"— self-resolution phrase in window"
+                        )
+                        break
+                    self._pending_confusion = combined[:200]
+                    self._pending_confusion_detected_at = time.time()
+                    logger.info(f"ProactiveMonitor: confusion pattern detected: '{pattern}'")
                     break
+
+        # Fire pending confusion once user has stopped speaking
+        if self._pending_confusion is not None and now >= self._user_speaking_until:
+            # Timing check: if user kept talking for >_CONFUSION_SELF_RESOLVE_SECS after
+            # detection, they likely moved on without needing help — discard.
+            last_speech = self._transcript_buffer[-1]["timestamp"] if self._transcript_buffer else 0.0
+            continued_talking = last_speech > self._pending_confusion_detected_at + _CONFUSION_SELF_RESOLVE_SECS
+            if continued_talking:
+                logger.info(
+                    f"ProactiveMonitor: confusion discarded — user continued talking "
+                    f"{last_speech - self._pending_confusion_detected_at:.1f}s after detection "
+                    f"(threshold {_CONFUSION_SELF_RESOLVE_SECS}s)"
+                )
+                self._pending_confusion = None
+            else:
+                trigger_type = "confusion"
+                context_snippet = self._pending_confusion
+                self._pending_confusion = None
 
         if trigger_type:
             now2 = time.time()
@@ -174,19 +230,21 @@ class ProactiveMonitor(FrameProcessor):
                 logger.warning("ProactiveMonitor: BotStoppedSpeakingFrame never received, clearing stuck flag")
                 self._tars_speaking = False
 
-            # Confusion has its own shorter cooldown so it isn't blocked by silence fires.
-            cooldown_exceeded = (
-                now2 - self._last_intervention_time < self._cooldown
-                if trigger_type != "confusion"
-                else now2 - self._last_confusion_intervention_time < self._confusion_cooldown
-            )
+            # Confusion and hesitation each have their own cooldown so they aren't
+            # blocked by silence fires (or each other).
+            if trigger_type == "confusion":
+                within_cooldown = now2 - self._last_confusion_intervention_time < self._confusion_cooldown
+            elif trigger_type == "hesitation":
+                within_cooldown = now2 - self._last_hesitation_intervention_time < self._hesitation_cooldown
+            else:
+                within_cooldown = now2 - self._last_intervention_time < self._cooldown
             # Silence trigger: if last_active guard already passed (>silence_threshold ago),
             # the user is definitively not speaking — interim VAD frames must not block it.
             speaking_check = trigger_type != "silence" and now2 < self._user_speaking_until
             suppressed = (
                 self._tars_speaking
                 or now2 - self._last_bot_speech_time < self._post_bot_buffer
-                or cooldown_exceeded
+                or within_cooldown
                 or speaking_check
                 or self._consecutive_unanswered >= 2
             )
@@ -196,7 +254,7 @@ class ProactiveMonitor(FrameProcessor):
                     reasons.append("tars_speaking")
                 if now2 - self._last_bot_speech_time < self._post_bot_buffer:
                     reasons.append("post_bot_buffer")
-                if cooldown_exceeded:
+                if within_cooldown:
                     reasons.append("cooldown")
                 if speaking_check:
                     reasons.append("user_speaking")
@@ -208,7 +266,6 @@ class ProactiveMonitor(FrameProcessor):
                 })
                 return
 
-            self._last_checked_transcript_time = time.time()
             await self._fire_intervention(trigger_type, context_snippet, hesitation_score)
 
     async def _fire_intervention(self, trigger_type: str, context_snippet: str, hesitation_score: int = 0):
@@ -216,6 +273,8 @@ class ProactiveMonitor(FrameProcessor):
         self._last_intervention_time = now
         if trigger_type == "confusion":
             self._last_confusion_intervention_time = now
+        elif trigger_type == "hesitation":
+            self._last_hesitation_intervention_time = now
         self._consecutive_unanswered += 1
         probe_num = self._consecutive_unanswered
 
@@ -243,27 +302,57 @@ class ProactiveMonitor(FrameProcessor):
         )
 
         if self._task_context:
-            # In task mode: default silence, never give answer directly
-            system_msg = {
-                "role": "system",
-                "content": (
-                    f"[PROACTIVE DETECTION - {trigger_type.upper()}]: "
-                    f"The user is in task mode ({self._task_context}) and has been silent.\n"
+            no_context_escape = (
+                '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
+            )
+            post_intervention_note = (
+                "\nAfter your check-in, if the user continues to think aloud or narrate to "
+                "themselves (clue narration, fillers, self-answers), return to silence. "
+                "Only engage if they directly address you."
+            )
+            if trigger_type == "silence":
+                system_content = (
+                    f"[PROACTIVE DETECTION: extended silence]\n"
+                    f"The user has been silent for 15+ seconds while working on a {self._task_context}.\n"
                     f'Recent context: "{context_snippet}"\n\n'
-                    f"Default: {{\"action\": \"silence\"}}. "
-                    f"Thinking aloud, fragments, stated answers (right or wrong), and partial progress are NOT requests for help.\n"
-                    f"If the context is the user correcting your behavior or giving you instructions, return silence.\n"
-                    f"Only speak if the context contains a clear, unresolved question the user cannot answer.\n"
-                    f"If you do speak, use this hierarchy:\n"
-                    f"  Notification — signal you're available. Brief, non-intrusive. Preferred.\n"
-                    f"  Suggestion — a nudge or hint, not the answer.\n"
-                    f"  Never give the answer directly. If the user wants it, they will ask — "
-                    f"that becomes a reactive request and is handled normally.\n"
-                    f"Do not prefix your response with 'Notification:', 'Suggestion:', or 'Hint:'. Just respond naturally.\n"
-                    f"If in any doubt: {{\"action\": \"silence\"}}."
+                    f"They may be stuck. Offer a brief, low-key check-in. One sentence, Notification-level.\n"
+                    f"Do not give the answer or name the answer word. "
+                    f"Do not prefix with \"Notification:\". Just respond naturally."
+                    f"{post_intervention_note}"
+                    f"{no_context_escape}"
                     f"{probe_note}"
-                ),
-            }
+                )
+            elif trigger_type == "hesitation":
+                system_content = (
+                    f"[PROACTIVE DETECTION: hesitation cluster]\n"
+                    f"The user is hesitating heavily (multiple \"um\", \"uh\" in quick succession) "
+                    f"while working on a {self._task_context}.\n"
+                    f'Recent context: "{context_snippet}"\n\n'
+                    f"They appear to be struggling. Offer a gentle nudge about whatever they were last "
+                    f"working on. Look back through conversation history for the most recent clue. "
+                    f"One sentence.\n"
+                    f"Do not name specific words or titles that could be the answer — "
+                    f"not even as examples. Use category or category description only. "
+                    f"Just respond naturally."
+                    f"{post_intervention_note}"
+                    f"{no_context_escape}"
+                    f"{probe_note}"
+                )
+            else:  # confusion
+                system_content = (
+                    f"[PROACTIVE DETECTION: user expressed difficulty]\n"
+                    f"The user said something indicating they're stuck or confused while working on "
+                    f"a {self._task_context}.\n"
+                    f'Recent context: "{context_snippet}"\n\n'
+                    f"Offer a helpful nudge related to what they're working on. Look back through "
+                    f"conversation history for the most recent clue. One sentence, Suggestion-level "
+                    f"is appropriate here.\n"
+                    f"Do not give the answer or name the answer word. Just respond naturally."
+                    f"{post_intervention_note}"
+                    f"{no_context_escape}"
+                    f"{probe_note}"
+                )
+            system_msg = {"role": "system", "content": system_content}
         else:
             system_msg = {
                 "role": "system",
@@ -286,6 +375,7 @@ class ProactiveMonitor(FrameProcessor):
 
         task = self._task_ref.get("task")
         if task:
+            self._proactive_response_pending = True
             # LLMMessagesUpdateFrame is the official compaction pattern: it
             # replaces the LLM service's context in-place before triggering.
             await task.queue_frames([
@@ -310,6 +400,7 @@ class ProactiveMonitor(FrameProcessor):
             logger.info("ProactiveMonitor: task mode OFF")
         else:
             self._task_context = mode
+            self._task_mode_just_activated = True
             self._silence_threshold = 15.0  # longer silence expected during tasks
             self._cooldown = 60.0           # less frequent interventions
             self._confusion_cooldown = 30.0  # confusion can fire every 30s regardless
