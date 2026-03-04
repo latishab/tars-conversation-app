@@ -10,88 +10,21 @@ Pipeline: Soniox JP + Cerebras GPT-OSS-120B + ElevenLabs Flash v2.5
 
 ## TODO: What still needs testing
 
-### Phase 7: Integrated dry run (crossword app + TARS)
+### Phase 7: Integrated dry run (crossword app + TARS) — COMPLETE
 
-ReactiveGate (Fix 22) applied. Crossword webapp already running.
+All steps verified across Runs 12-15. Summary:
 
-**Setup**
-- [ ] TARS running (`python tars_bot.py --browser-audio --gradio`)
-- [ ] Crossword app open in browser
-- [ ] Two terminal windows open: one tailing `logs/proactive_interventions_YYYY-MM-DD.jsonl`, one watching bot stdout
-
----
-
-**Step 1 — Baseline silence compliance (ReactiveGate / Fix 22)**
-Read crossword clues aloud with full narration. Do not ask TARS anything. Expect silence for all of these:
-- [x] Read a clue and letter count aloud: "7 across, ice cream holder, four letters" — suppressed (Run 13/14)
-- [x] Clue + letter count with fillers: "opposite of day, five letters, um" — suppressed (Run 13/14)
-- [x] State a wrong guess: "I think it's cone, yeah cone" — suppressed (Run 14)
-- [x] Express uncertainty: "Not so sure about this one" — suppressed (Run 14)
-- [x] Move on: "Okay, next clue", "I'm gonna keep thinking" — suppressed (Run 14)
-- [x] Say "I don't know" then immediately continue: "I don't know... wait, maybe it's bin" — suppressed (Run 14)
-- [x] Spell a word aloud: "T-H-R-O-W" or "it starts with C" — suppressed (Run 15: "N-A-S", "B-L-Y-T-O-N", "A-U-T-H-O-R" all suppressed)
-- Log check: ReactiveGate logs `suppressed reactive response — window: ...`. **Zero spoken responses = pass.**
-
-**Step 2 — "Hold on / I'm still thinking" treated as CONDITION C (ReactiveGate)**
-After TARS would respond, push back without using correction phrases:
-- [x] "I'm still thinking, hold on" passes through ReactiveGate (CONDITION C phrase in window) → LLM returns "Got it." (Run 13/14)
-- [x] "let me think" passes through → "Got it." (Run 14)
-- Log check: ReactiveGate passes, LLM returns correction response. **Got it. = pass.**
-
-**Step 3 — Correction stays in task mode (Fix 14)**
-After TARS speaks unprompted, correct it:
-- [x] "Stop helping" / "You shouldn't answer" passes through ReactiveGate (CONDITION C) → LLM responds "Got it." (Run 14)
-- [x] Continue crossword normally for 2+ more clues after correction — verified Run 15: session continued through 20+ turns post-correction
-- Log check: after correction, `task_mode` must remain `crossword` in the log (no `task mode OFF` line). All subsequent clue narration = ReactiveGate suppression. **task_mode stays ON = pass.**
-
-**Step 4 — Silence trigger fires (Phase 2: Trigger 1 / Fix 13)**
-Go completely silent mid-crossword:
-- [x] Say a clue aloud, then stop talking entirely for 20+ seconds — verified Run 12: fired at 19:40:02 with richer context (5 entries), TARS said "Take your time—let me know if you need any help."
-- Log check: expect `fired silence trigger` in log within 20s of last speech. **Fires = pass.**
-
-**Step 5 — Hesitation trigger fires (Phase 2: Trigger 2)**
-- [x] Hesitation trigger fired organically in Run 15 twice: "um, uh, i'm not sure. uh... um, um." → `fired hesitation trigger` at 21:30:58 (score threshold met, 10s window fix); "uh, um, uh, um, let me think, uh." → `fired hesitation trigger` at 21:35:29. Contextual nudge followed in both cases.
-- Log check: `fired hesitation trigger` with context_snippet containing clue text. **Fires = pass.**
-
-**Step 6 — Confusion trigger fires as proactive (Phase 2: Trigger 3 / Fix 15)**
-The confusion proactive trigger only fires when the reactive pipeline returns silence AND the user stays quiet.
-This requires: confusion phrase in an utterance where TARS decides silence (task mode, think-aloud), followed by a pause.
-
-Scenario A — embedded confusion, reactive returns silence:
-- [x] Verified Run 12: "I'm stuck" → confusion detected at 19:35:00, fired at 19:35:02, TARS gave contextually correct nudge "Think of a short word that describes a fortunate outcome that happens by chance."
-- [x] Verified Run 12: "I don't know" → confusion detected at 19:38:00, fired at 19:38:02 with clue context in snippet.
-
-Scenario B — confusion phrase alone with no full sentence context:
-- [x] Verified across Runs 13-15: "I don't know about this, but, uh." → ReactiveGate suppressed → confusion fired proactively. "I don't know who hardies partner is." → confusion fired. Pattern consistent across multiple sessions.
-
-**Step 7 — Confusion does not spam (Fix 15)**
-- [x] Run 9 verified: `confusion pattern detected` logged once per utterance, not every tick. Cursor advances at detection time.
-- [x] Run 12 verified: confusion detected once per "I'm stuck", once per "I don't know". No spam.
-
-**Step 8 — Suppression works (Phase 3)**
-- [x] Verified Run 12: TARS did not interrupt during active speech
-- [x] TARS does not fire twice within 60 seconds — cooldown observed working across Runs 13-15. Separate confusion/hesitation/silence cooldowns prevent cross-trigger spam.
-- [x] Verified Run 11/12: consecutive_unanswered limit working (probe_note fires correctly)
-
-**Step 9 — Proactive response quality (Phase 4)**
-For each proactive intervention that fires:
-- [x] Response is 1-2 sentences — verified Run 12
-- [x] Response is a nudge/notification, not the direct answer — verified Run 12 (all three trigger types tested in LLM compliance suite, 22/22 pass)
-- [x] Response is contextually relevant — verified Run 12: confusion trigger used clue context from snippet
-- [x] No "[PROACTIVE DETECTION]" prefix in TTS output — verified (system message is stripped)
-
-**Step 9 — Count interventions**
-- [x] Run 15 (~15 min session): confusion ×4, silence ×3, hesitation ×2 = 9 total. Slightly above 3-6 per 10 min target. Acceptable — confusion trigger is the main contributor; it fires responsively when user is genuinely confused, not on a fixed schedule.
-
-**Step 10 — CONDITION A override (Fix 17):** Mid-crossword, say "just give me the answer" after struggling with a clue.
-- [x] Verified Run 12: "give me the answer" → TARS gave direct answer immediately
-- Log check: no `{"action": "silence"}` on this turn. **Direct answer = pass.**
-
-**Step 11 — Short fragment protection (Fix 20):** Mid-crossword, say "I, um." or "Uh." then stay silent for 5+ seconds.
-- [x] Task mode stable throughout Runs 13-15. Dozens of standalone filler utterances ("Uh.", "Um.", "Hmm.") — no `task mode OFF` triggered.
-
-**Step 12 — Hesitation gives useful nudge (Fix 18):** Narrate a clue aloud, then do a filler burst ("um, um, um") and pause.
-- [x] Run 15 at 21:35:29: context_snippet = "Uh. Continue. So hardies partner, six letters, six letters. Starts with an L." → TARS asked "Do you have any crossing letters for that clue already?" — contextually grounded, not generic.
+- [x] Think-aloud suppressed (clue narration, guesses, fillers, spelling, "I don't know" with continuation)
+- [x] CONDITION C passthrough: "hold on", "let me think", "stop helping", "you shouldn't answer" → "Got it."
+- [x] task_mode stays ON after correction; session continued normally
+- [x] Silence trigger fires within 20s of last speech with clue context
+- [x] Hesitation trigger fires organically (Run 15 ×2); contextual nudge, not generic
+- [x] Confusion trigger fires proactively (Runs 12-15, multiple instances); no spam, separate cooldown
+- [x] Cooldowns prevent cross-trigger spam; consecutive_unanswered limit working
+- [x] Proactive responses: 1-2 sentences, nudge not answer, contextually grounded
+- [x] Run 15 intervention rate: ~9 in 15 min (slightly above target; confusion-driven, acceptable)
+- [x] CONDITION A override: "give me the answer" → direct answer immediately
+- [x] Short fragment protection: filler-only utterances never drop task_mode
 
 ### Phase 8: Robot mode (tars_bot.py)
 
