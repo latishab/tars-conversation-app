@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,7 +9,7 @@ from loguru import logger
 from pipecat.frames.frames import (
     Frame, StartFrame, EndFrame, CancelFrame,
     TranscriptionFrame, InterimTranscriptionFrame,
-    LLMRunFrame, LLMFullResponseEndFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
+    LLMRunFrame, BotStartedSpeakingFrame, BotStoppedSpeakingFrame,
     LLMMessagesUpdateFrame,
 )
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
@@ -20,6 +21,8 @@ CONFUSION_PATTERNS = [
     "i don't know", "no idea", "i'm stuck", "this is hard",
     "i can't figure", "i can't remember", "help me", "i need help",
     "what does this mean", "i'm confused", "i have no idea", "i'm not sure",
+    "how do i", "i'm having trouble", "i'm having a problem",
+    "i don't understand", "i don't get it",
 ]
 
 
@@ -52,6 +55,8 @@ class ProactiveMonitor(FrameProcessor):
         self._transcript_buffer: list[dict] = []
         self._last_bot_speech_time: float = 0.0
         self._last_intervention_time: float = 0.0
+        self._last_confusion_intervention_time: float = 0.0
+        self._confusion_cooldown: float = 30.0
         self._task_start_time: float = 0.0
         self._last_checked_transcript_time: float = 0.0
         self._task_active: bool = False
@@ -99,9 +104,6 @@ class ProactiveMonitor(FrameProcessor):
             self._last_bot_speech_time = time.time()
             logger.debug("ProactiveMonitor: BotStoppedSpeakingFrame received")
 
-        elif isinstance(frame, LLMFullResponseEndFrame):
-            self._last_bot_speech_time = time.time()
-
         await self.push_frame(frame, direction)
 
     async def _monitor_loop(self):
@@ -136,8 +138,13 @@ class ProactiveMonitor(FrameProcessor):
         window_cutoff = now - self._hesitation_window
         recent = [e for e in self._transcript_buffer if e["timestamp"] > window_cutoff]
         if recent:
-            tokens = " ".join(e["text"] for e in recent).lower().split()
+            tokens = re.findall(r"[a-z']+", " ".join(e["text"] for e in recent).lower())
             score = sum(HESITATION_WEIGHTS.get(t, 0) for t in tokens)
+            if score > 0:
+                logger.debug(
+                    f"ProactiveMonitor: hesitation score={score}/{self._hesitation_threshold} "
+                    f"window={len(recent)} entries, tokens={tokens}"
+                )
             if score >= self._hesitation_threshold:
                 trigger_type = "hesitation"
                 context_snippet = " ".join(e["text"] for e in recent)
@@ -148,6 +155,7 @@ class ProactiveMonitor(FrameProcessor):
         since_last_check = [e for e in self._transcript_buffer if e["timestamp"] > check_cutoff]
         if since_last_check:
             combined = " ".join(e["text"] for e in since_last_check).lower()
+            logger.debug(f"ProactiveMonitor: confusion check on: {combined[:100]}")
             for pattern in CONFUSION_PATTERNS:
                 if pattern in combined:
                     trigger_type = "confusion"
@@ -162,11 +170,20 @@ class ProactiveMonitor(FrameProcessor):
                 logger.warning("ProactiveMonitor: BotStoppedSpeakingFrame never received, clearing stuck flag")
                 self._tars_speaking = False
 
+            # Confusion has its own shorter cooldown so it isn't blocked by silence fires.
+            cooldown_exceeded = (
+                now2 - self._last_intervention_time < self._cooldown
+                if trigger_type != "confusion"
+                else now2 - self._last_confusion_intervention_time < self._confusion_cooldown
+            )
+            # Silence trigger: if last_active guard already passed (>silence_threshold ago),
+            # the user is definitively not speaking — interim VAD frames must not block it.
+            speaking_check = trigger_type != "silence" and now2 < self._user_speaking_until
             suppressed = (
                 self._tars_speaking
                 or now2 - self._last_bot_speech_time < self._post_bot_buffer
-                or now2 - self._last_intervention_time < self._cooldown
-                or now2 < self._user_speaking_until
+                or cooldown_exceeded
+                or speaking_check
                 or self._consecutive_unanswered >= 2
             )
             if suppressed:
@@ -175,9 +192,9 @@ class ProactiveMonitor(FrameProcessor):
                     reasons.append("tars_speaking")
                 if now2 - self._last_bot_speech_time < self._post_bot_buffer:
                     reasons.append("post_bot_buffer")
-                if now2 - self._last_intervention_time < self._cooldown:
+                if cooldown_exceeded:
                     reasons.append("cooldown")
-                if now2 < self._user_speaking_until:
+                if speaking_check:
                     reasons.append("user_speaking")
                 if self._consecutive_unanswered >= 2:
                     reasons.append("max_unanswered")
@@ -185,14 +202,16 @@ class ProactiveMonitor(FrameProcessor):
                     "context_snippet": context_snippet,
                     "suppression_reason": ",".join(reasons),
                 })
-                self._last_checked_transcript_time = time.time()
                 return
 
             self._last_checked_transcript_time = time.time()
             await self._fire_intervention(trigger_type, context_snippet)
 
     async def _fire_intervention(self, trigger_type: str, context_snippet: str):
-        self._last_intervention_time = time.time()
+        now = time.time()
+        self._last_intervention_time = now
+        if trigger_type == "confusion":
+            self._last_confusion_intervention_time = now
         self._consecutive_unanswered += 1
         probe_num = self._consecutive_unanswered
 
@@ -272,12 +291,14 @@ class ProactiveMonitor(FrameProcessor):
             self._task_context = ""
             self._silence_threshold = 8.0
             self._cooldown = 30.0
+            self._confusion_cooldown = 30.0
             self._consecutive_unanswered = 0
             logger.info("ProactiveMonitor: task mode OFF")
         else:
             self._task_context = mode
             self._silence_threshold = 15.0  # longer silence expected during tasks
             self._cooldown = 60.0           # less frequent interventions
+            self._confusion_cooldown = 30.0  # confusion can fire every 30s regardless
             self._consecutive_unanswered = 0
             logger.info(f"ProactiveMonitor: task mode ON ({mode})")
 
