@@ -61,20 +61,15 @@ async def adjust_persona_parameter(params: FunctionCallParams):
     logger.info(f"Persona parameter adjusted: {parameter_name} = {old_value} → {value_int}%")
 
     # Update system prompt in LLM context
-    context_aggregator = _persona_storage.get("context_aggregator")
     tars_data = _persona_storage.get("tars_data", {})
+    context = _persona_storage.get("context")
+    task_mode = _persona_storage.get("task_mode")
 
-    if context_aggregator and hasattr(context_aggregator, 'context'):
+    if context and context.messages:
         try:
-            # Rebuild system prompt with updated parameters
-            new_system_prompt = build_tars_system_prompt(persona_params, tars_data)
-
-            # Update the first message (system prompt) in the context
-            if context_aggregator.context.messages and len(context_aggregator.context.messages) > 0:
-                context_aggregator.context.messages[0] = new_system_prompt
-                logger.info(f"System prompt updated with new {parameter_name} value")
-            else:
-                logger.warning("No messages in context to update")
+            new_system_prompt = build_tars_system_prompt(persona_params, tars_data, task_mode=task_mode)
+            context.messages[0] = new_system_prompt
+            logger.info(f"System prompt updated with new {parameter_name} value")
         except Exception as e:
             logger.error(f"Error updating system prompt: {e}", exc_info=True)
 
@@ -161,17 +156,17 @@ async def set_task_mode(params: FunctionCallParams):
 
     _persona_storage["task_mode"] = mode_value
 
-    context_aggregator = _persona_storage.get("context_aggregator")
     persona_params = _persona_storage.get("persona_params", {})
     tars_data = _persona_storage.get("tars_data", {})
+    context = _persona_storage.get("context")
 
-    if context_aggregator and hasattr(context_aggregator, 'context'):
+    if context and context.messages:
         try:
             new_system_prompt = build_tars_system_prompt(
                 persona_params, tars_data, task_mode=mode_value
             )
-            if context_aggregator.context.messages:
-                context_aggregator.context.messages[0] = new_system_prompt
+            context.messages[0] = new_system_prompt
+            logger.info(f"System prompt updated: task_mode={mode_value}")
         except Exception as e:
             logger.error(f"Error updating system prompt for task mode: {e}")
 
