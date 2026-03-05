@@ -71,6 +71,9 @@ _DIRECTED_QUESTION = (
     "what do you think",
     "tell me",
     "is it",          # "is it toxic?" — STT may add punctuation so no trailing space
+    "could it be",
+    "what about",
+    "how about",
 )
 
 
