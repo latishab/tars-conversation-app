@@ -112,6 +112,10 @@ class ReactiveGate(FrameProcessor):
             self._monitor._proactive_response_pending = False
             return True
 
+        if self._monitor.in_proactive_followup_window():
+            logger.info("ReactiveGate: proactive followup window passthrough")
+            return True
+
         if self._monitor._task_mode_just_activated:
             logger.info("ReactiveGate: task mode activation passthrough")
             self._monitor._task_mode_just_activated = False
