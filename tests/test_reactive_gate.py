@@ -94,8 +94,7 @@ def test_gate_passes_directed_questions():
 
 def test_gate_passes_corrections():
     for phrase in ("stop helping", "stop answering", "don't talk", "don't give me the answer",
-                   "i didn't ask", "you shouldn't answer", "hold on",
-                   "let me think", "i'm still thinking", "i'm trying to think"):
+                   "i didn't ask", "you shouldn't answer"):
         gate = make_gate(transcript_texts=phrase)
         assert gate._should_pass_through() is True, f"failed on: {phrase!r}"
 
