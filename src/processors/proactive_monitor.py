@@ -33,6 +33,14 @@ SELF_RESOLUTION_PHRASES = [
     "move on", "moving on", "never mind", "nevermind",
 ]
 
+# If ANY of these appear in the hesitation window, the user is signalling they
+# want to think — suppress the hesitation trigger. "uh, let me think about it"
+# contains fillers that score enough to trigger but should not fire.
+HESITATION_SELF_RESOLVE_PHRASES = [
+    "give me a moment", "give me a second",
+    "i'll figure", "i think i know", "i got it", "i know this",
+]
+
 # How long the user must keep talking after a confusion pattern before we
 # assume they self-resolved. Genuine confusion → brief pause → silence.
 # Self-resolution → user keeps narrating for several seconds about a new topic.
@@ -182,6 +190,14 @@ class ProactiveMonitor(FrameProcessor):
                         "context_snippet": " ".join(e["text"] for e in recent[-3:]),
                     })
             if score >= self._hesitation_threshold:
+                recent_text_lower = " ".join(e["text"] for e in recent).lower()
+                if any(p in recent_text_lower for p in HESITATION_SELF_RESOLVE_PHRASES):
+                    logger.info(
+                        f"ProactiveMonitor: hesitation suppressed — self-resolve phrase in window: "
+                        f"{recent_text_lower[:80]!r}"
+                    )
+                    score = 0
+            if score >= self._hesitation_threshold:
                 trigger_type = "hesitation"
                 # Include pre-hesitation context so LLM knows what clue the user was on
                 pre_window = [e for e in self._transcript_buffer if e["timestamp"] <= window_cutoff]
@@ -290,11 +306,11 @@ class ProactiveMonitor(FrameProcessor):
 
     async def _fire_intervention(self, trigger_type: str, context_snippet: str, hesitation_score: int = 0):
         now = time.time()
+        # Reset all clocks on every intervention — any check-in should block all
+        # trigger types for their respective cooldowns, not just its own.
         self._last_intervention_time = now
-        if trigger_type == "confusion":
-            self._last_confusion_intervention_time = now
-        elif trigger_type == "hesitation":
-            self._last_hesitation_intervention_time = now
+        self._last_hesitation_intervention_time = now
+        self._last_confusion_intervention_time = now
         self._consecutive_unanswered += 1
         probe_num = self._consecutive_unanswered
 
