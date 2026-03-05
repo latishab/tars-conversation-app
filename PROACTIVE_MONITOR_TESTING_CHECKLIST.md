@@ -1,7 +1,7 @@
 # Proactive Monitor Testing Checklist
 
-Updated: March 5, 2026. Eighteen live test runs completed (Runs 16-18 robot mode).
-Fixes 1-30 applied. Phase 7 complete. Phase 8 robot mode in progress.
+Updated: March 5, 2026. Nineteen live test runs completed (Runs 16-19 robot mode).
+Fixes 1-33 applied. Phase 7 complete. Phase 8 robot mode in progress.
 
 Pipeline: Soniox JP + Cerebras GPT-OSS-120B + ElevenLabs Flash v2.5
 
@@ -29,10 +29,15 @@ All steps verified across Runs 12-15. Summary:
 
 - [x] ProactiveMonitor wired into pipeline
 - [x] task_ref populated after PipelineTask creation
-- [x] Monitor starts through RPi audio path (confirmed Runs 16-18)
+- [x] Monitor starts through RPi audio path (confirmed Runs 16-19)
 - [x] Expression tags on proactive responses (Fixes 23-25)
 - [x] task_mode off guard in robot mode (Fixes 26-28)
-- [ ] Expression hallucinations still observed occasionally (mostly fixed, monitor in next run)
+- [x] 🗣️ TARS observer logging confirmed working (Fix 29, Run 19)
+- [x] ReactiveGate suppression intact after observer fix (Run 19: think-aloud suppressed throughout)
+- [x] Hesitation self-resolve ("let me think", "um, let me think. um.") correctly blocks hesitation (Run 19: multiple suppressions logged)
+- [x] Cross-cooldown: any intervention blocks all trigger types for their own cooldown (Fix 31)
+- [x] "is it" passthrough working ("Is it level?", "Is it local?", "Is it vying?", Fix 30)
+- [ ] Expression hallucinations — no INVALID warnings in Run 19, monitor ongoing
 - [ ] Gesture blocking under load (not yet stress-tested)
 
 ### Prompt tuning (open issues)
@@ -85,6 +90,9 @@ All resolved. Soniox filler transcription confirmed. Imports, logs, system promp
 | 26 | task_mode accidentally turned OFF on clue narration ("Another one is most populated continent."). Code guard only checked last message (≤4 words or filler-only) but narration can be 6+ non-filler words. Replaced with positive check: requires direct address ("tars") AND end phrase ("done", "finished", "stop", "quit") across last 3 user messages (VAD window). | Applied, Run 18: confirmed "Hey, TARS. I am done." → OFF correctly |
 | 27 | Proactive monitor firing in non-task (general conversation) — false positives. Early-return added in `_check_triggers()` when `_task_context` is empty. | Applied |
 | 28 | STT misreading "TARS" as "Thor". Added `SonioxContextObject` with `terms=["TARS"]` and `general=[assistant_name=TARS, domain=conversational AI]`. | Applied, Run 18: "Hey TARS" transcribed correctly throughout |
+| 29 | 🗣️ TARS observer logging broken (pass-through responses not logged). ReactiveGate re-pushes buffered LLMFullResponseStartFrame when passing through; observer reset on any StartFrame wiped _pending_sentence before TTSStoppedFrame flushed it. Fixed by only resetting on LLM-source StartFrames ("LLM" in src_name). | Confirmed Run 19: all spoken responses logged |
+| 30 | ReactiveGate "is it " trailing space: STT emits "Is it." (period, not space) so `"is it "` never matched. Fixed by removing trailing space. | Confirmed Run 19: "Is it level?", "Is it vying?" etc. pass through |
+| 31 | Hesitation fires immediately after another intervention (e.g. silence fires → user says "uh, let me think" → hesitation fires 8s later). Two fixes: (1) any `_fire_intervention` now resets all three cooldown clocks; (2) added `HESITATION_SELF_RESOLVE_PHRASES` ("let me think", "i'm thinking", etc.) — if present in hesitation window, score is zeroed. | Confirmed Run 19: "let me think" and "um, let me think. um." correctly suppressed hesitation for 10s+ |
 
 Stuck-flag timeout bug (Run 5): resolved inline in _check_triggers with 60s timeout.
 Dead LLMFullResponseEndFrame handler: already absent from codebase.
@@ -188,3 +196,4 @@ Dead LLMFullResponseEndFrame handler: already absent from codebase.
 | 16 | Mar 5 | First robot mode run. Proactive monitor firing in non-task mode (false positives on general chat). Expression tags missing on all proactive responses. task_mode OFF on clue narration ("Another one is most populated continent."). STT reading "TARS" as "Thor". Fixes 23-28 applied. |
 | 17 | Mar 5 | Robot mode. STT fix not yet deployed — "Hey Thor" still transcribed. Expression warnings still present (supportive/moderate). task_mode OFF guard rejected ("Another one is most populated continent." — no end signal in last 3 messages). Proactive monitor silent outside task mode (Fix 27 confirmed). |
 | 18 | Mar 5 | Robot mode with all fixes. "Hey TARS" transcribed correctly throughout. No INVALID emotion/intensity warnings in session. task_mode ON/OFF correct: "Hey, TARS. I am done." (split across 2 VAD fragments) triggered OFF correctly. Proactive triggers (silence, hesitation, confusion) firing and passing through with valid express tags (emotion=curious/medium, emotion=angry/medium observed). Think-aloud suppressed throughout. ReactiveGate passing direct questions correctly. After task mode OFF, proactive monitor silent. |
+| 19 | Mar 5 | Clean run. 🗣️ TARS logging confirmed working (Fix 29). ReactiveGate suppression intact throughout. Hesitation self-resolve ("let me think", "um, let me think. um.") logged as suppressed. Cross-cooldown working: no immediate double-interventions. "is it X" passthroughs all correct. Confusion trigger fired on "i don't know" / "i'm stuck" / "i'm not sure" with correct nudges. Silence triggers fired 4× with contextual hints. task_mode OFF on "Hey, TARS, I'm done with the crossword." correctly. No INVALID expression warnings. One BotStoppedSpeakingFrame stuck-flag timeout (self-cleared). Silence trigger firing on already-solved clue at 17:32:01 (stale context edge case — user corrected TARS, handled gracefully). |
