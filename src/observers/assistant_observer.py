@@ -11,7 +11,17 @@ from shared_state import metrics_store
 _EXPRESS_TAG_RE = re.compile(r'\[express\([^)]*\)\]', re.IGNORECASE)
 
 class AssistantResponseObserver(BaseObserver):
-    """Logs TARS assistant responses and forwards them to the frontend."""
+    """Logs TARS assistant responses and forwards them to the frontend.
+
+    Captures LLMTextFrame from the LLM service source (earliest, pre-filter
+    version) and emits sentences eagerly as they stream in. SilenceFilter's
+    _REASONING_LEAK_RE ensures reasoning leaks never reach TTS, so they are
+    safe to log here (the mismatch between logged text and spoken text is
+    minor and useful for debugging).
+
+    TTSStoppedFrame flushes any trailing content that didn't end with
+    sentence-ending punctuation.
+    """
 
     SENTENCE_REGEX = re.compile(r"(.+?[\.!\?\n])")
 
@@ -22,39 +32,37 @@ class AssistantResponseObserver(BaseObserver):
         self._max_buffer_chars = 320
         self._last_sentence = None
         self._last_sentence_time = 0
-        # Holds the last sentence text+tag waiting to see if a trailing
-        # express tag arrives before TTSStoppedFrame flushes it.
         self._pending_sentence: str | None = None
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
 
-        # Reset buffer at the start of each LLM response so stale content from
-        # a previous silence probe doesn't bleed into the next real response.
+        # Reset buffer at the start of each LLM response.
+        # Only reset on the original LLM push — ReactiveGate re-pushes the same
+        # StartFrame when passing through, which would otherwise wipe _pending_sentence
+        # before TTSStoppedFrame has a chance to flush it.
+        _src_name = type(getattr(data, "source", None)).__name__
         if isinstance(frame, LLMFullResponseStartFrame):
-            self._buffer = ""
-            self._pending_sentence = None
+            if "LLM" in _src_name:
+                self._buffer = ""
+                self._pending_sentence = None
             return
 
-        # Capture raw LLM output so express tags are visible in the log.
-        # The observer fires at every pipeline hop; filter to LLM source only
-        # to avoid processing the same text 4-5x as it passes through filters.
-        if isinstance(frame, LLMTextFrame) and "LLM" in type(getattr(data, "source", None)).__name__:
+        # Capture from LLM service source only (one occurrence per token,
+        # before ExpressTagFilter/SilenceFilter/ReactiveGate re-push it).
+        # CerebrasLLMService and OpenAILLMService both contain "LLM".
+        if isinstance(frame, LLMTextFrame) and "LLM" in _src_name:
             text = getattr(frame, "text", "") or ""
-            self._ingest_text(text)
-
-        # Flush when TTS finishes: attach any trailing express tag in the buffer
-        # to the pending sentence before committing it to metrics/frontend.
-        elif isinstance(frame, TTSStoppedFrame):
-            self._flush_at_end()
-
-    def _ingest_text(self, text: str):
-        if not text.strip():
+            if text:
+                self._buffer += text
+                self._emit_complete_sentences()
+                if len(self._buffer) > self._max_buffer_chars:
+                    self._flush_buffer()
             return
-        self._buffer += text
-        self._emit_complete_sentences()
-        if len(self._buffer) > self._max_buffer_chars:
-            self._flush_buffer()
+
+        # Flush trailing content when TTS finishes playing.
+        if isinstance(frame, TTSStoppedFrame):
+            self._flush_at_end()
 
     def _emit_complete_sentences(self):
         while True:
@@ -68,7 +76,6 @@ class AssistantResponseObserver(BaseObserver):
                 self._pending_sentence = sentence
 
     def _flush_buffer(self):
-        """Force-emit the buffer when it exceeds the size cap."""
         pending = self._buffer.strip()
         self._buffer = ""
         if pending:
@@ -76,21 +83,15 @@ class AssistantResponseObserver(BaseObserver):
             self._pending_sentence = pending
 
     def _flush_at_end(self):
-        """Called at TTSStoppedFrame — attach trailing buffer content to pending sentence."""
         trailing = self._buffer.strip()
         self._buffer = ""
-
         if trailing and self._pending_sentence is not None:
-            # Trailing content (e.g. express tag) appended to the last sentence
             self._pending_sentence = f"{self._pending_sentence} {trailing}"
         elif trailing:
-            # Standalone trailing content with no preceding sentence
             self._pending_sentence = trailing
-
         self._commit_pending()
 
     def _commit_pending(self):
-        """Store and forward whatever is in _pending_sentence, then clear it."""
         if self._pending_sentence is None:
             return
         sentence = self._pending_sentence
@@ -106,15 +107,13 @@ class AssistantResponseObserver(BaseObserver):
         self._last_sentence = sentence
         self._last_sentence_time = current_time
 
-        # Log with express tags intact so they're visible for debugging
-        logger.info(f"🗣️ TARS: {sentence}")
-
-        # If the sentence is only an express tag with no actual text, skip it
+        # Strip express tags and markdown before logging/display
         clean = _EXPRESS_TAG_RE.sub("", sentence).strip()
+        clean = re.sub(r'\*+|_{1,2}|`+', "", clean).strip()
         if not clean:
             return
 
-        # Store with tags intact for conversation history display
+        logger.info(f"🗣️ TARS: {clean}")
         metrics_store.add_transcription("assistant", sentence)
         self._send_to_frontend(clean)
 

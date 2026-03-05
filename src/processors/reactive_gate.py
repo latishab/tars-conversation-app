@@ -43,6 +43,9 @@ _CONDITION_A = (
 )
 
 # Phrases that mean the user is correcting TARS or asking for silence.
+# Keep narrow: must be clearly directed at TARS, not pure think-aloud.
+# "let me think", "hold on", "i'm still thinking" removed — these are
+# think-aloud that should NOT open the gate.
 _CONDITION_C = (
     "stop helping",
     "stop answering",
@@ -50,10 +53,6 @@ _CONDITION_C = (
     "don't give me",
     "i didn't ask",
     "you shouldn't",
-    "hold on",
-    "let me think",
-    "i'm still thinking",
-    "i'm trying to think",
 )
 
 # Phrases that imply the user is talking to someone (or TARS specifically).
@@ -61,10 +60,17 @@ _DIRECTED_QUESTION = (
     "can you",
     "could you",
     "do you",
+    "would you",
     "help me",
+    "i need help",
+    "i need a hint",
+    "i would like a hint",
+    "i would like a clue",
     "give me a hint",
+    "give me a clue",
     "what do you think",
     "tell me",
+    "is it",          # "is it toxic?" — STT may add punctuation so no trailing space
 )
 
 
@@ -173,7 +179,7 @@ class ReactiveGate(FrameProcessor):
                 self._buffer.clear()
                 await self.push_frame(frame, direction)
             else:
-                window = self._recent_window()
+                window = self._window(15)
                 logger.info(f"ReactiveGate: suppressed reactive response — window: {window[:120]!r}")
                 self._buffer.clear()
             return

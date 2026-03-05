@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import puzzle1 from '@/data/puzzle1.json'
 import puzzle2 from '@/data/puzzle2.json'
+import puzzle3 from '@/data/puzzle3.json'
 import CrosswordGrid from '@/components/CrosswordGrid'
 import ClueList from '@/components/ClueList'
 import Header from '@/components/Header'
 import PuzzlePicker from '@/components/PuzzlePicker'
 import { startSession, logEvent, downloadLog } from '@/utils/eventLogger'
 
-const PUZZLES = { puzzle1, puzzle2 }
+const PUZZLES = { puzzle1, puzzle2, puzzle3 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 

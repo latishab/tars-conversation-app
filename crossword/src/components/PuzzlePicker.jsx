@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 const PUZZLES = [
   { id: 'puzzle1', label: 'General Knowledge', subtitle: '9×9' },
   { id: 'puzzle2', label: 'Pixar Movies', subtitle: '9×9' },
+  { id: 'puzzle3', label: 'General Knowledge II', subtitle: '9×9' },
 ]
 
 export default function PuzzlePicker({ currentId, onSelect, onClose }) {

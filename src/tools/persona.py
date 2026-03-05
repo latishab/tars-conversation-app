@@ -150,31 +150,42 @@ async def set_task_mode(params: FunctionCallParams):
     active = mode not in ("", "off", "none", "disable", "disabled")
     mode_value = mode if active else None
 
-    # Code-level guard: reject 'off' if last user utterance is too short or filler-only.
-    # Prompt rules alone are insufficient — this is deterministic and cannot be bypassed by the LLM.
+    # Code-level guard: reject 'off' unless recent transcript both addresses TARS
+    # directly and contains a termination phrase. Uses ProactiveMonitor's
+    # _transcript_buffer (always available) rather than context.messages
+    # (which was never stored in persona_storage — previous guard was always skipped).
+    # Scan the last 15 seconds of transcript to cover VAD-fragmented utterances.
     if not active and _persona_storage.get("task_mode"):
-        context = _persona_storage.get("context")
-        if context and context.messages:
-            last_user = None
-            for m in reversed(context.messages):
-                if m.get("role") == "user":
-                    last_user = m.get("content", "").strip()
-                    break
-            if last_user:
-                words = last_user.lower().split()
-                filler_words = {"um", "uh", "hmm", "okay", "ok", "i", "well",
-                                "ugh", "oh", "ah", "er", "like", "so", "and"}
-                is_short = len(words) <= 4
-                is_filler_only = all(w.strip(".,!?") in filler_words for w in words)
-                if is_short or is_filler_only:
-                    logger.warning(
-                        f"set_task_mode('off') REJECTED: last utterance too short "
-                        f"or filler-only: '{last_user}'"
-                    )
-                    await params.result_callback(
-                        "Task mode stays active — that didn't sound like you're done."
-                    )
-                    return
+        monitor_check = _persona_storage.get("proactive_monitor")
+        if monitor_check is not None:
+            import time as _time
+            cutoff = _time.time() - 15.0
+            recent_parts = [
+                e.get("text", "")
+                for e in monitor_check._transcript_buffer
+                if e.get("timestamp", 0) >= cutoff
+            ]
+            text = " ".join(recent_parts).lower()
+            addresses_tars = "tars" in text
+            task_end_signals = {
+                "done", "finished", "finish", "stop", "quit",
+                "all done", "that's it", "let's stop", "lets stop",
+            }
+            has_end_signal = any(signal in text for signal in task_end_signals)
+            if not (addresses_tars and has_end_signal):
+                logger.warning(
+                    f"set_task_mode('off') REJECTED: missing direct address or end signal "
+                    f"in recent transcript: '{text[:120]}'"
+                )
+                await params.result_callback(
+                    "Task mode stays active — that didn't sound like you're done."
+                )
+                return
+        else:
+            # No monitor available — fail closed: reject the call
+            logger.warning("set_task_mode('off') REJECTED: proactive_monitor unavailable")
+            await params.result_callback("Task mode stays active.")
+            return
 
     monitor = _persona_storage.get("proactive_monitor")
     if monitor:
@@ -208,15 +219,13 @@ def create_task_mode_schema() -> FunctionSchema:
             "Toggle task mode when the user starts or stops a focused activity. "
             "Call with a mode like 'crossword', 'coding', 'reading', 'thinking' "
             "when the user announces they're working on something. "
-            "Call with 'off' ONLY when the user explicitly says they are completely finished "
-            "with the ENTIRE task (e.g. 'I'm done with the crossword', 'let's stop', "
-            "'I'm all done'). "
-            "Do NOT call with 'off' for: solving a clue ('okay evening', 'I got it', "
-            "'moving on'), corrections ('you shouldn't answer', 'stop helping'), "
-            "or moving between clues. Those keep task mode active. "
-            "Do NOT call with 'off' if the user's last utterance is 4 words or fewer "
-            "or consists only of filler words (um, uh, hmm, okay, I, well, oh). "
-            "Short fragments are never a task-end signal."
+            "Call with 'off' ONLY when the user directly addresses TARS AND says they are "
+            "completely finished with the ENTIRE task (e.g. 'Tars, I'm done', 'hey Tars, "
+            "let's stop', 'Tars, finish crossword mode'). "
+            "Both conditions required: direct address ('Tars') + end phrase ('done', "
+            "'finished', 'stop', 'quit'). "
+            "Do NOT call with 'off' for: solving a clue, self-answers, corrections, or "
+            "moving between clues. Think-aloud narration is never a task-end signal."
         ),
         properties={
             "mode": {

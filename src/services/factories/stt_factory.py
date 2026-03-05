@@ -134,7 +134,10 @@ def create_stt_service(
             logger.info("✓ Parakeet STT service created")
 
         elif provider in ("soniox-jp", "soniox-us"):
-            from pipecat.services.soniox.stt import SonioxSTTService, SonioxInputParams
+            from pipecat.services.soniox.stt import (
+                SonioxSTTService, SonioxInputParams,
+                SonioxContextObject, SonioxContextGeneralItem,
+            )
 
             if not soniox_api_key:
                 raise ValueError(f"soniox_api_key is required for {provider}")
@@ -146,6 +149,14 @@ def create_stt_service(
             url = region_urls[provider]
             region = provider.split("-")[1].upper()
 
+            stt_context = SonioxContextObject(
+                general=[
+                    SonioxContextGeneralItem(key="assistant_name", value="TARS"),
+                    SonioxContextGeneralItem(key="domain", value="conversational AI assistant"),
+                ],
+                terms=["TARS"],
+            )
+
             # vad_force_turn_endpoint=True: VAD-driven finalization instead of Soniox's
             # built-in semantic endpoint detection. Reduces time to final segment to
             # ~250ms median.
@@ -153,7 +164,7 @@ def create_stt_service(
             stt = SonioxSTTService(
                 api_key=soniox_api_key,
                 url=url,
-                params=SonioxInputParams(model=soniox_model),
+                params=SonioxInputParams(model=soniox_model, context=stt_context),
                 vad_force_turn_endpoint=True,
             )
             logger.info(f"✓ Soniox STT service created ({region}, {soniox_model})")

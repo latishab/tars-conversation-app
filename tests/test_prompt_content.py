@@ -260,5 +260,136 @@ class TestProactiveSectionNoLeakyPhrase(unittest.TestCase):
         )
 
 
+class TestTaskModeSectionConditionD(unittest.TestCase):
+    """build_task_mode_section must include CONDITION D for task completion."""
+
+    def setUp(self):
+        self.section = build_task_mode_section("crossword")
+
+    def test_condition_d_present(self):
+        self.assertIn("CONDITION D", self.section)
+
+    def test_condition_d_calls_set_task_mode_off(self):
+        """CONDITION D must instruct calling set_task_mode('off')."""
+        lower = self.section.lower()
+        self.assertIn('set_task_mode("off")', self.section.lower().replace("'", '"'))
+
+    def test_condition_d_has_done_examples(self):
+        """CONDITION D must include example done phrases."""
+        lower = self.section.lower()
+        has_examples = "i'm done" in lower or "i am done" in lower or "finished" in lower
+        self.assertTrue(has_examples, "CONDITION D must include done-phrase examples")
+
+    def test_condition_d_excludes_standalone_done(self):
+        """CONDITION D must warn that standalone 'I'm done' is think-aloud."""
+        lower = self.section.lower()
+        has_caveat = "think-aloud" in lower or "standalone" in lower or "stay silent" in lower
+        self.assertTrue(has_caveat,
+            "CONDITION D must note that bare 'I'm done' mid-narration is think-aloud")
+
+    def test_condition_d_excludes_never_mind(self):
+        """CONDITION D must explicitly exclude 'Never mind' as a task-end signal."""
+        lower = self.section.lower()
+        self.assertIn("never mind", lower,
+            "CONDITION D must list 'Never mind' as a non-exit phrase")
+
+    def test_condition_c_clarifies_not_task_end(self):
+        """CONDITION C must clarify it is a mid-task correction, not task-end."""
+        lower = self.section.lower()
+        has_clarification = "mid-task" in lower or "not task-end" in lower or "correction" in lower
+        self.assertTrue(has_clarification,
+            "CONDITION C must distinguish corrections from task-end")
+
+
+class TestTaskModeSectionExpressionGuidance(unittest.TestCase):
+    """build_task_mode_section must include expression mapping for spoken turns."""
+
+    def setUp(self):
+        self.section = build_task_mode_section("crossword")
+
+    # --- all 6 emotions in the mapping ---
+
+    def test_happy_expression_present(self):
+        """Must map positive moments (correct guess, thanks) to happy."""
+        self.assertIn("happy", self.section)
+
+    def test_curious_expression_present(self):
+        """Must map hint/nudge moments to curious."""
+        self.assertIn("curious", self.section)
+
+    def test_sad_expression_present(self):
+        """Must map user frustration to sad."""
+        self.assertIn("sad", self.section)
+
+    def test_skeptical_expression_present(self):
+        """Must map correcting/pushing back to skeptical."""
+        self.assertIn("skeptical", self.section)
+
+    def test_surprised_expression_present(self):
+        """Must map funny or surprising moments to surprised."""
+        self.assertIn("surprised", self.section)
+
+    def test_excited_expression_present(self):
+        """Must map task completion / celebration to excited."""
+        self.assertIn("excited", self.section)
+
+    # --- intensity levels ---
+
+    def test_low_intensity_present(self):
+        """Low intensity must appear (used for most task-mode expressions)."""
+        self.assertIn("low", self.section)
+
+    def test_medium_intensity_present(self):
+        """Medium intensity must appear (used for celebration/finish moments)."""
+        self.assertIn("medium", self.section)
+
+    # --- anti-neutral ---
+
+    def test_anti_neutral_instruction_present(self):
+        """Must explicitly instruct not to default to neutral on every turn."""
+        lower = self.section.lower()
+        has_anti_neutral = "do not default to neutral" in lower or "not default to neutral" in lower
+        self.assertTrue(has_anti_neutral,
+            "Must contain anti-neutral instruction (e.g. 'Do not default to neutral')")
+
+    def test_neutral_allowed_for_emotionless_moments(self):
+        """Must clarify that neutral is acceptable for genuinely emotionless moments."""
+        lower = self.section.lower()
+        # The guidance should say when neutral IS acceptable, not just ban it entirely
+        has_neutral_exception = (
+            "neutral only" in lower
+            or "use neutral" in lower
+            or "genuinely emotionless" in lower
+        )
+        self.assertTrue(has_neutral_exception,
+            "Must state when neutral is acceptable (e.g. 'Use neutral only for...')")
+
+    # --- existing rules intact ---
+
+    def test_silence_rules_intact(self):
+        """Existing silence rules must not be removed."""
+        self.assertIn('{"action": "silence"}', self.section)
+
+    def test_condition_a_intact(self):
+        """CONDITION A (give up → direct answer) must still be present."""
+        self.assertIn("CONDITION A", self.section)
+
+    def test_condition_b_intact(self):
+        """CONDITION B (question → hint) must still be present."""
+        self.assertIn("CONDITION B", self.section)
+
+    def test_condition_c_intact(self):
+        """CONDITION C (correction → 'Got it.') must still be present."""
+        self.assertIn("CONDITION C", self.section)
+
+    def test_condition_c_neutral_is_correct(self):
+        """CONDITION C hardcodes neutral — a correction acknowledgement is emotionless.
+
+        This must NOT be changed: 'Got it. [express(neutral, low)]' is the prescribed
+        CONDITION C output. The anti-neutral guidance applies to other spoken turns, not this.
+        """
+        self.assertIn("Got it. [express(neutral, low)]", self.section)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
