@@ -1,8 +1,7 @@
 # Proactive Monitor Testing Checklist
 
-Updated: March 4, 2026. Fifteen live test runs completed (browser mode).
-Fixes 1-22 applied. Phase 7 browser-mode testing complete.
-System ready for participant evaluation.
+Updated: March 5, 2026. Eighteen live test runs completed (Runs 16-18 robot mode).
+Fixes 1-30 applied. Phase 7 complete. Phase 8 robot mode in progress.
 
 Pipeline: Soniox JP + Cerebras GPT-OSS-120B + ElevenLabs Flash v2.5
 
@@ -28,13 +27,13 @@ All steps verified across Runs 12-15. Summary:
 
 ### Phase 8: Robot mode (tars_bot.py)
 
-Only after Phase 7 passes in browser mode.
-
-- [ ] Uncomment ProactiveMonitor in tars_bot.py, wire into pipeline
-- [ ] Populate task_ref after PipelineTask creation
-- [ ] Verify monitor starts through RPi audio path
-- [ ] Test expression-speech sync with proactive responses
-- [ ] Test gesture blocking (create_task vs await on fire_expression)
+- [x] ProactiveMonitor wired into pipeline
+- [x] task_ref populated after PipelineTask creation
+- [x] Monitor starts through RPi audio path (confirmed Runs 16-18)
+- [x] Expression tags on proactive responses (Fixes 23-25)
+- [x] task_mode off guard in robot mode (Fixes 26-28)
+- [ ] Expression hallucinations still observed occasionally (mostly fixed, monitor in next run)
+- [ ] Gesture blocking under load (not yet stress-tested)
 
 ### Prompt tuning (open issues)
 
@@ -42,6 +41,9 @@ Only after Phase 7 passes in browser mode.
 - [x] **Issue B:** TARS persona too heavy on space roleplay. Trimmed TARS.json dead fields; added space jargon prohibition to tone section.
 - [x] **Issue C:** Proactive response length — "1-2 sentences maximum" already in build_proactive_section(). Confirmed.
 - [x] **Notification-first reinforcement:** Added "offer a brief nudge or observation only — never give the answer directly" to task mode proactive prompt.
+- [x] **Expression tags missing on proactive responses** (Fix 23): `_fire_intervention()` system messages lacked express reminder. LLM skipped tags entirely. Added inline reminder with valid emotion/intensity values to all 4 message paths.
+- [x] **Expression hallucinations** (Fix 25): Model inventing synonyms (supportive, calm, anger, moderate, mild) and percentages (10, 80) despite list in tools section. Root cause: system prompt is message[0] but probe is last message — recency bias. Added valid values inline to both proactive reminder and tools section. "Never use percentages" added.
+- [x] **Proactive monitor in non-task mode** (Fix 27): Triggers firing in general conversation causing false positives. Disabled by early-return in `_check_triggers()` when `_task_context` is empty.
 
 ---
 
@@ -77,6 +79,12 @@ All resolved. Soniox filler transcription confirmed. Imports, logs, system promp
 | 20 | set_task_mode('off') from "I, um." (2-word fragment) — still firing despite Fix 14/16. Added explicit rule: never call 'off' if utterance is ≤4 words or filler-only. Added to both tool schema and tools section doc | Applied, needs live verification |
 | 21 | Reactive pipeline answering think-aloud: clue+letter-count without question words still triggered hints ("opposite of day, five letters, um"). "I'm still thinking, Tars, hold on" got a hint instead of Got it. Added CRITICAL note to CONDITION B, added hold-on/I'm-still-thinking to CONDITION C, expanded silence list with Run 12 failure patterns | Applied, 22/22 LLM compliance tests pass |
 | 22 | Reactive silence moved from LLM-trust to deterministic gate. ReactiveGate FrameProcessor: buffers LLM response frames, suppresses on EndFrame unless user explicitly addressed TARS (direct name, CONDITION A/C phrases, directed question) within 15s window. Added `_proactive_response_pending`, `_task_mode_just_activated` flags to ProactiveMonitor. Added 2-layer confusion false-positive filter (fast-path phrases + 4s timing check). Restructured compliance tests: removed all 12 LLM-silence tests (now gate's job), kept 11 gate pass-through behavior tests. | Verified Run 13/14: think-aloud suppressed throughout, proactive passthroughs correct, hints and direct questions pass through |
+| 23 | Proactive responses had no express tags. `_fire_intervention()` messages never reminded LLM to include them; task mode also strips examples section (strongest reinforcement). Added express reminder to all 4 message paths. Also created `tests/llm/test_proactive_express.py` holistic LLM test. | Applied, Run 17: reduced warning rate |
+| 24 | 4 stale unit test assertions in `test_proactive_prompt.py` (task mode probe checking non-task phrases). Fixed assertions to match actual task mode message content. All 33 tests passing. | Applied |
+| 25 | Expression hallucinations (supportive/calm/anger/moderate/mild/percentages). Recency bias: valid-value list is in system prompt (message[0]) but model attends to most recent message. Added valid emotion/intensity list inline to proactive express_reminder AND synonym correction note to tools section. | Applied, Run 18: no INVALID warnings observed |
+| 26 | task_mode accidentally turned OFF on clue narration ("Another one is most populated continent."). Code guard only checked last message (≤4 words or filler-only) but narration can be 6+ non-filler words. Replaced with positive check: requires direct address ("tars") AND end phrase ("done", "finished", "stop", "quit") across last 3 user messages (VAD window). | Applied, Run 18: confirmed "Hey, TARS. I am done." → OFF correctly |
+| 27 | Proactive monitor firing in non-task (general conversation) — false positives. Early-return added in `_check_triggers()` when `_task_context` is empty. | Applied |
+| 28 | STT misreading "TARS" as "Thor". Added `SonioxContextObject` with `terms=["TARS"]` and `general=[assistant_name=TARS, domain=conversational AI]`. | Applied, Run 18: "Hey TARS" transcribed correctly throughout |
 
 Stuck-flag timeout bug (Run 5): resolved inline in _check_triggers with 60s timeout.
 Dead LLMFullResponseEndFrame handler: already absent from codebase.
@@ -152,6 +160,9 @@ Dead LLMFullResponseEndFrame handler: already absent from codebase.
 5. **"you know" filler vs directed-at-TARS ambiguity.** In run 15 at 21:40:35: "you shouldn't give me the answer, you know?" — CONDITION C passed correctly (TARS gave a hint). "You know" here is a filler tag, not addressing TARS. Gate handled it correctly, but "you know" as a standalone utterance without CONDITION C context could produce a false passthrough. Not observed yet; flag if it appears in participant sessions.
 6. **LLM misparse of crossword clue context read aloud.** In run 15 at 21:37:52: user read "Blyton Noddy Arthur" as clue fragments. LLM parsed these as four separate crossword clues (Blight → PEST, On → AT, Naughty → BAD, Arthur → KING) rather than understanding them as a single author-identification clue about Enid Blyton. This will recur whenever the user reads a multi-part clue description aloud. Not a gate issue. Worth tracking in participant evaluation — if it appears consistently, the LLM needs explicit instruction to treat multi-line user speech as a single clue context.
 7. **Confusion timing threshold fixed at 4s.** Fast talkers who self-resolve quickly may still trigger confusion. Slow talkers who pause mid-thought may suppress a genuine confusion trigger. Threshold may need tuning after more sessions.
+8. **task_mode off guard requires "tars" in last 3 messages.** The guard now needs both direct address and end phrase across a 3-message VAD window. If a user says "Tars" in one utterance and "I'm done" in a 4th fragment (large gap), the guard will reject a legitimate end. 3-message window is a heuristic; may need tuning if VAD produces very fragmented speech.
+9. **Expression hallucinations residual.** Fixes 25 improved reliability significantly (Run 18: no INVALID warnings). But the LLM may still occasionally invent values on turns with unusual context (e.g. roleplay requests like "pretend you're mad"). The `fire_expression` fallback to neutral is the safety net; flag sustained regressions.
+10. **Proactive monitor disabled outside task mode.** By design (Fix 27). General conversation now has no proactive monitoring. If a future use case requires proactive in non-task mode, this must be revisited.
 
 ---
 
@@ -174,3 +185,6 @@ Dead LLMFullResponseEndFrame handler: already absent from codebase.
 | 13 | Mar 4 | ReactiveGate (Fix 22) first live test. Think-aloud suppressed throughout session. Task mode activation acknowledgement working (_task_mode_just_activated flag). "Hey Tars, what's the last letter?" passes through despite STT splitting ("Hey Tars, um." / "What's the last letter?") — 15s window captures both segments. False confusion trigger on "I don't know, I think I'm just going to move on." — self-resolution fix applied (fast-path phrases + 4s timing check). |
 | 14 | Mar 4 | Full clean run. ReactiveGate suppressing all think-aloud. Proactive passthroughs correct. Confusion self-resolution ("moving on" fast-path) discarding pending confusion. All three trigger types firing cleanly. Compliance test suite restructured (removed 12 LLM-silence tests, kept 11 gate pass-through tests). |
 | 15 | Mar 4 | Hesitation trigger firing (10s window fix confirmed). "do you know" DIRECTED_QUESTION passthrough verified. Found two new issues: (1) CONDITION A carryover — "give me the answer" at t=0, "I would say Earl" at t=9s, TARS confirmed Earl. Fixed by splitting window: CONDITION A/C now 6s, address/directed-question stays 15s. (2) Suppression miss: "do I need a hint?" / "I do think I need a hint" suppressed because "i need a hint" not in DIRECTED_QUESTION phrase list; hesitation covered it with higher latency. LLM Blyton misparse: user reading "Blyton Noddy Arthur" as clue context — LLM split into four separate answers. "you know" filler tag on CONDITION C sentence: gate handled correctly, not an issue currently. |
+| 16 | Mar 5 | First robot mode run. Proactive monitor firing in non-task mode (false positives on general chat). Expression tags missing on all proactive responses. task_mode OFF on clue narration ("Another one is most populated continent."). STT reading "TARS" as "Thor". Fixes 23-28 applied. |
+| 17 | Mar 5 | Robot mode. STT fix not yet deployed — "Hey Thor" still transcribed. Expression warnings still present (supportive/moderate). task_mode OFF guard rejected ("Another one is most populated continent." — no end signal in last 3 messages). Proactive monitor silent outside task mode (Fix 27 confirmed). |
+| 18 | Mar 5 | Robot mode with all fixes. "Hey TARS" transcribed correctly throughout. No INVALID emotion/intensity warnings in session. task_mode ON/OFF correct: "Hey, TARS. I am done." (split across 2 VAD fragments) triggered OFF correctly. Proactive triggers (silence, hesitation, confusion) firing and passing through with valid express tags (emotion=curious/medium, emotion=angry/medium observed). Think-aloud suppressed throughout. ReactiveGate passing direct questions correctly. After task mode OFF, proactive monitor silent. |

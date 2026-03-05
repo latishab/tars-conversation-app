@@ -41,7 +41,7 @@ class ReasoningLeakFilter(FrameProcessor):
     before they reach TTS. Handles <think> blocks (stateful), markdown inline
     formatting, and leading ellipsis tokens.
     """
-    _MD_RE = re.compile(r'\*{1,3}|_{1,2}|`+')
+    _MD_RE = re.compile(r'\*+|_{1,2}|`+')
     _LEAD_ELLIPSIS_RE = re.compile(r'^[\s…\.]+')
 
     def __init__(self):
@@ -132,6 +132,19 @@ class SilenceFilter(FrameProcessor):
         re.IGNORECASE,
     )
 
+    # Untagged reasoning leak: meta-commentary that appears when the model outputs
+    # its chain-of-thought directly in the content field (no <think> tags).
+    # These phrases never appear in real TARS responses.
+    _REASONING_LEAK_RE = re.compile(
+        r'User conversation:'
+        r'|So final:'
+        r"|Let's produce final"
+        r'|developer instruction'
+        r'|assistant gave'
+        r'|assistant suggested',
+        re.IGNORECASE,
+    )
+
     def __init__(self):
         super().__init__()
         self.current_response_text = ""
@@ -191,10 +204,12 @@ class SilenceFilter(FrameProcessor):
         # Check the full accumulated response before releasing anything
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self.is_collecting:
-                if self._SILENCE_RE.search(self.current_response_text):
-                    # Pure {"action":"silence"} or mixed output — drop everything
+                is_silence = self._SILENCE_RE.search(self.current_response_text)
+                is_reasoning_leak = self._REASONING_LEAK_RE.search(self.current_response_text)
+                if is_silence or is_reasoning_leak:
+                    reason = "silence" if is_silence else "reasoning leak"
                     logger.info(
-                        f"SilenceFilter: suppressing silence response "
+                        f"SilenceFilter: suppressing {reason} response "
                         f"({len(self.current_response_text)} chars, "
                         f"{len(self._frame_buffer)} buffered frames)"
                     )

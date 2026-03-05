@@ -65,6 +65,26 @@ CLUE_RESOLUTION_INPUTS = [
     "Got it, banned. All right.",
 ]
 
+# Task-completion phrases with clear task-end signal. Must call set_task_mode("off").
+# Requires explicit task reference, direct address+done, or pivot — not standalone "I'm done".
+TASK_DONE_INPUTS = [
+    "Hey TARS, I'm done with the crossword.",
+    "Hey TARS, I am done with this crossword.",
+    "I'm done with the crossword.",
+    "I finished the puzzle.",
+    "Let's do something else.",
+]
+
+# Ambiguous done phrases — mid-narration clue-skip or think-aloud. Must NOT call set_task_mode("off").
+TASK_DONE_AMBIGUOUS = [
+    "I'm done.",
+    "Done.",
+    "Got it.",
+    "Never mind.",
+    "Never mind, moving on.",
+    "Okay, moving on.",
+]
+
 # Direct reactive questions: user explicitly asks for help.
 # Gate passes these through. LLM must respond — with a hint, not silence, not the direct answer.
 # Tuple: (utterance, answer_word_to_NOT_appear_verbatim_in_response)
@@ -290,6 +310,57 @@ def test_clue_resolution_does_not_exit_task_mode():
         )
 
 
+# ── CONDITION D: task completion ──────────────────────────────────────────────
+
+def test_task_done_calls_set_task_mode_off():
+
+    """Explicit task-done phrases must call set_task_mode('off').
+
+    Root cause of Run 19 failure: 'I'm done with the crossword' (said three times)
+    never triggered set_task_mode('off'). No CONDITION D existed in the prompt so
+    the LLM defaulted to silence, leaving task mode permanently active.
+    """
+    sys_msg = system_prompt()
+    history = [sys_msg] + history_from_pairs(LONG_HISTORY)
+    for utterance in TASK_DONE_INPUTS:
+        messages = history + [{"role": "user", "content": utterance}]
+        content, tool_calls = call_llm_with_tool_check(messages, max_tokens=150)
+        task_mode_off = any(
+            tc.get("function", {}).get("name") == "set_task_mode"
+            and '"off"' in tc.get("function", {}).get("arguments", "")
+            for tc in tool_calls
+        )
+        if not task_mode_off:
+            print(f"  [task-done] FAIL: {utterance!r}\n    content={content[:120]!r}\n    tool_calls={tool_calls}")
+        assert task_mode_off, (
+            f"Task-done phrase '{utterance}' did not call set_task_mode('off'): "
+            f"content={content!r}, tool_calls={tool_calls}"
+        )
+
+
+def test_ambiguous_done_does_not_exit_task_mode():
+    """Standalone 'done' / 'I'm done' mid-narration must NOT call set_task_mode('off').
+
+    These are think-aloud phrases — the user finished a clue, not the whole task.
+    CONDITION D requires an explicit task reference or direct address, not bare 'done'.
+    """
+    sys_msg = system_prompt()
+    history = [sys_msg] + history_from_pairs(LONG_HISTORY)
+    for utterance in TASK_DONE_AMBIGUOUS:
+        messages = history + [{"role": "user", "content": utterance}]
+        content, tool_calls = call_llm_with_tool_check(messages, max_tokens=150)
+        task_mode_off = any(
+            tc.get("function", {}).get("name") == "set_task_mode"
+            and '"off"' in tc.get("function", {}).get("arguments", "")
+            for tc in tool_calls
+        )
+        if task_mode_off:
+            print(f"  [ambiguous-done] FAIL: {utterance!r}\n    tool_calls={tool_calls}")
+        assert not task_mode_off, (
+            f"Ambiguous phrase '{utterance}' incorrectly called set_task_mode('off'): {tool_calls}"
+        )
+
+
 # ── CONDITION B: reactive question compliance ─────────────────────────────────
 
 def test_reactive_question_returns_hint_not_answer():
@@ -490,6 +561,50 @@ def test_proactive_no_context_returns_silence():
     response = call_llm(messages, max_tokens=200)
     print(f"\n[proactive-no-context] → {response[:150]!r}")
     assert response is not None, "No response returned"
+
+
+def test_reactive_expression_not_neutral():
+    """Reactive responses for emotionally-engaged scenarios should use non-neutral expressions.
+
+    At temperature=0.7, at least 60% of trials across test cases must have non-neutral
+    expression tags. Neutral is wrong for hints, thanks, and celebration moments.
+    """
+    TAG_RE = re.compile(r'\[express\(([^,)]+),\s*([^)]+)\)\]', re.IGNORECASE)
+    TRIALS = 3
+
+    # (utterance, label) — scenarios where neutral is the wrong choice
+    EXPRESSION_CASES = [
+        ("TARS, can you give me a hint for this one? Taste of lemon or vinegar.", "hint-request"),
+        ("Thanks TARS, that helped a lot.", "thanks"),
+        ("I got it! The answer is telephone, got it.", "celebration"),
+    ]
+
+    non_neutral = 0
+    total = len(EXPRESSION_CASES) * TRIALS
+    sys_msg = system_prompt()
+    history = [sys_msg] + history_from_pairs(LONG_HISTORY)
+
+    for utterance, label in EXPRESSION_CASES:
+        messages = history + [{"role": "user", "content": utterance}]
+        for t in range(TRIALS):
+            response = call_llm(messages, max_tokens=150, temperature=0.7)
+            m = TAG_RE.search(response)
+            if m:
+                emotion = m.group(1).strip().lower()
+                is_non_neutral = emotion != "neutral"
+            else:
+                is_non_neutral = False
+            tag_str = m.group(0) if m else "(no tag)"
+            label_t = f"{label} trial {t+1}"
+            if is_non_neutral:
+                print(f"  [expr/{label_t}] NON-NEUTRAL {tag_str} → {response[:80]!r}")
+            else:
+                print(f"  [expr/{label_t}] NEUTRAL/MISSING {tag_str} → {response[:80]!r}")
+            non_neutral += int(is_non_neutral)
+
+    rate = non_neutral / total
+    print(f"\nExpression diversity temperature=0.7: {non_neutral}/{total} non-neutral ({rate:.0%})")
+    assert rate >= 0.60, f"Non-neutral expression rate too low: {rate:.0%} (need >= 60%)"
 
 
 def test_proactive_at_live_temperature():

@@ -45,13 +45,14 @@ class ProactiveMonitor(FrameProcessor):
         context,
         task_ref: dict,
         silence_threshold: float = 8.0,
-        hesitation_threshold: int = 4,
+        hesitation_threshold: int = 3,
         hesitation_window: float = 10.0,
         cooldown: float = 30.0,
         post_bot_buffer: float = 5.0,
         check_interval: float = 1.0,
         enabled: bool = True,
         task_context: str = "",
+        session_id: str = "",
     ):
         super().__init__()
         self._context = context
@@ -64,6 +65,7 @@ class ProactiveMonitor(FrameProcessor):
         self._check_interval = check_interval
         self._enabled = enabled
         self._task_context = task_context
+        self._session_id = session_id or datetime.now().strftime("%Y%m%d_%H%M%S")
 
         self._proactive_response_pending = False
         self._task_mode_just_activated = False
@@ -139,6 +141,11 @@ class ProactiveMonitor(FrameProcessor):
         logger.info("ProactiveMonitor: monitor loop ended")
 
     async def _check_triggers(self):
+        # Proactive monitoring only runs during an active task. Without task context
+        # the triggers produce too many false positives in general conversation.
+        if not self._task_context:
+            return
+
         now = time.time()
         trigger_type = None
         context_snippet = ""
@@ -169,6 +176,11 @@ class ProactiveMonitor(FrameProcessor):
                     f"ProactiveMonitor: hesitation score={score}/{self._hesitation_threshold} "
                     f"window={len(recent)} entries, tokens={tokens}"
                 )
+                if score < self._hesitation_threshold:
+                    self._log_event("hesitation_below_threshold", "hesitation", False, {
+                        "hesitation_score": score,
+                        "context_snippet": " ".join(e["text"] for e in recent[-3:]),
+                    })
             if score >= self._hesitation_threshold:
                 trigger_type = "hesitation"
                 # Include pre-hesitation context so LLM knows what clue the user was on
@@ -198,6 +210,10 @@ class ProactiveMonitor(FrameProcessor):
                             f"ProactiveMonitor: confusion '{pattern}' discarded "
                             f"— self-resolution phrase in window"
                         )
+                        self._log_event("confusion_discarded", "confusion", False, {
+                            "context_snippet": combined[:120],
+                            "suppression_reason": "self_resolution_phrase",
+                        })
                         break
                     self._pending_confusion = combined[:200]
                     self._pending_confusion_detected_at = time.time()
@@ -216,6 +232,10 @@ class ProactiveMonitor(FrameProcessor):
                     f"{last_speech - self._pending_confusion_detected_at:.1f}s after detection "
                     f"(threshold {_CONFUSION_SELF_RESOLVE_SECS}s)"
                 )
+                self._log_event("confusion_discarded", "confusion", False, {
+                    "context_snippet": self._pending_confusion[:120] if self._pending_confusion else "",
+                    "suppression_reason": "user_continued_talking",
+                })
                 self._pending_confusion = None
             else:
                 trigger_type = "confusion"
@@ -301,6 +321,12 @@ class ProactiveMonitor(FrameProcessor):
             else ""
         )
 
+        express_reminder = (
+            "\nEnd your response with [express(emotion, intensity)]. "
+            "emotion: neutral/happy/sad/angry/excited/afraid/sleepy/curious/skeptical/smug/surprised. "
+            "intensity: low/medium/high. Exact words only."
+        )
+
         if self._task_context:
             no_context_escape = (
                 '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
@@ -315,11 +341,16 @@ class ProactiveMonitor(FrameProcessor):
                     f"[PROACTIVE DETECTION: extended silence]\n"
                     f"The user has been silent for 15+ seconds while working on a {self._task_context}.\n"
                     f'Recent context: "{context_snippet}"\n\n'
-                    f"They may be stuck. Offer a brief, low-key check-in. One sentence, Notification-level.\n"
+                    f"Identify the specific clue or topic they were last working on from the context above, "
+                    f"then offer a one-sentence check-in that references it.\n"
+                    f"Good: \"That 'impatiently longing' clue is a tough one — want a nudge?\"\n"
+                    f"Bad: \"Let me know if you need help.\" / \"Need anything?\"\n"
                     f"Do not give the answer or name the answer word. "
+                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
                     f"Do not prefix with \"Notification:\". Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"
+                    f"{express_reminder}"
                     f"{probe_note}"
                 )
             elif trigger_type == "hesitation":
@@ -333,9 +364,11 @@ class ProactiveMonitor(FrameProcessor):
                     f"One sentence.\n"
                     f"Do not name specific words or titles that could be the answer — "
                     f"not even as examples. Use category or category description only. "
+                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
                     f"Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"
+                    f"{express_reminder}"
                     f"{probe_note}"
                 )
             else:  # confusion
@@ -347,9 +380,12 @@ class ProactiveMonitor(FrameProcessor):
                     f"Offer a helpful nudge related to what they're working on. Look back through "
                     f"conversation history for the most recent clue. One sentence, Suggestion-level "
                     f"is appropriate here.\n"
-                    f"Do not give the answer or name the answer word. Just respond naturally."
+                    f"Do not give the answer or name the answer word. "
+                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
+                    f"Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"
+                    f"{express_reminder}"
                     f"{probe_note}"
                 )
             system_msg = {"role": "system", "content": system_content}
@@ -368,6 +404,7 @@ class ProactiveMonitor(FrameProcessor):
                     f"Do not prefix your response with 'Notification:', 'Suggestion:', or 'Hint:'. Just respond naturally.\n"
                     f"If context is ambiguous or this is a false positive: {{\"action\": \"silence\"}}.\n"
                     f"1-2 sentences maximum."
+                    f"{express_reminder}"
                     f"{probe_note}"
                 ),
             }
@@ -419,15 +456,20 @@ class ProactiveMonitor(FrameProcessor):
         }
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
-        today = datetime.now().strftime("%Y-%m-%d")
-        log_path = log_dir / f"proactive_interventions_{today}.jsonl"
+        log_path = log_dir / f"proactive_interventions_{self._session_id}.jsonl"
         with open(log_path, "a") as f:
             f.write(json.dumps(event) + "\n")
         # Delete files older than 7 days
         cutoff = datetime.now() - timedelta(days=7)
         for old in log_dir.glob("proactive_interventions_*.jsonl"):
             try:
-                file_date = datetime.strptime(old.stem.split("_", 2)[2], "%Y-%m-%d")
+                # Parse date from session_id prefix (YYYYMMDD_...) or legacy YYYY-MM-DD suffix
+                stem_parts = old.stem.split("_")
+                date_str = stem_parts[2] if len(stem_parts) >= 3 else ""
+                if len(date_str) == 8:
+                    file_date = datetime.strptime(date_str, "%Y%m%d")
+                else:
+                    file_date = datetime.strptime(date_str, "%Y-%m-%d")
                 if file_date < cutoff:
                     old.unlink()
             except (ValueError, IndexError):

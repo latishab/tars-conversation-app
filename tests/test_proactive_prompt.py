@@ -179,28 +179,29 @@ class TestProbeSystemMessageContent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Notification", content)
 
     async def test_task_mode_probe_contains_suggestion(self):
+        # Confusion trigger uses Suggestion-level; silence uses Notification-level
         m = _make_monitor(task_context="crossword")
-        content = await self._fire_and_get_probe(m)
+        mock = _wire_task(m)
+        await m._fire_intervention("confusion", "test clue about something")
+        frame = _get_update_frame(mock)
+        content = frame.messages[-1]["content"]
         self.assertIn("Suggestion", content)
 
     async def test_task_mode_probe_prohibits_direct_answer(self):
         m = _make_monitor(task_context="crossword")
         content = await self._fire_and_get_probe(m)
-        self.assertIn("Never give the answer directly", content)
+        self.assertIn("Do not give the answer", content)
 
     async def test_task_mode_probe_acknowledges_reactive_exception(self):
+        # Task mode directs the model to re-engage only when directly addressed
         m = _make_monitor(task_context="crossword")
         content = await self._fire_and_get_probe(m)
-        has_exception = "will ask" in content or "reactive" in content
-        self.assertTrue(has_exception,
-            "Task mode probe must acknowledge that direct answers are fine when explicitly requested")
+        self.assertIn("directly address you", content)
 
     async def test_task_mode_probe_defaults_to_silence(self):
         m = _make_monitor(task_context="crossword")
         content = await self._fire_and_get_probe(m)
-        # Must say default is silence
         self.assertIn('{"action": "silence"}', content)
-        self.assertIn("Default", content)
 
     async def test_task_mode_probe_includes_task_context_name(self):
         m = _make_monitor(task_context="crossword")

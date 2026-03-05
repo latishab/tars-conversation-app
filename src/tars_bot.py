@@ -77,8 +77,8 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, ProactiveMonitor
-from observers import StateObserver, MetricsObserver
+from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, ProactiveMonitor, ReactiveGate
+from observers import StateObserver, MetricsObserver, TranscriptionObserver, AssistantResponseObserver
 from character.prompts import (
     load_character,
     get_introduction_instruction,
@@ -87,10 +87,12 @@ from tools import (
     capture_robot_camera,
     adjust_persona_parameter,
     execute_movement,
+    set_task_mode,
     create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
+    create_task_mode_schema,
     get_persona_storage,
     set_rate_limiter,
     set_custom_expressions,
@@ -341,6 +343,7 @@ async def run_robot_bot(ui=None):
                 create_movement_schema(custom_movements=_custom_movements),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
+                create_task_mode_schema(),
                 # create_identity_schema(),  # disabled: name recognition unreliable
             ]
         )
@@ -355,6 +358,7 @@ async def run_robot_bot(ui=None):
         llm.register_function("execute_movement", execute_movement)
         llm.register_function("capture_robot_camera", capture_robot_camera, cancel_on_interruption=False)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+        llm.register_function("set_task_mode", set_task_mode)
 
         # async def set_user_identity(params: FunctionCallParams):
         #     name = params.arguments.get("name", "")
@@ -429,6 +433,8 @@ async def run_robot_bot(ui=None):
 
         state_observer = StateObserver(state_sync=state_sync)
         metrics_observer = MetricsObserver()
+        transcription_observer = TranscriptionObserver(client_state=client_state)
+        assistant_observer = AssistantResponseObserver()
 
         # ====================================================================
         # PIPELINE ASSEMBLY
@@ -440,18 +446,21 @@ async def run_robot_bot(ui=None):
         # before the task is created; the dict is populated below after PipelineTask
         task_ref = {"task": None, "audio_task": None}
 
-        # proactive_monitor = ProactiveMonitor(
-        #     context=context,
-        #     task_ref=task_ref,
-        #     silence_threshold=8.0,
-        #     hesitation_threshold=4,
-        #     hesitation_window=5.0,
-        #     cooldown=30.0,
-        #     post_bot_buffer=5.0,
-        #     check_interval=1.0,
-        # )
+        proactive_monitor = ProactiveMonitor(
+            context=context,
+            task_ref=task_ref,
+            silence_threshold=8.0,
+            hesitation_threshold=3,
+            hesitation_window=10.0,
+            cooldown=30.0,
+            post_bot_buffer=5.0,
+            check_interval=1.0,
+            session_id=client_id,
+        )
+        persona_storage["proactive_monitor"] = proactive_monitor
 
         express_filter = ExpressTagFilter()
+        reactive_gate = ReactiveGate(proactive_monitor)
         audio_bridge = AudioBridge(
             rpi_input_track=rpi_input,
             rpi_output_track=rpi_output,
@@ -460,10 +469,11 @@ async def run_robot_bot(ui=None):
 
         pipeline = Pipeline([
             stt,
-            # proactive_monitor,
+            proactive_monitor,
             context_aggregator.user(),
             llm,
             express_filter,
+            reactive_gate,
             SilenceFilter(),
             ReasoningLeakFilter(),
             SpaceNormalizer(),
@@ -499,7 +509,7 @@ async def run_robot_bot(ui=None):
                 enable_usage_metrics=True,
                 report_only_initial_ttfb=False,
             ),
-            observers=[state_observer, metrics_observer],
+            observers=[state_observer, metrics_observer, transcription_observer, assistant_observer],
         )
 
         task_ref["task"] = task
