@@ -93,6 +93,7 @@ class ProactiveMonitor(FrameProcessor):
         self._consecutive_unanswered: int = 0
         self._pending_confusion: str | None = None  # detected during speech, fire after pause
         self._pending_confusion_detected_at: float = 0.0
+        self._proactive_speech_ended_at: float = 0.0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -132,6 +133,9 @@ class ProactiveMonitor(FrameProcessor):
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._tars_speaking = False
             self._last_bot_speech_time = time.time()
+            if self._proactive_response_pending:
+                self._proactive_speech_ended_at = time.time()
+                self._proactive_response_pending = False
             logger.debug("ProactiveMonitor: BotStoppedSpeakingFrame received")
 
         await self.push_frame(frame, direction)
@@ -441,6 +445,11 @@ class ProactiveMonitor(FrameProcessor):
             "context_snippet": context_snippet,
             "hesitation_score": hesitation_score,
         })
+
+    def in_proactive_followup_window(self) -> bool:
+        if self._proactive_speech_ended_at == 0.0:
+            return False
+        return time.time() - self._proactive_speech_ended_at < 10.0
 
     def set_task_mode(self, mode: str | None):
         """Adjust monitor behavior for task mode. None = exit task mode."""
