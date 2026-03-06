@@ -434,13 +434,13 @@ PROACTIVE_HESITATION_MSG = {
         f"while working on a {_TASK_CONTEXT}.\n"
         f'Recent context: "Um. Uh. Um. {_CLUE_SNIPPET}"\n\n'
         "They appear to be struggling. Offer a gentle nudge about whatever they were last "
-        "working on. Look back through conversation history for the most recent clue. "
+        "working on. Look back through conversation history for what they were last working on. "
         "One sentence.\n"
         "Do not name specific words or titles that could be the answer — "
         "not even as examples. Use category or category description only. "
         "Just respond naturally."
         "\nAfter your check-in, if the user continues to think aloud or narrate to "
-        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "themselves (task narration, fillers, self-answers), return to silence. "
         "Only engage if they directly address you."
         '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
     ),
@@ -454,11 +454,11 @@ PROACTIVE_CONFUSION_MSG = {
         f"a {_TASK_CONTEXT}.\n"
         f'Recent context: "I don\'t know this one. {_CLUE_SNIPPET}"\n\n'
         "Offer a helpful nudge related to what they're working on. Look back through "
-        "conversation history for the most recent clue. One sentence, Suggestion-level "
+        "conversation history for what they were last working on. One sentence, Suggestion-level "
         "is appropriate here.\n"
         "Do not give the answer or name the answer word. Just respond naturally."
         "\nAfter your check-in, if the user continues to think aloud or narrate to "
-        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "themselves (task narration, fillers, self-answers), return to silence. "
         "Only engage if they directly address you."
         '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
     ),
@@ -474,7 +474,7 @@ PROACTIVE_SILENCE_MSG = {
         "Do not give the answer or name the answer word. "
         'Do not prefix with "Notification:". Just respond naturally.'
         "\nAfter your check-in, if the user continues to think aloud or narrate to "
-        "themselves (clue narration, fillers, self-answers), return to silence. "
+        "themselves (task narration, fillers, self-answers), return to silence. "
         "Only engage if they directly address you."
         '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
     ),
@@ -546,13 +546,13 @@ def test_proactive_no_context_returns_silence():
             f"while working on a {_TASK_CONTEXT}.\n"
             'Recent context: "Um. Um. Uh."\n\n'
             "They appear to be struggling. Offer a gentle nudge about whatever they were last "
-            "working on. Look back through conversation history for the most recent clue. "
+            "working on. Look back through conversation history for what they were last working on. "
             "One sentence.\n"
             "Do not name specific words or titles that could be the answer — "
             "not even as examples. Use category or category description only. "
             "Just respond naturally."
             "\nAfter your check-in, if the user continues to think aloud or narrate to "
-            "themselves (clue narration, fillers, self-answers), return to silence. "
+            "themselves (task narration, fillers, self-answers), return to silence. "
             "Only engage if they directly address you."
             '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
         ),

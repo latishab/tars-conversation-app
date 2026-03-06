@@ -425,6 +425,7 @@ async def run_robot_bot(ui=None):
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
+        persona_storage["context"] = context
         persona_storage["context_aggregator"] = context_aggregator
 
         # ====================================================================
@@ -548,6 +549,7 @@ async def run_robot_bot(ui=None):
     finally:
         # Cleanup
         logger.info("🧹 Cleaning up...")
+        metrics_store.print_session_summary()
         if service_refs.get("aiortc_client"):
             await service_refs["aiortc_client"].disconnect()
         if service_refs.get("stt"):

@@ -94,6 +94,7 @@ class ProactiveMonitor(FrameProcessor):
         self._pending_confusion: str | None = None  # detected during speech, fire after pause
         self._pending_confusion_detected_at: float = 0.0
         self._proactive_speech_ended_at: float = 0.0
+        self._in_followup_conversation: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -133,9 +134,10 @@ class ProactiveMonitor(FrameProcessor):
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._tars_speaking = False
             self._last_bot_speech_time = time.time()
-            if self._proactive_response_pending:
+            if self._proactive_response_pending or self._in_followup_conversation:
                 self._proactive_speech_ended_at = time.time()
                 self._proactive_response_pending = False
+                self._in_followup_conversation = False
             logger.debug("ProactiveMonitor: BotStoppedSpeakingFrame received")
 
         await self.push_frame(frame, direction)
@@ -171,11 +173,18 @@ class ProactiveMonitor(FrameProcessor):
             last_user_time = self._transcript_buffer[-1]["timestamp"]
             last_active = max(last_user_time, self._last_bot_speech_time)
             if now - last_active > self._silence_threshold:
-                trigger_type = "silence"
-                # Include last 5 entries so LLM sees the clue, not just the final filler
-                context_snippet = " ".join(
-                    e["text"] for e in self._transcript_buffer[-5:]
-                ).strip()
+                # Only fire if user has spoken since TARS last responded.
+                # If post_bot is empty, TARS had the last word and silence
+                # is normal — nothing new to check in about.
+                post_bot = [
+                    e for e in self._transcript_buffer
+                    if e["timestamp"] > self._last_bot_speech_time
+                ]
+                if post_bot:
+                    trigger_type = "silence"
+                    context_snippet = " ".join(
+                        e["text"] for e in post_bot[-5:]
+                    ).strip()
 
         # Trigger 2: weighted hesitation (overrides silence)
         window_cutoff = now - self._hesitation_window
@@ -183,16 +192,11 @@ class ProactiveMonitor(FrameProcessor):
         if recent:
             tokens = re.findall(r"[a-z']+", " ".join(e["text"] for e in recent).lower())
             score = sum(HESITATION_WEIGHTS.get(t, 0) for t in tokens)
-            if score > 0:
-                logger.debug(
-                    f"ProactiveMonitor: hesitation score={score}/{self._hesitation_threshold} "
-                    f"window={len(recent)} entries, tokens={tokens}"
-                )
-                if score < self._hesitation_threshold:
-                    self._log_event("hesitation_below_threshold", "hesitation", False, {
-                        "hesitation_score": score,
-                        "context_snippet": " ".join(e["text"] for e in recent[-3:]),
-                    })
+            if score > 0 and score < self._hesitation_threshold:
+                self._log_event("hesitation_below_threshold", "hesitation", False, {
+                    "hesitation_score": score,
+                    "context_snippet": " ".join(e["text"] for e in recent[-3:]),
+                })
             if score >= self._hesitation_threshold:
                 recent_text_lower = " ".join(e["text"] for e in recent).lower()
                 if any(p in recent_text_lower for p in HESITATION_SELF_RESOLVE_PHRASES):
@@ -220,7 +224,6 @@ class ProactiveMonitor(FrameProcessor):
         since_last_check = [e for e in self._transcript_buffer if e["timestamp"] > check_cutoff]
         if since_last_check:
             combined = " ".join(e["text"] for e in since_last_check).lower()
-            logger.debug(f"ProactiveMonitor: confusion check on: {combined[:100]}")
             for pattern in CONFUSION_PATTERNS:
                 if pattern in combined:
                     self._last_checked_transcript_time = time.time()  # advance before suppression
@@ -344,7 +347,12 @@ class ProactiveMonitor(FrameProcessor):
         express_reminder = (
             "\nEnd your response with [express(emotion, intensity)]. "
             "emotion: neutral/happy/sad/angry/excited/afraid/sleepy/curious/skeptical/smug/surprised. "
-            "intensity: low/medium/high. Exact words only."
+            "intensity: low/medium/high. Exact words only. "
+            "Match expression to context: helping/hinting → curious (low), "
+            "user struggling → sad (low), user got it right → happy (low), "
+            "check-in/nudge → curious (low). Do not default to neutral. "
+            "Use medium only for standout moments (breakthroughs, giving up). "
+            "Use high only for strong reactions (greetings, farewells)."
         )
 
         if self._task_context:
@@ -353,7 +361,7 @@ class ProactiveMonitor(FrameProcessor):
             )
             post_intervention_note = (
                 "\nAfter your check-in, if the user continues to think aloud or narrate to "
-                "themselves (clue narration, fillers, self-answers), return to silence. "
+                "themselves (task narration, fillers, self-answers), return to silence. "
                 "Only engage if they directly address you."
             )
             if trigger_type == "silence":
@@ -361,12 +369,12 @@ class ProactiveMonitor(FrameProcessor):
                     f"[PROACTIVE DETECTION: extended silence]\n"
                     f"The user has been silent for 15+ seconds while working on a {self._task_context}.\n"
                     f'Recent context: "{context_snippet}"\n\n'
-                    f"Identify the specific clue or topic they were last working on from the context above, "
-                    f"then offer a one-sentence check-in that references it.\n"
-                    f"Good: \"That 'impatiently longing' clue is a tough one — want a nudge?\"\n"
+                    f"Identify the specific problem or topic they were last working on from the context above "
+                    f"or conversation history, then offer a one-sentence check-in that references it.\n"
+                    f"Good: \"That 'impatiently longing' one is a tough one — want a nudge?\"\n"
                     f"Bad: \"Let me know if you need help.\" / \"Need anything?\"\n"
                     f"Do not give the answer or name the answer word. "
-                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
+                    f"The user already stated the problem — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related concept, a category, or a nudge toward the answer. "
                     f"Do not prefix with \"Notification:\". Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"
@@ -380,11 +388,11 @@ class ProactiveMonitor(FrameProcessor):
                     f"while working on a {self._task_context}.\n"
                     f'Recent context: "{context_snippet}"\n\n'
                     f"They appear to be struggling. Offer a gentle nudge about whatever they were last "
-                    f"working on. Look back through conversation history for the most recent clue. "
+                    f"working on. Look back through conversation history for what they were last working on. "
                     f"One sentence.\n"
                     f"Do not name specific words or titles that could be the answer — "
                     f"not even as examples. Use category or category description only. "
-                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
+                    f"The user already stated the problem — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related concept, a category, or a nudge toward the answer. "
                     f"Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"
@@ -398,10 +406,10 @@ class ProactiveMonitor(FrameProcessor):
                     f"a {self._task_context}.\n"
                     f'Recent context: "{context_snippet}"\n\n'
                     f"Offer a helpful nudge related to what they're working on. Look back through "
-                    f"conversation history for the most recent clue. One sentence, Suggestion-level "
+                    f"conversation history for what they were last working on. One sentence, Suggestion-level "
                     f"is appropriate here.\n"
                     f"Do not give the answer or name the answer word. "
-                    f"The user already read the clue aloud — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related word, a category, a letter hint, or wordplay nudge. "
+                    f"The user already stated the problem — do NOT restate, rephrase, or paraphrase it. Give a hint from a different angle: a related concept, a category, or a nudge toward the answer. "
                     f"Just respond naturally."
                     f"{post_intervention_note}"
                     f"{no_context_escape}"

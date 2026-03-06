@@ -219,5 +219,80 @@ class TestSetTaskMode(unittest.TestCase):
         self.assertEqual(m._task_context, "")
 
 
+class TestFollowupConversationChaining(unittest.TestCase):
+    """BotStoppedSpeakingFrame with _in_followup_conversation=True reopens the window."""
+
+    def _get_BotStoppedSpeakingFrame(self):
+        return sys.modules["pipecat.frames.frames"].BotStoppedSpeakingFrame
+
+    def test_followup_flag_reopens_window(self):
+        """When _in_followup_conversation is True, BotStopped resets proactive_speech_ended_at."""
+        m = _make_monitor()
+        m._in_followup_conversation = True
+        m._proactive_response_pending = False
+        m._proactive_speech_ended_at = 0.0
+        m._tars_speaking = True
+
+        BotStoppedSpeakingFrame = self._get_BotStoppedSpeakingFrame()
+        frame = BotStoppedSpeakingFrame()
+
+        import asyncio
+        asyncio.run(m.process_frame(frame, None))
+
+        self.assertGreater(m._proactive_speech_ended_at, 0.0, "window should be reopened")
+        self.assertFalse(m._in_followup_conversation, "flag cleared after handling")
+        self.assertFalse(m._proactive_response_pending)
+
+    def test_followup_flag_not_set_without_chain(self):
+        """BotStopped without either flag does NOT open the followup window."""
+        m = _make_monitor()
+        m._in_followup_conversation = False
+        m._proactive_response_pending = False
+        m._proactive_speech_ended_at = 0.0
+        m._tars_speaking = True
+
+        BotStoppedSpeakingFrame = self._get_BotStoppedSpeakingFrame()
+        frame = BotStoppedSpeakingFrame()
+
+        import asyncio
+        asyncio.run(m.process_frame(frame, None))
+
+        self.assertEqual(m._proactive_speech_ended_at, 0.0, "window should not be opened")
+
+    def test_cancel_clears_followup_flag(self):
+        """CancelFrame via reactive_gate clears _in_followup_conversation."""
+        # Import ReactiveGate via sys.path (src/ already on path from module load above)
+        import importlib.util as ilu
+        spec = ilu.spec_from_file_location(
+            "reactive_gate",
+            "/Users/mac/Desktop/tars-conversation-app/src/processors/reactive_gate.py",
+        )
+        rg_mod = ilu.module_from_spec(spec)
+
+        # Stub pipecat frames for reactive_gate
+        frames = sys.modules["pipecat.frames.frames"]
+        for cls_name in ["LLMFullResponseStartFrame", "LLMTextFrame", "LLMFullResponseEndFrame"]:
+            if not hasattr(frames, cls_name):
+                setattr(frames, cls_name, type(cls_name, (), {}))
+
+        spec.loader.exec_module(rg_mod)
+        ReactiveGate = rg_mod.ReactiveGate
+
+        import unittest.mock as mock
+        monitor = mock.MagicMock()
+        monitor._in_followup_conversation = True
+        monitor._proactive_response_pending = False
+
+        gate = ReactiveGate(monitor)
+
+        CancelFrame = sys.modules["pipecat.frames.frames"].CancelFrame
+        frame = CancelFrame()
+
+        import asyncio
+        asyncio.run(gate.process_frame(frame, None))
+
+        self.assertFalse(monitor._in_followup_conversation)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

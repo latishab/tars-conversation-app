@@ -126,7 +126,7 @@ def build_proactive_msg(trigger_type: str, task_context: Optional[str],
         no_context_escape = '\nIf there is no identifiable topic in context or history: {"action": "silence"}'
         post_intervention_note = (
             "\nAfter your check-in, if the user continues to think aloud or narrate to "
-            "themselves (clue narration, fillers, self-answers), return to silence. "
+            "themselves (task narration, fillers, self-answers), return to silence. "
             "Only engage if they directly address you."
         )
         if trigger_type == "silence":
@@ -149,7 +149,7 @@ def build_proactive_msg(trigger_type: str, task_context: Optional[str],
                 f"while working on a {task_context}.\n"
                 f'Recent context: "{context_snippet}"\n\n'
                 f"They appear to be struggling. Offer a gentle nudge about whatever they were last "
-                f"working on. Look back through conversation history for the most recent clue. "
+                f"working on. Look back through conversation history for what they were last working on. "
                 f"One sentence.\n"
                 f"Do not name specific words or titles that could be the answer — "
                 f"not even as examples. Use category or category description only. "
@@ -166,7 +166,7 @@ def build_proactive_msg(trigger_type: str, task_context: Optional[str],
                 f"a {task_context}.\n"
                 f'Recent context: "{context_snippet}"\n\n'
                 f"Offer a helpful nudge related to what they're working on. Look back through "
-                f"conversation history for the most recent clue. One sentence, Suggestion-level "
+                f"conversation history for what they were last working on. One sentence, Suggestion-level "
                 f"is appropriate here.\n"
                 f"Do not give the answer or name the answer word. Just respond naturally."
                 f"{post_intervention_note}"
