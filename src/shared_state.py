@@ -140,6 +140,51 @@ class MetricsStore:
         with self.lock:
             return self.audio_mode
 
+    def print_session_summary(self):
+        """Print P50/P95 latency summary and save JSON to logs/sessions/."""
+        import statistics, json, os, datetime
+        fields = ["stt_ttfb_ms", "llm_ttfb_ms", "tts_ttfb_ms", "ttfa_ms", "total_ms"]
+
+        with self.lock:
+            entries = [self.metrics[k] for k in sorted(self.metrics)]
+
+        samples: dict[str, list[float]] = {f: [] for f in fields}
+        for e in entries:
+            for f in fields:
+                v = getattr(e, f, None)
+                if v is not None:
+                    samples[f].append(v)
+
+        if not any(samples.values()):
+            logger.info("Session summary: no latency data recorded.")
+            return
+
+        rows = []
+        summary: dict[str, dict] = {}
+        for f in fields:
+            vals = sorted(samples[f])
+            if not vals:
+                summary[f] = {"n": 0, "p50": None, "p95": None}
+                continue
+            p50 = statistics.median(vals)
+            idx = max(0, int(len(vals) * 0.95) - 1)
+            p95 = vals[idx] if len(vals) >= 2 else vals[-1]
+            summary[f] = {"n": len(vals), "p50": round(p50, 1), "p95": round(p95, 1)}
+            rows.append(f"  {f:<20} n={len(vals):<4} p50={p50:>7.1f}ms  p95={p95:>7.1f}ms")
+
+        header = "\n--- Session Latency Summary ---"
+        logger.info(header + "\n" + "\n".join(rows) + "\n-------------------------------")
+
+        try:
+            os.makedirs("logs/sessions", exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = f"logs/sessions/latency_{ts}.json"
+            with open(path, "w") as fh:
+                json.dump(summary, fh, indent=2)
+            logger.info(f"Latency summary saved: {path}")
+        except Exception as exc:
+            logger.warning(f"Could not save latency summary: {exc}")
+
 
 # Global instance
 metrics_store = MetricsStore()
