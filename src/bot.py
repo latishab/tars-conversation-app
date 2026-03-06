@@ -579,4 +579,5 @@ async def run_bot(webrtc_connection):
     except Exception as e:
         logger.error(f"Error in bot pipeline: {e}", exc_info=True)
     finally:
+        metrics_store.print_session_summary()
         await _cleanup_services(service_refs)

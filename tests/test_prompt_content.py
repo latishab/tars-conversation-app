@@ -73,12 +73,15 @@ class TestTaskModeSectionSilenceExamples(unittest.TestCase):
         self.assertIn("guess", self.section)
 
     def test_clue_narration_without_answer_is_silence(self):
-        """Narrating a clue alone (no proposed answer) must also be silence."""
-        # e.g., "12 across, British nobleman, four letters"
-        lower = self.section.lower()
-        has_clue_example = "british nobleman" in lower or "four letters" in lower or "ice cream holder" in lower
+        """Narrating a clue alone (no proposed answer) must also be silence in crossword examples."""
+        # Crossword-specific examples live in build_task_examples("crossword"), not build_task_mode_section
+        import sys; sys.path.insert(0, 'src')
+        from character.prompts import build_task_examples
+        examples = build_task_examples("crossword")
+        lower = examples.lower()
+        has_clue_example = "british nobleman" in lower or "four letters" in lower or "clue narration" in lower
         self.assertTrue(has_clue_example,
-            "Must include a clue-only narration example (no proposed answer)")
+            "build_task_examples('crossword') must include a clue-only narration example")
 
     def test_silence_default_stated(self):
         lower = self.section.lower()

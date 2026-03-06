@@ -13,12 +13,14 @@ from unittest.mock import MagicMock
 from processors.reactive_gate import ReactiveGate
 
 
-def make_gate(task_context="crossword", transcript_texts=None, proactive_pending=False):
+def make_gate(task_context="crossword", transcript_texts=None, proactive_pending=False,
+              followup_window=False):
     """transcript_texts: list of strings (most recent within window) or a single string."""
     monitor = MagicMock()
     monitor._task_context = task_context
     monitor._proactive_response_pending = proactive_pending
     monitor._task_mode_just_activated = False
+    monitor.in_proactive_followup_window.return_value = followup_window
     now = time.time()
     if transcript_texts is None:
         monitor._transcript_buffer = []
@@ -55,6 +57,7 @@ def test_gate_passes_task_mode_activation():
     monitor._task_context = "crossword"
     monitor._proactive_response_pending = False
     monitor._task_mode_just_activated = True
+    monitor.in_proactive_followup_window.return_value = False
     monitor._transcript_buffer = [{"text": "I'm going to do a crossword, thinking aloud.", "timestamp": time.time()}]
     gate = ReactiveGate(monitor)
     assert gate._should_pass_through() is True
@@ -153,6 +156,7 @@ def test_gate_suppresses_when_tars_outside_window():
     monitor._task_context = "crossword"
     monitor._proactive_response_pending = False
     monitor._task_mode_just_activated = False
+    monitor.in_proactive_followup_window.return_value = False
     now = time.time()
     monitor._transcript_buffer = [
         {"text": "Hey Tars, hello.", "timestamp": now - 20},  # outside 15s window
@@ -170,11 +174,38 @@ def test_gate_suppresses_condition_a_carryover():
     monitor._task_context = "crossword"
     monitor._proactive_response_pending = False
     monitor._task_mode_just_activated = False
+    monitor.in_proactive_followup_window.return_value = False
     now = time.time()
     monitor._transcript_buffer = [
         {"text": "please give me the answer", "timestamp": now - 9},  # outside 6s intent window
         {"text": "British nobleman, I would say Earl", "timestamp": now - 1},
     ]
     from processors.reactive_gate import ReactiveGate
+    gate = ReactiveGate(monitor)
+    assert gate._should_pass_through() is False
+
+
+# ---- proactive followup window ----------------------------------------------
+
+def test_gate_passes_during_followup_window():
+    """Response passes through when proactive followup window is open."""
+    monitor = MagicMock()
+    monitor._task_context = "crossword"
+    monitor._proactive_response_pending = False
+    monitor._task_mode_just_activated = False
+    monitor._transcript_buffer = [{"text": "yes please", "timestamp": time.time()}]
+    monitor.in_proactive_followup_window.return_value = True
+    gate = ReactiveGate(monitor)
+    assert gate._should_pass_through() is True
+
+
+def test_gate_suppresses_after_followup_window_expires():
+    """Think-aloud is suppressed once followup window has closed."""
+    monitor = MagicMock()
+    monitor._task_context = "crossword"
+    monitor._proactive_response_pending = False
+    monitor._task_mode_just_activated = False
+    monitor._transcript_buffer = [{"text": "hmm okay next clue", "timestamp": time.time()}]
+    monitor.in_proactive_followup_window.return_value = False
     gate = ReactiveGate(monitor)
     assert gate._should_pass_through() is False

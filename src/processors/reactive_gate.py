@@ -26,9 +26,9 @@ _ADDRESS_WINDOW_SECS = 15.0
 
 # Seconds to look back when checking surrender (CONDITION A) and correction
 # (CONDITION C). These are immediate intent signals — if the user said "give me
-# the answer" 10s ago and has since moved on to a new clue, that intent has
+# the answer" 10s ago and has since moved on to a new item, that intent has
 # expired. Keep this short so carry-over doesn't trigger passthrough on the
-# next clue's think-aloud.
+# next item's think-aloud.
 _INTENT_WINDOW_SECS = 6.0
 
 
@@ -65,9 +65,7 @@ _DIRECTED_QUESTION = (
     "i need help",
     "i need a hint",
     "i would like a hint",
-    "i would like a clue",
     "give me a hint",
-    "give me a clue",
     "what do you think",
     "tell me",
     "is it",          # "is it toxic?" — STT may add punctuation so no trailing space
@@ -110,6 +108,7 @@ class ReactiveGate(FrameProcessor):
         if self._monitor._proactive_response_pending:
             logger.info("ReactiveGate: proactive passthrough")
             self._monitor._proactive_response_pending = False
+            self._monitor._in_followup_conversation = True
             return True
 
         if self._monitor.in_proactive_followup_window():
@@ -126,7 +125,7 @@ class ReactiveGate(FrameProcessor):
             return True
 
         # Surrender and correction intent expires quickly — if the user said
-        # "give me the answer" 8s ago and has already moved on to a new clue,
+        # "give me the answer" 8s ago and has already moved on to a new item,
         # that intent should not carry over to the new think-aloud.
         short_window = self._window(_INTENT_WINDOW_SECS)
 
@@ -165,6 +164,7 @@ class ReactiveGate(FrameProcessor):
             self._buffer.clear()
             self._buffering = False
             self._monitor._proactive_response_pending = False
+            self._monitor._in_followup_conversation = False
             await self.push_frame(frame, direction)
             return
 
@@ -181,6 +181,8 @@ class ReactiveGate(FrameProcessor):
         if isinstance(frame, LLMFullResponseEndFrame) and self._buffering:
             self._buffering = False
             if self._should_pass_through():
+                if self._monitor.in_proactive_followup_window():
+                    self._monitor._in_followup_conversation = True
                 for f, d in self._buffer:
                     await self.push_frame(f, d)
                 self._buffer.clear()

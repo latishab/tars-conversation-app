@@ -204,6 +204,8 @@ async def set_task_mode(params: FunctionCallParams):
             )
             context.messages[0] = new_system_prompt
             logger.info(f"System prompt updated: task_mode={mode_value}")
+            logger.debug(f"System prompt length: {len(context.messages[0]['content'])} chars")
+            logger.debug(f"CONDITION B present: {'CONDITION B' in context.messages[0]['content']}")
         except Exception as e:
             logger.error(f"Error updating system prompt for task mode: {e}")
 
