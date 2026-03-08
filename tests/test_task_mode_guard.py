@@ -47,9 +47,15 @@ _persona_path = os.path.join(os.path.dirname(__file__), "..", "src", "tools", "p
 spec = importlib.util.spec_from_file_location("persona", _persona_path)
 persona_mod = importlib.util.module_from_spec(spec)
 
-# Stub character.prompts before loading
-_char_prompts = _make_stub("character")
-_char_prompts_sub = _make_stub("character.prompts")
+# Stub character.prompts only if not already loaded (avoid clobbering real module).
+# If the real module is present, patch build_tars_system_prompt to a no-op stub
+# so set_task_mode doesn't make real LLM calls.
+if "character" not in sys.modules:
+    _make_stub("character")
+if "character.prompts" not in sys.modules:
+    _char_prompts_sub = _make_stub("character.prompts")
+else:
+    _char_prompts_sub = sys.modules["character.prompts"]
 _char_prompts_sub.build_tars_system_prompt = lambda *a, **kw: {"role": "system", "content": "stub"}
 spec.loader.exec_module(persona_mod)
 
@@ -67,7 +73,7 @@ class _FakeContext:
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_params(mode, last_user_text):

@@ -190,7 +190,8 @@ class TestProbeSystemMessageContent(unittest.IsolatedAsyncioTestCase):
     async def test_task_mode_probe_prohibits_direct_answer(self):
         m = _make_monitor(task_context="crossword")
         content = await self._fire_and_get_probe(m)
-        self.assertIn("Do not give the answer", content)
+        # Probe must prohibit giving the direct answer (phrased as "not the answer")
+        self.assertIn("not the answer", content)
 
     async def test_task_mode_probe_acknowledges_reactive_exception(self):
         # Task mode directs the model to re-engage only when directly addressed
