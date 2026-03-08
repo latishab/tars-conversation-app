@@ -40,6 +40,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 build_task_mode_section = _mod.build_task_mode_section
 build_proactive_section = _mod.build_proactive_section
+build_task_examples = _mod.build_task_examples
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +75,6 @@ class TestTaskModeSectionSilenceExamples(unittest.TestCase):
 
     def test_clue_narration_without_answer_is_silence(self):
         """Narrating a clue alone (no proposed answer) must also be silence in crossword examples."""
-        # Crossword-specific examples live in build_task_examples("crossword"), not build_task_mode_section
-        import sys; sys.path.insert(0, 'src')
-        from character.prompts import build_task_examples
         examples = build_task_examples("crossword")
         lower = examples.lower()
         has_clue_example = "british nobleman" in lower or "four letters" in lower or "clue narration" in lower

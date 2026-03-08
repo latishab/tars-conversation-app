@@ -182,10 +182,23 @@ async def set_task_mode(params: FunctionCallParams):
                 )
                 return
         else:
-            # No monitor available — fail closed: reject the call
-            logger.warning("set_task_mode('off') REJECTED: proactive_monitor unavailable")
-            await params.result_callback("Task mode stays active.")
-            return
+            # No monitor — fall back to last user message in context
+            ctx = _persona_storage.get("context")
+            last_user = ""
+            if ctx and hasattr(ctx, "messages"):
+                for msg in reversed(ctx.messages):
+                    if msg.get("role") == "user":
+                        last_user = msg.get("content", "")
+                        break
+            word_count = len(last_user.split())
+            if word_count <= 4:
+                logger.warning(
+                    f"set_task_mode('off') REJECTED (no monitor): short utterance ({word_count}w): '{last_user}'"
+                )
+                await params.result_callback(
+                    "Task mode stays active — that didn't sound like you're done."
+                )
+                return
 
     monitor = _persona_storage.get("proactive_monitor")
     if monitor:
