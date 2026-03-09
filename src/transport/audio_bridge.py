@@ -23,8 +23,9 @@ Noise suppression (opt-in, denoise=True):
 
 import asyncio
 import fractions
+import time
 import numpy as np
-from typing import Optional, AsyncIterator
+from typing import Optional, AsyncIterator, Callable
 from loguru import logger
 from scipy import signal
 from scipy.signal import resample_poly
@@ -306,6 +307,8 @@ class AudioBridge(FrameProcessor):
         self._express_filter = express_filter
         self._tts_started = False   # armed by TTSStartedFrame, consumed by first audio frame
         self._speaking = False
+        self._pi_playback_until: float = 0  # monotonic deadline while Pi is playing audio
+        self._pi_flush_callback: Optional[Callable] = None
 
     async def process_frame(self, frame: Frame, direction):
         await super().process_frame(frame, direction)
@@ -341,6 +344,12 @@ class AudioBridge(FrameProcessor):
                 pcm = await loop.run_in_executor(None, resample_poly, pcm, up, down)
                 audio_bytes = np.clip(pcm, -32768, 32767).astype(np.int16).tobytes()
 
+            # Track how long Pi will be playing — duration is preserved across resampling.
+            # Use src_rate+audio to avoid float conversion errors from resampled length.
+            if src_rate:
+                duration = len(frame.audio) / 2 / src_rate
+                self._pi_playback_until = max(self._pi_playback_until, time.monotonic()) + duration
+
             await self.rpi_output_track.add_audio(audio_bytes)
 
         elif isinstance(frame, (TTSStoppedFrame, CancelFrame)):
@@ -360,12 +369,38 @@ class AudioBridge(FrameProcessor):
 
     async def _start_interruption(self):
         await super()._start_interruption()
+        was_speaking = self._speaking
+        was_tts_started = self._tts_started
         self._tts_started = False
-        if self.rpi_output_track:
+        # Flush if audio is buffered in Mac queue/buf or Pi is still playing.
+        # ElevenLabs streams faster than real-time: _speaking goes False while
+        # audio is still queued, and queue drains before Pi finishes playing.
+        now = time.monotonic()
+        has_pending = (
+            self.rpi_output_track is not None
+            and (
+                not self.rpi_output_track._queue.empty()
+                or len(self.rpi_output_track._buf) > 0
+                or now < self._pi_playback_until
+            )
+        )
+        logger.info(
+            f"AudioBridge._start_interruption: was_speaking={was_speaking}, "
+            f"was_tts_started={was_tts_started}, has_pending={has_pending}, "
+            f"pi_remaining={max(0.0, self._pi_playback_until - now):.2f}s"
+        )
+        if self.rpi_output_track and (was_speaking or was_tts_started or has_pending):
             self.rpi_output_track.flush()
-        if self._speaking:
+            self._pi_playback_until = 0
+            if self._pi_flush_callback:
+                self._pi_flush_callback()
+        if was_speaking:
             self._speaking = False
             await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+
+    def set_pi_flush_callback(self, callback: Callable):
+        """Register callback invoked on interruption to flush Pi-side speaker buffer."""
+        self._pi_flush_callback = callback
 
     def set_input_track(self, track: RPiAudioInputTrack):
         self.rpi_input_track = track
