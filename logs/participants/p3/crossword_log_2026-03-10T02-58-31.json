@@ -1,0 +1,1047 @@
+[
+  {
+    "type": "session_start",
+    "timestamp": 1773110376031,
+    "relativeMs": 1,
+    "puzzleId": "puzzle1"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110376031,
+    "relativeMs": 1,
+    "clueNumber": 5,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110382234,
+    "relativeMs": 6204,
+    "clueNumber": 5,
+    "direction": "across",
+    "row": 1,
+    "col": 5,
+    "letter": "P"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110383131,
+    "relativeMs": 7101,
+    "clueNumber": 5,
+    "direction": "across",
+    "row": 1,
+    "col": 6,
+    "letter": "I"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110383131,
+    "relativeMs": 7101,
+    "clueNumber": 5,
+    "direction": "across",
+    "answer": "PI",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110395297,
+    "relativeMs": 19267,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110405552,
+    "relativeMs": 29522,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 0,
+    "letter": "S"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110405727,
+    "relativeMs": 29697,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 1,
+    "letter": "N"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110405934,
+    "relativeMs": 29904,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 2,
+    "letter": "A"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110406134,
+    "relativeMs": 30104,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 3,
+    "letter": "K"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110406352,
+    "relativeMs": 30322,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 4,
+    "letter": "E"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110406352,
+    "relativeMs": 30322,
+    "clueNumber": 1,
+    "direction": "across",
+    "answer": "SNAKE",
+    "correct": false
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110408013,
+    "relativeMs": 31983,
+    "clueNumber": 3,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110437814,
+    "relativeMs": 61784,
+    "clueNumber": 8,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110438744,
+    "relativeMs": 62714,
+    "clueNumber": 8,
+    "direction": "across",
+    "row": 3,
+    "col": 4,
+    "letter": "N"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110439043,
+    "relativeMs": 63013,
+    "clueNumber": 8,
+    "direction": "across",
+    "row": 3,
+    "col": 5,
+    "letter": "I"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110439281,
+    "relativeMs": 63251,
+    "clueNumber": 8,
+    "direction": "across",
+    "row": 3,
+    "col": 6,
+    "letter": "G"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110439447,
+    "relativeMs": 63417,
+    "clueNumber": 8,
+    "direction": "across",
+    "row": 3,
+    "col": 7,
+    "letter": "H"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110439699,
+    "relativeMs": 63669,
+    "clueNumber": 8,
+    "direction": "across",
+    "row": 3,
+    "col": 8,
+    "letter": "T"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110439699,
+    "relativeMs": 63669,
+    "clueNumber": 8,
+    "direction": "across",
+    "answer": "NIGHT",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110450097,
+    "relativeMs": 74067,
+    "clueNumber": 6,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110506424,
+    "relativeMs": 130394,
+    "clueNumber": 12,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110508932,
+    "relativeMs": 132902,
+    "clueNumber": 12,
+    "direction": "across",
+    "row": 6,
+    "col": 0,
+    "letter": "O"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110509592,
+    "relativeMs": 133562,
+    "clueNumber": 12,
+    "direction": "across",
+    "row": 6,
+    "col": 0
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110511241,
+    "relativeMs": 135211,
+    "clueNumber": 15,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110514374,
+    "relativeMs": 138344,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 0,
+    "letter": "E"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110514525,
+    "relativeMs": 138495,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 1,
+    "letter": "V"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110514690,
+    "relativeMs": 138660,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 2,
+    "letter": "E"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110515653,
+    "relativeMs": 139623,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 3,
+    "letter": "N"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110515960,
+    "relativeMs": 139930,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 4,
+    "letter": "I"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110516237,
+    "relativeMs": 140207,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 5,
+    "letter": "N"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110516576,
+    "relativeMs": 140546,
+    "clueNumber": 15,
+    "direction": "across",
+    "row": 8,
+    "col": 6,
+    "letter": "G"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110516576,
+    "relativeMs": 140546,
+    "clueNumber": 15,
+    "direction": "across",
+    "answer": "EVENING",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110518140,
+    "relativeMs": 142110,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110528223,
+    "relativeMs": 152193,
+    "clueNumber": 13,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110529115,
+    "relativeMs": 153085,
+    "clueNumber": 13,
+    "direction": "down",
+    "row": 6,
+    "col": 3,
+    "letter": "B"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110529474,
+    "relativeMs": 153444,
+    "clueNumber": 13,
+    "direction": "down",
+    "row": 7,
+    "col": 3,
+    "letter": "A"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110529474,
+    "relativeMs": 153444,
+    "clueNumber": 13,
+    "direction": "down",
+    "answer": "BAN",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110530823,
+    "relativeMs": 154793,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110534090,
+    "relativeMs": 158060,
+    "clueNumber": 14,
+    "direction": "down",
+    "row": 6,
+    "col": 5,
+    "letter": "C"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110537405,
+    "relativeMs": 161375,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110537807,
+    "relativeMs": 161777,
+    "clueNumber": 14,
+    "direction": "down",
+    "row": 6,
+    "col": 5
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110538491,
+    "relativeMs": 162461,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110539083,
+    "relativeMs": 163053,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110544139,
+    "relativeMs": 168109,
+    "clueNumber": 3,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110562290,
+    "relativeMs": 186260,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110565623,
+    "relativeMs": 189593,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110592073,
+    "relativeMs": 216043,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110611240,
+    "relativeMs": 235210,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110615689,
+    "relativeMs": 239659,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110632940,
+    "relativeMs": 256910,
+    "clueNumber": 8,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110637740,
+    "relativeMs": 261710,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110690323,
+    "relativeMs": 314293,
+    "clueNumber": 3,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110697773,
+    "relativeMs": 321743,
+    "clueNumber": 14,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110699873,
+    "relativeMs": 323843,
+    "clueNumber": 14,
+    "direction": "down",
+    "row": 6,
+    "col": 5,
+    "letter": "C"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110700235,
+    "relativeMs": 324205,
+    "clueNumber": 14,
+    "direction": "down",
+    "row": 7,
+    "col": 5,
+    "letter": "A"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110700235,
+    "relativeMs": 324205,
+    "clueNumber": 14,
+    "direction": "down",
+    "answer": "CAN",
+    "correct": false
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110703356,
+    "relativeMs": 327326,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110707423,
+    "relativeMs": 331393,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110720573,
+    "relativeMs": 344543,
+    "clueNumber": 3,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110724823,
+    "relativeMs": 348793,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110734923,
+    "relativeMs": 358893,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110763215,
+    "relativeMs": 387185,
+    "clueNumber": 1,
+    "direction": "down",
+    "row": 4,
+    "col": 0,
+    "letter": "P"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110763545,
+    "relativeMs": 387515,
+    "clueNumber": 1,
+    "direction": "down",
+    "row": 5,
+    "col": 0,
+    "letter": "A"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110763783,
+    "relativeMs": 387753,
+    "clueNumber": 1,
+    "direction": "down",
+    "row": 6,
+    "col": 0,
+    "letter": "S"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110765689,
+    "relativeMs": 389659,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110766322,
+    "relativeMs": 390292,
+    "clueNumber": 1,
+    "direction": "down",
+    "row": 6,
+    "col": 0
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110767739,
+    "relativeMs": 391709,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110768360,
+    "relativeMs": 392330,
+    "clueNumber": 1,
+    "direction": "down",
+    "row": 5,
+    "col": 0
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110769523,
+    "relativeMs": 393493,
+    "clueNumber": 9,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110770039,
+    "relativeMs": 394009,
+    "clueNumber": 9,
+    "direction": "across",
+    "row": 4,
+    "col": 1,
+    "letter": "A"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110770540,
+    "relativeMs": 394510,
+    "clueNumber": 9,
+    "direction": "across",
+    "row": 4,
+    "col": 2,
+    "letter": "S"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110770856,
+    "relativeMs": 394826,
+    "clueNumber": 9,
+    "direction": "across",
+    "row": 4,
+    "col": 3,
+    "letter": "T"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110771187,
+    "relativeMs": 395157,
+    "clueNumber": 9,
+    "direction": "across",
+    "row": 4,
+    "col": 4,
+    "letter": "A"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110771187,
+    "relativeMs": 395157,
+    "clueNumber": 9,
+    "direction": "across",
+    "answer": "PASTA",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110772573,
+    "relativeMs": 396543,
+    "clueNumber": 7,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110774739,
+    "relativeMs": 398709,
+    "clueNumber": 8,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110823706,
+    "relativeMs": 447676,
+    "clueNumber": 7,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110830472,
+    "relativeMs": 454442,
+    "clueNumber": 3,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110831622,
+    "relativeMs": 455592,
+    "clueNumber": 11,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110833306,
+    "relativeMs": 457276,
+    "clueNumber": 12,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110836139,
+    "relativeMs": 460109,
+    "clueNumber": 12,
+    "direction": "across"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110856576,
+    "relativeMs": 480546,
+    "clueNumber": 12,
+    "direction": "across",
+    "row": 6,
+    "col": 0,
+    "letter": "O"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110856884,
+    "relativeMs": 480854,
+    "clueNumber": 12,
+    "direction": "across",
+    "row": 6,
+    "col": 1,
+    "letter": "P"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110856884,
+    "relativeMs": 480854,
+    "clueNumber": 12,
+    "direction": "across",
+    "answer": "OP",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110863039,
+    "relativeMs": 487009,
+    "clueNumber": 6,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110864172,
+    "relativeMs": 488142,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110889489,
+    "relativeMs": 513459,
+    "clueNumber": 2,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110903532,
+    "relativeMs": 527502,
+    "clueNumber": 2,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110904908,
+    "relativeMs": 528878,
+    "clueNumber": 2,
+    "direction": "down",
+    "row": 0,
+    "col": 3,
+    "letter": "I"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110905901,
+    "relativeMs": 529871,
+    "clueNumber": 2,
+    "direction": "down",
+    "row": 1,
+    "col": 3,
+    "letter": "B"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110906089,
+    "relativeMs": 530059,
+    "clueNumber": 2,
+    "direction": "down",
+    "row": 2,
+    "col": 3,
+    "letter": "K"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110906089,
+    "relativeMs": 530059,
+    "clueNumber": 2,
+    "direction": "down",
+    "answer": "IBK",
+    "correct": false
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110907789,
+    "relativeMs": 531759,
+    "clueNumber": 2,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110908672,
+    "relativeMs": 532642,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110909106,
+    "relativeMs": 533076,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 2
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110910278,
+    "relativeMs": 534248,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110910642,
+    "relativeMs": 534612,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 1
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110911176,
+    "relativeMs": 535146,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110911776,
+    "relativeMs": 535746,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110912826,
+    "relativeMs": 536796,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 0
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110914139,
+    "relativeMs": 538109,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "cell_cleared",
+    "timestamp": 1773110914496,
+    "relativeMs": 538466,
+    "clueNumber": 1,
+    "direction": "across",
+    "row": 0,
+    "col": 4
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110916172,
+    "relativeMs": 540142,
+    "clueNumber": 1,
+    "direction": "across"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110942206,
+    "relativeMs": 566176,
+    "clueNumber": 2,
+    "direction": "down"
+  },
+  {
+    "type": "cell_typed",
+    "timestamp": 1773110942850,
+    "relativeMs": 566820,
+    "clueNumber": 2,
+    "direction": "down",
+    "row": 1,
+    "col": 3,
+    "letter": "N"
+  },
+  {
+    "type": "answer_completed",
+    "timestamp": 1773110942850,
+    "relativeMs": 566820,
+    "clueNumber": 2,
+    "direction": "down",
+    "answer": "INK",
+    "correct": true
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110944172,
+    "relativeMs": 568142,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110974555,
+    "relativeMs": 598525,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110984122,
+    "relativeMs": 608092,
+    "clueNumber": 8,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773110985422,
+    "relativeMs": 609392,
+    "clueNumber": 7,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773111051088,
+    "relativeMs": 675058,
+    "clueNumber": 1,
+    "direction": "down"
+  },
+  {
+    "type": "clue_selected",
+    "timestamp": 1773111052706,
+    "relativeMs": 676676,
+    "clueNumber": 4,
+    "direction": "down"
+  },
+  {
+    "type": "check_triggered",
+    "timestamp": 1773111055356,
+    "relativeMs": 679326,
+    "results": [
+      {
+        "clueNumber": 1,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 3,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 5,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 6,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 8,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 9,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 10,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 12,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 15,
+        "direction": "across",
+        "correct": true
+      },
+      {
+        "clueNumber": 1,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 2,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 3,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 4,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 7,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 8,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 11,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 13,
+        "direction": "down",
+        "correct": true
+      },
+      {
+        "clueNumber": 14,
+        "direction": "down",
+        "correct": false
+      }
+    ]
+  },
+  {
+    "type": "session_end",
+    "timestamp": 1773111511611,
+    "relativeMs": 1135581,
+    "totalTimeMs": 811000,
+    "cellsFilled": 28,
+    "totalCells": 55
+  }
+]

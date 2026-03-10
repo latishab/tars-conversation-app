@@ -1,0 +1,27 @@
+{
+  "stt_ttfb_ms": {
+    "n": 0,
+    "p50": null,
+    "p95": null
+  },
+  "llm_ttfb_ms": {
+    "n": 2,
+    "p50": 396.7,
+    "p95": 268.8
+  },
+  "tts_ttfb_ms": {
+    "n": 0,
+    "p50": null,
+    "p95": null
+  },
+  "ttfa_ms": {
+    "n": 0,
+    "p50": null,
+    "p95": null
+  },
+  "total_ms": {
+    "n": 2,
+    "p50": 396.7,
+    "p95": 268.8
+  }
+}
