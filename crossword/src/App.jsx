@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import puzzle from '@/data/puzzle1.json'
+import puzzle1 from '@/data/puzzle1.json'
+import puzzle2 from '@/data/puzzle2.json'
+import puzzle3 from '@/data/puzzle3.json'
 import CrosswordGrid from '@/components/CrosswordGrid'
 import ClueList from '@/components/ClueList'
 import Header from '@/components/Header'
+import PuzzlePicker from '@/components/PuzzlePicker'
 import { startSession, logEvent, downloadLog } from '@/utils/eventLogger'
+
+const PUZZLES = { puzzle1, puzzle2, puzzle3 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -74,11 +79,16 @@ function formatTime(seconds) {
 // ─── App ────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [puzzleId, setPuzzleId] = useState('puzzle1')
+  const [showPicker, setShowPicker] = useState(false)
+  const puzzle = PUZZLES[puzzleId]
+
   const [userGrid, setUserGrid] = useState(() => buildInitialGrid(puzzle.solution))
   const [selectedCell, setSelectedCell] = useState(null)
   const [selectedDirection, setSelectedDirection] = useState('across')
   const [selectedClue, setSelectedClue] = useState(null)
   const [incorrectCells, setIncorrectCells] = useState([])
+  const [correctCells, setCorrectCells] = useState([])
   const [timerSeconds, setTimerSeconds] = useState(0)
   const [sessionActive, setSessionActive] = useState(false)
   const [sessionEnded, setSessionEnded] = useState(false)
@@ -90,6 +100,22 @@ export default function App() {
     clearInterval(timerRef.current)
     clearTimeout(incorrectTimerRef.current)
   }, [])
+
+  function handleSelectPuzzle(id) {
+    if (id === puzzleId) return
+    clearInterval(timerRef.current)
+    clearTimeout(incorrectTimerRef.current)
+    setPuzzleId(id)
+    setUserGrid(buildInitialGrid(PUZZLES[id].solution))
+    setSelectedCell(null)
+    setSelectedDirection('across')
+    setSelectedClue(null)
+    setIncorrectCells([])
+    setCorrectCells([])
+    setTimerSeconds(0)
+    setSessionActive(false)
+    setSessionEnded(false)
+  }
 
   function ensureSessionStarted() {
     if (!sessionActive && !sessionEnded) {
@@ -242,6 +268,7 @@ export default function App() {
   function handleCheckAnswers() {
     ensureSessionStarted()
     const wrong = []
+    const right = []
     const results = []
     allCluesFlat(puzzle).forEach(({ direction, ...clue }) => {
       let correct = true
@@ -252,6 +279,8 @@ export default function App() {
         if (entered && entered !== puzzle.solution[r][c]) {
           wrong.push({ row: r, col: c })
           correct = false
+        } else if (entered && entered === puzzle.solution[r][c]) {
+          right.push({ row: r, col: c })
         }
       }
       results.push({ clueNumber: clue.number, direction, correct })
@@ -259,8 +288,12 @@ export default function App() {
 
     logEvent('check_triggered', { results })
     setIncorrectCells(wrong)
+    setCorrectCells(right)
     clearTimeout(incorrectTimerRef.current)
-    incorrectTimerRef.current = setTimeout(() => setIncorrectCells([]), 3000)
+    incorrectTimerRef.current = setTimeout(() => {
+      setIncorrectCells([])
+      setCorrectCells([])
+    }, 3000)
   }
 
   // ── End Session ──────────────────────────────────────────────────────────
@@ -287,6 +320,7 @@ export default function App() {
         onCheckAnswers={handleCheckAnswers}
         onDownloadLog={downloadLog}
         onEndSession={handleEndSession}
+        onSelectPuzzle={() => setShowPicker(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -299,6 +333,7 @@ export default function App() {
             selectedDirection={selectedDirection}
             selectedClue={selectedClue}
             incorrectCells={incorrectCells}
+            correctCells={correctCells}
             onCellClick={selectCell}
             onKeyDown={handleKeyDown}
           />
@@ -317,6 +352,14 @@ export default function App() {
           />
         </div>
       </div>
+
+      {showPicker && (
+        <PuzzlePicker
+          currentId={puzzleId}
+          onSelect={handleSelectPuzzle}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
 
       {sessionEnded && (
         <div className="fixed inset-0 bg-white/80 flex items-center justify-center z-50">

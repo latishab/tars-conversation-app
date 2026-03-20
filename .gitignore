@@ -30,6 +30,9 @@ publish-to-hf.sh
 /deprecated/
 /memory_data/
 
+# logs
+logs/proactive_interventions_*.jsonl
+
 # debug
 npm-debug.log*
 yarn-debug.log*

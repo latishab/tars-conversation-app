@@ -6,6 +6,7 @@ For logging/monitoring processors, see loggers.py module.
 
 from .filters import SilenceFilter, InputAudioFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, TranscriptionGate
 from .proactive_monitor import ProactiveMonitor
+from .reactive_gate import ReactiveGate
 
 __all__ = [
     "SilenceFilter",
@@ -15,4 +16,5 @@ __all__ = [
     "SpaceNormalizer",
     "TranscriptionGate",
     "ProactiveMonitor",
+    "ReactiveGate",
 ]

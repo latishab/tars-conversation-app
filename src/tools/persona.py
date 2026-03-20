@@ -10,7 +10,9 @@ _persona_storage = {
     "persona_params": {},
     "tars_data": {},
     "context_aggregator": None,
-    "character_dir": None
+    "character_dir": None,
+    "proactive_monitor": None,
+    "task_mode": None,
 }
 
 
@@ -59,20 +61,15 @@ async def adjust_persona_parameter(params: FunctionCallParams):
     logger.info(f"Persona parameter adjusted: {parameter_name} = {old_value} → {value_int}%")
 
     # Update system prompt in LLM context
-    context_aggregator = _persona_storage.get("context_aggregator")
     tars_data = _persona_storage.get("tars_data", {})
+    context = _persona_storage.get("context")
+    task_mode = _persona_storage.get("task_mode")
 
-    if context_aggregator and hasattr(context_aggregator, 'context'):
+    if context and context.messages:
         try:
-            # Rebuild system prompt with updated parameters
-            new_system_prompt = build_tars_system_prompt(persona_params, tars_data)
-
-            # Update the first message (system prompt) in the context
-            if context_aggregator.context.messages and len(context_aggregator.context.messages) > 0:
-                context_aggregator.context.messages[0] = new_system_prompt
-                logger.info(f"System prompt updated with new {parameter_name} value")
-            else:
-                logger.warning("No messages in context to update")
+            new_system_prompt = build_tars_system_prompt(persona_params, tars_data, task_mode=task_mode)
+            context.messages[0] = new_system_prompt
+            logger.info(f"System prompt updated with new {parameter_name} value")
         except Exception as e:
             logger.error(f"Error updating system prompt: {e}", exc_info=True)
 
@@ -142,4 +139,117 @@ def create_identity_schema():
             }
         },
         required=["name"],
+    )
+
+
+async def set_task_mode(params: FunctionCallParams):
+    """Toggle task mode on/off. Adjusts system prompt and proactive monitor."""
+    from character.prompts import build_tars_system_prompt
+
+    mode = (params.arguments.get("mode") or "").strip().lower()
+    active = mode not in ("", "off", "none", "disable", "disabled")
+    mode_value = mode if active else None
+
+    # Code-level guard: reject 'off' unless recent transcript both addresses TARS
+    # directly and contains a termination phrase. Uses ProactiveMonitor's
+    # _transcript_buffer (always available) rather than context.messages
+    # (which was never stored in persona_storage — previous guard was always skipped).
+    # Scan the last 15 seconds of transcript to cover VAD-fragmented utterances.
+    if not active and _persona_storage.get("task_mode"):
+        monitor_check = _persona_storage.get("proactive_monitor")
+        if monitor_check is not None:
+            import time as _time
+            cutoff = _time.time() - 15.0
+            recent_parts = [
+                e.get("text", "")
+                for e in monitor_check._transcript_buffer
+                if e.get("timestamp", 0) >= cutoff
+            ]
+            text = " ".join(recent_parts).lower()
+            addresses_tars = "tars" in text
+            task_end_signals = {
+                "done", "finished", "finish", "stop", "quit",
+                "all done", "that's it", "let's stop", "lets stop",
+            }
+            has_end_signal = any(signal in text for signal in task_end_signals)
+            if not (addresses_tars and has_end_signal):
+                logger.warning(
+                    f"set_task_mode('off') REJECTED: missing direct address or end signal "
+                    f"in recent transcript: '{text[:120]}'"
+                )
+                await params.result_callback(
+                    "Task mode stays active — that didn't sound like you're done."
+                )
+                return
+        else:
+            # No monitor — fall back to last user message in context
+            ctx = _persona_storage.get("context")
+            last_user = ""
+            if ctx and hasattr(ctx, "messages"):
+                for msg in reversed(ctx.messages):
+                    if msg.get("role") == "user":
+                        last_user = msg.get("content", "")
+                        break
+            word_count = len(last_user.split())
+            if word_count <= 4:
+                logger.warning(
+                    f"set_task_mode('off') REJECTED (no monitor): short utterance ({word_count}w): '{last_user}'"
+                )
+                await params.result_callback(
+                    "Task mode stays active — that didn't sound like you're done."
+                )
+                return
+
+    monitor = _persona_storage.get("proactive_monitor")
+    if monitor:
+        monitor.set_task_mode(mode_value)
+
+    _persona_storage["task_mode"] = mode_value
+
+    persona_params = _persona_storage.get("persona_params", {})
+    tars_data = _persona_storage.get("tars_data", {})
+    context = _persona_storage.get("context")
+
+    if context and context.messages:
+        try:
+            new_system_prompt = build_tars_system_prompt(
+                persona_params, tars_data, task_mode=mode_value
+            )
+            context.messages[0] = new_system_prompt
+            logger.info(f"System prompt updated: task_mode={mode_value}")
+            logger.debug(f"System prompt length: {len(context.messages[0]['content'])} chars")
+            logger.debug(f"CONDITION B present: {'CONDITION B' in context.messages[0]['content']}")
+        except Exception as e:
+            logger.error(f"Error updating system prompt for task mode: {e}")
+
+    label = mode if active else "off"
+    logger.info(f"Task mode set: {label}")
+    await params.result_callback(f"Task mode: {label}.")
+
+
+def create_task_mode_schema() -> FunctionSchema:
+    return FunctionSchema(
+        name="set_task_mode",
+        description=(
+            "Toggle task mode when the user starts or stops a focused activity. "
+            "Call with a mode like 'crossword', 'coding', 'reading', 'thinking' "
+            "when the user announces they're working on something. "
+            "Call with 'off' ONLY when the user directly addresses TARS AND says they are "
+            "completely finished with the ENTIRE task (e.g. 'Tars, I'm done', 'hey Tars, "
+            "let's stop', 'Tars, finish crossword mode'). "
+            "Both conditions required: direct address ('Tars') + end phrase ('done', "
+            "'finished', 'stop', 'quit'). "
+            "Do NOT call with 'off' for: solving a clue, self-answers, corrections, or "
+            "moving between clues. Think-aloud narration is never a task-end signal."
+        ),
+        properties={
+            "mode": {
+                "type": "string",
+                "description": (
+                    "The task type (e.g. 'crossword', 'coding', 'reading', 'thinking') "
+                    "or 'off' to exit task mode."
+                ),
+            },
+        },
+        required=["mode"],
     )

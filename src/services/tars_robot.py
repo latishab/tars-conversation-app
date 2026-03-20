@@ -251,7 +251,7 @@ def is_robot_available() -> bool:
 
     try:
         status = client.get_status()
-        return status.get("connected", False)
+        return bool(status.connected)
     except Exception as e:
         logger.debug(f"Robot availability check failed: {e}")
         return False

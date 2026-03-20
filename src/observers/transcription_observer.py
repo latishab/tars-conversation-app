@@ -1,14 +1,10 @@
 """Observer for logging transcriptions and sending to frontend."""
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import time
 from loguru import logger
 from pipecat.frames.frames import TranscriptionFrame, InterimTranscriptionFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
-from src.shared_state import metrics_store
+from shared_state import metrics_store
 
 
 class TranscriptionObserver(BaseObserver):

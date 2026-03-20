@@ -34,6 +34,7 @@ export default function CrosswordGrid({
   selectedDirection,
   selectedClue,
   incorrectCells,
+  correctCells,
   onCellClick,
   onKeyDown,
 }) {
@@ -66,6 +67,10 @@ export default function CrosswordGrid({
 
   function isIncorrect(r, c) {
     return incorrectCells.some((cell) => cell.row === r && cell.col === c)
+  }
+
+  function isCorrect(r, c) {
+    return correctCells.some((cell) => cell.row === r && cell.col === c)
   }
 
   return (
@@ -114,7 +119,8 @@ export default function CrosswordGrid({
                   isInActiveClue(r, c) && !isSelected(r, c) && 'bg-blue-50',
                   isSelected(r, c) && 'ring-2 ring-inset ring-blue-500 bg-white z-10',
                   !isInActiveClue(r, c) && !isSelected(r, c) && 'bg-white',
-                  isIncorrect(r, c) && 'bg-red-100'
+                  isIncorrect(r, c) && 'bg-red-100',
+                  isCorrect(r, c) && 'bg-green-100'
                 )}
               >
                 {meta.cellNumber && (

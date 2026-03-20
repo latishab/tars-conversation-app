@@ -1,0 +1,36 @@
+{
+  "id": "puzzle3",
+  "title": "General Knowledge II",
+  "size": { "rows": 9, "cols": 9 },
+  "solution": [
+    ["L","E","V","E","L","#","S","#","B"],
+    ["O","#","Y","#","A","C","T","O","R"],
+    ["C","L","I","M","B","#","U","#","O"],
+    ["A","#","N","#","E","L","B","O","W"],
+    ["L","E","G","A","L","#","S","#","N"],
+    ["#","A","#","C","#","#","#","#","#"],
+    ["A","G","A","I","N","#","#","#","#"],
+    ["#","E","#","D","#","#","#","#","#"],
+    ["T","R","A","S","H","#","#","#","#"]
+  ],
+  "clues": {
+    "across": [
+      { "number": 1,  "clue": "Having no part higher than another",        "answer": "LEVEL", "row": 0, "col": 0, "length": 5 },
+      { "number": 6,  "clue": "A person who acts in stage plays",          "answer": "ACTOR", "row": 1, "col": 4, "length": 5 },
+      { "number": 7,  "clue": "To go up or ascend",                        "answer": "CLIMB", "row": 2, "col": 0, "length": 5 },
+      { "number": 8,  "clue": "The bend or joint of the human arm",        "answer": "ELBOW", "row": 3, "col": 4, "length": 5 },
+      { "number": 9,  "clue": "Appointed, established, or authorized by law", "answer": "LEGAL", "row": 4, "col": 0, "length": 5 },
+      { "number": 12, "clue": "Once more",                                 "answer": "AGAIN", "row": 6, "col": 0, "length": 5 },
+      { "number": 13, "clue": "Discarded rubbish",                         "answer": "TRASH", "row": 8, "col": 0, "length": 5 }
+    ],
+    "down": [
+      { "number": 1,  "clue": "Pertaining to place or position in space",             "answer": "LOCAL", "row": 0, "col": 0, "length": 5 },
+      { "number": 2,  "clue": "Competing or contending",                              "answer": "VYING", "row": 0, "col": 2, "length": 5 },
+      { "number": 3,  "clue": "A short word or phrase descriptive of a person or group", "answer": "LABEL", "row": 0, "col": 4, "length": 5 },
+      { "number": 4,  "clue": "Short remaining pieces, as of a pencil, candle, or cigar", "answer": "STUBS", "row": 0, "col": 6, "length": 5 },
+      { "number": 5,  "clue": "A dark tertiary color with a yellowish or reddish hue", "answer": "BROWN", "row": 0, "col": 8, "length": 5 },
+      { "number": 10, "clue": "Impatiently longing",                                  "answer": "EAGER", "row": 4, "col": 1, "length": 5 },
+      { "number": 11, "clue": "Substances with sour taste",                           "answer": "ACIDS", "row": 4, "col": 3, "length": 5 }
+    ]
+  }
+}

@@ -20,16 +20,19 @@ src_dir = Path(__file__).parent.resolve()
 sys.path.insert(0, str(src_dir))
 
 import asyncio
+import json
 import os
+import time
 import uuid
 import argparse
 import threading
+import numpy as np
 from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.audio.vad.vad_analyzer import VADParams, VADState
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -45,7 +48,7 @@ from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.transcriptions.language import Language
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import LLMRunFrame, InterruptionFrame, InputAudioRawFrame
 
 from config import (
     DEEPGRAM_API_KEY,
@@ -77,8 +80,8 @@ from transport.audio_bridge import RPiAudioInputTrack, RPiAudioOutputTrack
 from services.factories import create_stt_service, create_tts_service, create_llm_service, stt_display_name
 from services import tars_robot
 from services.update_checker import TarsUpdateChecker, CLIENT_VERSION
-from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, ProactiveMonitor
-from observers import StateObserver, MetricsObserver
+from processors import SilenceFilter, ReasoningLeakFilter, ExpressTagFilter, SpaceNormalizer, ProactiveMonitor, ReactiveGate
+from observers import StateObserver, MetricsObserver, TranscriptionObserver, AssistantResponseObserver
 from character.prompts import (
     load_character,
     get_introduction_instruction,
@@ -87,10 +90,12 @@ from tools import (
     capture_robot_camera,
     adjust_persona_parameter,
     execute_movement,
+    set_task_mode,
     create_robot_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
+    create_task_mode_schema,
     get_persona_storage,
     set_rate_limiter,
     set_custom_expressions,
@@ -341,6 +346,7 @@ async def run_robot_bot(ui=None):
                 create_movement_schema(custom_movements=_custom_movements),
                 create_robot_camera_schema(),
                 create_adjust_persona_schema(),
+                create_task_mode_schema(),
                 # create_identity_schema(),  # disabled: name recognition unreliable
             ]
         )
@@ -355,6 +361,7 @@ async def run_robot_bot(ui=None):
         llm.register_function("execute_movement", execute_movement)
         llm.register_function("capture_robot_camera", capture_robot_camera, cancel_on_interruption=False)
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
+        llm.register_function("set_task_mode", set_task_mode)
 
         # async def set_user_identity(params: FunctionCallParams):
         #     name = params.arguments.get("name", "")
@@ -421,6 +428,7 @@ async def run_robot_bot(ui=None):
         persona_storage = get_persona_storage()
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
+        persona_storage["context"] = context
         persona_storage["context_aggregator"] = context_aggregator
 
         # ====================================================================
@@ -429,6 +437,8 @@ async def run_robot_bot(ui=None):
 
         state_observer = StateObserver(state_sync=state_sync)
         metrics_observer = MetricsObserver()
+        transcription_observer = TranscriptionObserver(client_state=client_state)
+        assistant_observer = AssistantResponseObserver()
 
         # ====================================================================
         # PIPELINE ASSEMBLY
@@ -440,30 +450,37 @@ async def run_robot_bot(ui=None):
         # before the task is created; the dict is populated below after PipelineTask
         task_ref = {"task": None, "audio_task": None}
 
-        # proactive_monitor = ProactiveMonitor(
-        #     context=context,
-        #     task_ref=task_ref,
-        #     silence_threshold=8.0,
-        #     hesitation_threshold=4,
-        #     hesitation_window=5.0,
-        #     cooldown=30.0,
-        #     post_bot_buffer=5.0,
-        #     check_interval=1.0,
-        # )
+        proactive_monitor = ProactiveMonitor(
+            context=context,
+            task_ref=task_ref,
+            silence_threshold=8.0,
+            hesitation_threshold=3,
+            hesitation_window=10.0,
+            cooldown=30.0,
+            post_bot_buffer=5.0,
+            check_interval=1.0,
+            session_id=client_id,
+        )
+        persona_storage["proactive_monitor"] = proactive_monitor
 
         express_filter = ExpressTagFilter()
+        reactive_gate = ReactiveGate(proactive_monitor)
         audio_bridge = AudioBridge(
             rpi_input_track=rpi_input,
             rpi_output_track=rpi_output,
             express_filter=express_filter,
         )
+        audio_bridge.set_pi_flush_callback(
+            lambda: aiortc_client.send_data_channel_message(json.dumps({"type": "speaker_flush"}))
+        )
 
         pipeline = Pipeline([
             stt,
-            # proactive_monitor,
+            proactive_monitor,
             context_aggregator.user(),
             llm,
             express_filter,
+            reactive_gate,
             SilenceFilter(),
             ReasoningLeakFilter(),
             SpaceNormalizer(),
@@ -478,11 +495,120 @@ async def run_robot_bot(ui=None):
 
         async def feed_rpi_audio():
             """Feed audio frames from RPi mic into the pipeline."""
+            # Separate VAD instance for interruption detection (belt-and-suspenders).
+            # STT audio_passthrough=True so audio does reach the user aggregator's VAD,
+            # but native interruption via UserTurnController may not fire while the bot
+            # turn is active. We run our own VAD here as a reliable fallback.
+            #
+            # During bot playback:
+            # - We feed silence to the pipeline instead of real mic audio. This prevents
+            #   acoustic echo from the Pi speaker reaching the native pipecat VAD and
+            #   causing spurious _start_interruption calls.
+            # - We still run the custom VAD on real audio for interruption detection.
+            # - Additionally, we use RMS energy detection to catch user speech over the
+            #   echo: the custom VAD gets stuck in SPEAKING due to echo, so VADState.STARTING
+            #   never fires; energy-based detection fills that gap.
+            interrupt_vad = SileroVADAnalyzer(
+                sample_rate=16000,
+                params=VADParams(confidence=0.7, min_volume=0.0, stop_secs=0.3),
+            )
+            interrupt_vad.set_sample_rate(16000)
+
+            # Echo-baseline tracking for energy-based interruption detection.
+            # Warmup period lets the EMA stabilize on the echo level before comparing.
+            _echo_ema: float = 0.0
+            _echo_warmup: int = 0
+            _energy_frames_above: int = 0  # consecutive frames above threshold
+            _ECHO_WARMUP_FRAMES = 15   # 300ms at 20ms/frame
+            _ECHO_ALPHA = 0.15         # EMA smoothing (faster than speech envelope)
+            _MIN_SPEECH_RMS = 0.01     # ~-40dBFS absolute floor
+            _ECHO_RATIO = 2.5          # user speech must be 2.5x louder than echo baseline
+            _ENERGY_MIN_FRAMES = 4     # 80ms sustained above threshold (filters fan spikes)
+
             logger.info("🎤 Starting audio input from RPi...")
             try:
                 async for audio_frame in rpi_input.start():
-                    if task_ref.get("task"):
-                        await task_ref["task"].queue_frames([audio_frame])
+                    task = task_ref.get("task")
+                    if not task:
+                        continue
+
+                    # Check bot playback state once per frame.
+                    output_track = audio_bridge.rpi_output_track
+                    is_bot_playing = (
+                        audio_bridge._speaking
+                        or time.monotonic() < audio_bridge._pi_playback_until
+                    )
+                    has_pending_audio = (
+                        output_track is not None and (
+                            not output_track._queue.empty()
+                            or len(output_track._buf) > 0
+                            or time.monotonic() < audio_bridge._pi_playback_until
+                        )
+                    )
+
+                    # Gate pipeline audio: feed silence during bot playback so echo
+                    # doesn't trigger the native pipecat VAD (→ false _start_interruption).
+                    if is_bot_playing:
+                        pipeline_frame = InputAudioRawFrame(
+                            audio=bytes(len(audio_frame.audio)),
+                            sample_rate=audio_frame.sample_rate,
+                            num_channels=1,
+                        )
+                    else:
+                        pipeline_frame = audio_frame
+                        # Reset echo tracking when bot is silent
+                        _echo_ema = 0.0
+                        _echo_warmup = 0
+                        _energy_frames_above = 0
+                    await task.queue_frames([pipeline_frame])
+
+                    # Custom VAD always runs on real audio.
+                    vad_state = await interrupt_vad.analyze_audio(audio_frame.audio)
+
+                    should_interrupt = False
+                    if vad_state == VADState.STARTING and (audio_bridge._speaking or has_pending_audio):
+                        # Normal case: VAD transitioned QUIET→STARTING while bot is playing.
+                        should_interrupt = True
+                    elif has_pending_audio:
+                        # Bot is playing; echo keeps VAD in SPEAKING state so STARTING
+                        # never fires. Detect user speech as energy significantly above
+                        # the rolling echo baseline.
+                        pcm = np.frombuffer(audio_frame.audio, dtype=np.int16).astype(np.float32)
+                        rms = np.sqrt(np.mean(pcm ** 2)) / 32767.0
+                        if _echo_warmup < _ECHO_WARMUP_FRAMES:
+                            _echo_ema = _echo_ema * (1 - _ECHO_ALPHA) + rms * _ECHO_ALPHA
+                            _echo_warmup += 1
+                        else:
+                            _echo_ema = _echo_ema * (1 - _ECHO_ALPHA) + rms * _ECHO_ALPHA
+                            if rms > max(_echo_ema * _ECHO_RATIO, _MIN_SPEECH_RMS):
+                                _energy_frames_above += 1
+                                if _energy_frames_above >= _ENERGY_MIN_FRAMES:
+                                    should_interrupt = True
+                            else:
+                                _energy_frames_above = 0
+
+                    if should_interrupt:
+                        was_speaking = audio_bridge._speaking
+                        # Clear playback state immediately so next frame flows real audio
+                        # to the pipeline without waiting for _start_interruption to run.
+                        audio_bridge._pi_playback_until = 0
+                        audio_bridge._speaking = False
+                        _echo_ema = 0.0
+                        _echo_warmup = 0
+                        _energy_frames_above = 0
+                        logger.info(
+                            f"User interrupted bot speech — queuing InterruptionFrame "
+                            f"(speaking={was_speaking}, pending={has_pending_audio})"
+                        )
+                        await task.queue_frames([InterruptionFrame()])
+                        # Flush Pi-side speaker buffer — audio already sent over WebRTC
+                        # stays in Pi's SpeakerOutput queue and plays regardless of the
+                        # Mac-side flush. Send a DataChannel command to clear it immediately.
+                        aiortc_client.send_data_channel_message(
+                            json.dumps({"type": "speaker_flush"})
+                        )
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"❌ Audio input error: {e}", exc_info=True)
             finally:
@@ -499,7 +625,7 @@ async def run_robot_bot(ui=None):
                 enable_usage_metrics=True,
                 report_only_initial_ttfb=False,
             ),
-            observers=[state_observer, metrics_observer],
+            observers=[state_observer, metrics_observer, transcription_observer, assistant_observer],
         )
 
         task_ref["task"] = task
@@ -511,6 +637,21 @@ async def run_robot_bot(ui=None):
         # Start audio input feeding task
         audio_task = asyncio.create_task(feed_rpi_audio())
         task_ref["audio_task"] = audio_task
+
+        # On WebRTC reconnect, replace the stale aiortc track and restart the feed.
+        # The initial track is handled manually above; this callback covers reconnects only.
+        @aiortc_client.on_audio_track
+        async def on_audio_track_replaced(track):
+            rpi_input.aiortc_track = track
+            old = task_ref.get("audio_task")
+            if old and not old.done():
+                old.cancel()
+                try:
+                    await old
+                except asyncio.CancelledError:
+                    pass
+            task_ref["audio_task"] = asyncio.create_task(feed_rpi_audio())
+            logger.info("Audio feed restarted on reconnected track")
 
         # Send initial greeting
         await asyncio.sleep(2.0)
@@ -538,6 +679,7 @@ async def run_robot_bot(ui=None):
     finally:
         # Cleanup
         logger.info("🧹 Cleaning up...")
+        metrics_store.print_session_summary()
         if service_refs.get("aiortc_client"):
             await service_refs["aiortc_client"].disconnect()
         if service_refs.get("stt"):
@@ -600,7 +742,10 @@ def run_browser_mode(port: int = 7860):
 
     logger.info(f"Browser mode at http://localhost:{port}")
     logger.info(f"  WebRTC offer: http://localhost:{port}/api/offer")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+
+    # loop="asyncio" disables uvloop, which causes issues on macOS.
+    # access_log=False suppresses Gradio's constant /gradio_api/queue polling spam.
+    uvicorn.run(app, host="0.0.0.0", port=port, loop="asyncio", access_log=False)
 
 
 if __name__ == "__main__":
@@ -637,10 +782,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Set log level
+    # Set log level (always reconfigure to replace loguru's DEBUG default)
+    logger.remove()
     if args.debug:
-        logger.remove()
-        logger.add(sys.stderr, level="DEBUG")
+        # Filter out pipecat's per-turn LLM context dump even in debug mode
+        def _debug_filter(record):
+            return not (
+                record["level"].name == "DEBUG"
+                and "_stream_chat_completions" in record.get("function", "")
+            )
+        logger.add(sys.stderr, level="DEBUG", filter=_debug_filter)
+    else:
+        logger.add(sys.stderr, level="INFO")
 
     # Check for unsupported options
     if args.local_audio:

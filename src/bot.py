@@ -39,7 +39,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.observers.turn_tracking_observer import TurnTrackingObserver
 from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 from pipecat.services.llm_service import FunctionCallParams
-from services.memory_hybrid import HybridMemoryService
 from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.transports.base_transport import TransportParams
@@ -72,6 +71,7 @@ from processors import (
     ExpressTagFilter,
     SpaceNormalizer,
     ProactiveMonitor,
+    ReactiveGate,
 )
 from observers import (
     MetricsObserver,
@@ -91,12 +91,14 @@ from tools import (
     express,
     execute_movement,
     capture_robot_camera,
+    set_task_mode,
     create_user_camera_schema,
     create_adjust_persona_schema,
     create_identity_schema,
     create_movement_schema,
     create_express_schema,
     create_robot_camera_schema,
+    create_task_mode_schema,
     get_persona_storage,
     set_custom_expressions,
 )
@@ -314,6 +316,7 @@ async def run_bot(webrtc_connection):
             # not as a real tool call. Having it in the schema causes the model to
             # call it as a tool (returning no text), which produces silent hangs.
             camera_capture_tool = create_robot_camera_schema()
+            task_mode_tool = create_task_mode_schema()
 
             # Pass FunctionSchema objects directly to standard_tools
             tools = ToolsSchema(
@@ -323,6 +326,7 @@ async def run_bot(webrtc_connection):
                     # identity_tool,
                     movement_tool,
                     camera_capture_tool,
+                    task_mode_tool,
                 ]
             )
             messages = [system_prompt]
@@ -332,6 +336,7 @@ async def run_bot(webrtc_connection):
             llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
             llm.register_function("execute_movement", execute_movement)
             llm.register_function("capture_robot_camera", capture_robot_camera)
+            llm.register_function("set_task_mode", set_task_mode)
 
             pipeline_unifier = IdentityUnifier(client_id)
             # async def wrapped_set_identity(params: FunctionCallParams):  # disabled: name recognition unreliable
@@ -376,28 +381,10 @@ async def run_bot(webrtc_connection):
             return
 
         # ====================================================================
-        # MEMORY SERVICE
+        # MEMORY SERVICE (disabled)
         # ====================================================================
 
-        # Memory service: Hybrid search combining vector similarity (70%) and BM25 keyword matching (30%)
-        # Optimized for voice AI with <50ms latency target
-        logger.info("Initializing hybrid memory service...")
-        memory_service = None
-        try:
-            memory_service = HybridMemoryService(
-                user_id=client_id,
-                db_path="./memory_data/memory.sqlite",
-                search_limit=3,
-                search_timeout_ms=100,  # Hybrid search needs ~60-80ms, allow buffer
-                vector_weight=0.7,      # 70% semantic similarity
-                bm25_weight=0.3,        # 30% keyword matching
-                system_prompt_prefix="From our conversations:\n",
-            )
-            logger.info(f"✓ Hybrid memory service initialized for {client_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize hybrid memory service: {e}")
-            logger.info("  Continuing without memory service...")
-            memory_service = None  # Continue without memory if it fails
+        memory_service = None  # Hybrid memory disabled
 
         # ====================================================================
         # CONTEXT AGGREGATOR & PERSONA STORAGE
@@ -418,6 +405,7 @@ async def run_bot(webrtc_connection):
         persona_storage["persona_params"] = persona_params
         persona_storage["tars_data"] = tars_data
         persona_storage["context_aggregator"] = context_aggregator
+        persona_storage["context"] = context  # direct reference for system prompt updates
 
         # ====================================================================
         # LOGGING PROCESSORS
@@ -444,8 +432,6 @@ async def run_bot(webrtc_connection):
         async def on_turn_started(*args, **kwargs):
             turn_number = args[1] if len(args) > 1 else kwargs.get('turn_number', 0)
             logger.info(f"🗣️  [TurnObserver] Turn STARTED: {turn_number}")
-            # Notify metrics observer of new turn
-            metrics_observer.start_turn(turn_number)
 
         @turn_observer.event_handler("on_turn_ended")
         async def on_turn_ended(*args, **kwargs):
@@ -466,12 +452,15 @@ async def run_bot(webrtc_connection):
             context=context,
             task_ref=task_ref,
             silence_threshold=8.0,
-            hesitation_threshold=4,
-            hesitation_window=5.0,
+            hesitation_threshold=3,
+            hesitation_window=10.0,
             cooldown=30.0,
             post_bot_buffer=5.0,
             check_interval=1.0,
         )
+        persona_storage["proactive_monitor"] = proactive_monitor
+
+        reactive_gate = ReactiveGate(proactive_monitor)
 
         pipeline = Pipeline([
             pipecat_transport.input(),
@@ -479,9 +468,9 @@ async def run_bot(webrtc_connection):
             proactive_monitor,
             pipeline_unifier,
             context_aggregator.user(),
-            memory_service,  # Hybrid memory (70% vector + 30% BM25) for automatic recall/storage
             llm,
             ExpressTagFilter(),
+            reactive_gate,
             SilenceFilter(),
             ReasoningLeakFilter(),
             SpaceNormalizer(),
@@ -496,7 +485,7 @@ async def run_bot(webrtc_connection):
 
         @pipecat_transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            logger.info("Pipecat Client connected")
+            logger.info(f"Pipecat Client connected (session {client_id})")
             try:
                 if webrtc_connection.is_connected():
                     webrtc_connection.send_app_message({"type": "system", "message": "Connection established"})
@@ -515,7 +504,6 @@ async def run_bot(webrtc_connection):
 
                     service_info = {
                         "stt": stt_display,
-                        "memory": "Hybrid Search (SQLite)",
                         "llm": f"{_LLM_PROVIDER.capitalize()}: {llm_display}",
                         "tts": tts_display
                     }
@@ -591,4 +579,5 @@ async def run_bot(webrtc_connection):
     except Exception as e:
         logger.error(f"Error in bot pipeline: {e}", exc_info=True)
     finally:
+        metrics_store.print_session_summary()
         await _cleanup_services(service_refs)
