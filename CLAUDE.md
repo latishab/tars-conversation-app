@@ -1,6 +1,6 @@
-# TARS Omni
+# TARS Conversation App
 
-AI brain that connects to Raspberry Pi hardware daemon.
+Real-time conversational AI connecting to Raspberry Pi hardware via WebRTC/gRPC.
 
 ## Pi Access
 ```
@@ -17,34 +17,58 @@ Pi (manual):
 ssh tars-pi "cd ~/tars-conversation-app && bash install.sh"
 ```
 
-See: docs/INSTALLATION_GUIDE.md
-
 ## Run
 
-1. Pi: `ssh tars-pi "cd ~/tars && python tars_daemon.py"`
-2. Mac: `python tars_bot.py`
+**1. Pi daemon** (if not already running)
+```bash
+ssh tars-pi "cd ~/tars && python tars_daemon.py"
+```
 
----
+**2. Mac bot**
+```bash
+python src/tars_bot.py           # robot mode (Pi)
+python src/tars_bot.py --gradio  # with Gradio UI at localhost:7860
+python src/bot.py                # browser mode (WebRTC)
+```
+
+## Config
+
+- `config.ini` — LLM, STT, TTS providers, connection mode, display
+- `env.example` → `.env.local` — API keys
+
+Key providers (set in `config.ini`):
+- **LLM**: `cerebras` (gpt-oss-120b/20b), `deepinfra` (Llama-3.3-70B)
+- **STT**: `deepgram-flux` (recommended), `deepgram`, `speechmatics`
+- **TTS**: `elevenlabs`, `qwen3` (local, MPS/CUDA/CPU)
+- **Connection**: `robot` (Pi via gRPC) or `browser` (SmallWebRTC)
+
+## Project Structure
+
+```
+src/
+  tars_bot.py          # entry point (robot mode)
+  bot.py               # entry point (browser mode)
+  character/           # TARS.json, persona.ini, prompts.py
+  services/            # STT, TTS, LLM factories + memory
+  tools/               # robot.py (emotions/movement), vision.py, persona.py
+  observers/           # proactive/emotional monitoring
+  processors/          # pipeline processors
+  transport/           # WebRTC/gRPC transport
+  ui/                  # Gradio dashboard
+```
 
 ## Docs
 
-- Installation: docs/INSTALLATION_GUIDE.md
-- App Development: docs/DEVELOPING_APPS.md
-- Daemon Integration: docs/DAEMON_INTEGRATION.md
-- Dashboard Update: docs/DASHBOARD_UPDATE_SUMMARY.md
-
-## Dashboard Install
-
-tars-daemon dashboard now supports app management:
-- Apps tab shows all apps in ~/tars-apps/
-- Install/Uninstall buttons
-- Start/Stop controls
-- Auto-discovery via app.json
+- `docs/RUN.md` — run modes, split routing, troubleshooting
+- `docs/INSTALLATION_GUIDE.md` — full install steps
+- `docs/DEVELOPING_APPS.md` — app development
+- `docs/DAEMON_INTEGRATION.md` — Pi daemon integration
+- `src/DAEMON_INTEGRATION.md` — src-level daemon notes
 
 ## Claude Code Guidelines
 
 - No emojis, no [NEW] markers, no "vs" comparisons
 - Concise, technical, factual only
 - No fluff, benefits sections, or marketing language
-- Commits: imperative mood, no emojis
+- Commits: imperative mood, no emojis, no Co-Authored-By lines
 - Comments: minimal, explain "why" not "what"
