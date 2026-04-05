@@ -32,11 +32,15 @@ publish-to-hf.sh
 
 # logs
 logs/proactive_interventions_*.jsonl
+logs/participants/
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# virtual environments
+venv/
 
 # local env files
 .env*.local
