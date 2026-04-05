@@ -30,11 +30,10 @@ def get_fresh_config():
     """
     reload_config()
     return {
-        'DEEPINFRA_MODEL': get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b"),
         'LLM_PROVIDER': get_config("LLM", "provider", "LLM_PROVIDER", "cerebras"),
         'LLM_MODEL': get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b"),
-        'STT_PROVIDER': get_config("STT", "provider", "STT_PROVIDER", "speechmatics"),
-        'TTS_PROVIDER': get_config("TTS", "provider", "TTS_PROVIDER", "qwen3"),
+        'STT_PROVIDER': get_config("STT", "provider", "STT_PROVIDER", "soniox"),
+        'TTS_PROVIDER': get_config("TTS", "provider", "TTS_PROVIDER", "elevenlabs"),
         'QWEN3_TTS_MODEL': get_config("TTS", "qwen3_model", "QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
         'QWEN3_TTS_DEVICE': get_config("TTS", "qwen3_device", "QWEN3_TTS_DEVICE", "mps"),
         'QWEN3_TTS_REF_AUDIO': get_config("TTS", "qwen3_ref_audio", "QWEN3_TTS_REF_AUDIO", "tars-clean-compressed.mp3"),
@@ -87,20 +86,19 @@ PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 
 # LLM Configuration (config.ini with .env fallback)
-DEEPINFRA_MODEL = get_config("LLM", "model", "DEEPINFRA_MODEL", "openai/gpt-oss-20b")
-DEEPINFRA_VISION_MODEL = get_config("LLM", "vision_model", "DEEPINFRA_VISION_MODEL", "meta-llama/Llama-3.2-11B-Vision-Instruct")
 LLM_PROVIDER = get_config("LLM", "provider", "LLM_PROVIDER", "cerebras")
 LLM_MODEL = get_config("LLM", "model", "LLM_MODEL", "gpt-oss-120b")
+LLM_VISION_MODEL = get_config("LLM", "vision_model", "DEEPINFRA_VISION_MODEL", "meta-llama/Llama-3.2-11B-Vision-Instruct")
 
 # STT Configuration (config.ini with .env fallback)
 # Options: "speechmatics", "deepgram", "deepgram-flux"
-STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "deepgram-flux")
+STT_PROVIDER = get_config("STT", "provider", "STT_PROVIDER", "soniox")
 DEEPGRAM_MODEL = get_config("STT", "deepgram_model", "DEEPGRAM_MODEL", "nova-3")
 DEEPGRAM_ENDPOINTING = int(get_config("STT", "deepgram_endpointing", "DEEPGRAM_ENDPOINTING", "100"))
 SONIOX_MODEL = get_config("STT", "soniox_model", "SONIOX_MODEL", "stt-rt-v4")
 
 # TTS Configuration (config.ini with .env fallback)
-TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "qwen3")
+TTS_PROVIDER = get_config("TTS", "provider", "TTS_PROVIDER", "elevenlabs")
 QWEN3_TTS_MODEL = get_config("TTS", "qwen3_model", "QWEN3_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
 QWEN3_TTS_DEVICE = get_config("TTS", "qwen3_device", "QWEN3_TTS_DEVICE", "mps")
 QWEN3_TTS_REF_AUDIO = get_config("TTS", "qwen3_ref_audio", "QWEN3_TTS_REF_AUDIO", "tars-clean-compressed.mp3")

@@ -76,8 +76,6 @@ logger.remove(0)
 
 # Configure standard logging
 logging.basicConfig(level=logging.INFO)
-standard_logger = logging.getLogger(__name__)
-
 # Reduce noise from websockets library - only log warnings and above
 websockets_logger = logging.getLogger('websockets')
 websockets_logger.setLevel(logging.WARNING)
@@ -166,7 +164,7 @@ async def status():
     current_config = get_fresh_config()
     current_stt = current_config['STT_PROVIDER']
     current_tts = current_config['TTS_PROVIDER']
-    current_model = current_config['DEEPINFRA_MODEL']
+    current_model = current_config['LLM_MODEL']
 
     return {
         "status": "ok",
@@ -197,13 +195,13 @@ async def get_config():
 
     return {
         "llm": {
-            "model": config.get("LLM", "model", fallback="Qwen/Qwen3-235B-A22B-Instruct-2507")
+            "model": config.get("LLM", "model", fallback="gpt-oss-120b")
         },
         "stt": {
-            "provider": config.get("STT", "provider", fallback="speechmatics")
+            "provider": config.get("STT", "provider", fallback="soniox")
         },
         "tts": {
-            "provider": config.get("TTS", "provider", fallback="qwen3"),
+            "provider": config.get("TTS", "provider", fallback="elevenlabs"),
             "qwen3_model": config.get("TTS", "qwen3_model", fallback="Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
             "qwen3_device": config.get("TTS", "qwen3_device", fallback="mps"),
             "qwen3_ref_audio": config.get("TTS", "qwen3_ref_audio", fallback="tars-clean-compressed.mp3"),

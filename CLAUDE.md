@@ -28,7 +28,7 @@ ssh tars-pi "cd ~/tars && python tars_daemon.py"
 ```bash
 python src/tars_bot.py           # robot mode (Pi)
 python src/tars_bot.py --gradio  # with Gradio UI at localhost:7860
-python src/bot.py                # browser mode (WebRTC)
+python src/pipecat_service.py     # browser mode (WebRTC)
 ```
 
 ## Config

@@ -47,6 +47,14 @@ cp env.example .env.local   # add API keys
 cp config.ini.example config.ini
 ```
 
+## Requirements
+
+- Python 3.10+
+- macOS (Apple Silicon) or Linux for AI host
+- Raspberry Pi 5 for robot hardware
+- System packages: `portaudio19-dev`, `ffmpeg`
+- API keys: Cerebras (LLM), Soniox (STT), ElevenLabs (TTS). See `env.example` for all options.
+
 ## Run
 
 ```bash

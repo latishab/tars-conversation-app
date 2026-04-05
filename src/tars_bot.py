@@ -115,7 +115,6 @@ async def run_robot_bot(ui=None):
 
     # Load fresh configuration
     runtime_config = get_fresh_config()
-    DEEPINFRA_MODEL = runtime_config['DEEPINFRA_MODEL']
     _LLM_PROVIDER = runtime_config['LLM_PROVIDER']
     _LLM_MODEL = runtime_config['LLM_MODEL']
     STT_PROVIDER = runtime_config['STT_PROVIDER']
@@ -363,13 +362,7 @@ async def run_robot_bot(ui=None):
         llm.register_function("adjust_persona_parameter", adjust_persona_parameter)
         llm.register_function("set_task_mode", set_task_mode)
 
-        # async def set_user_identity(params: FunctionCallParams):
-        #     name = params.arguments.get("name", "")
-        #     logger.info(f"👤 Identity: {name}")
-        #     await params.result_callback(f"Identity updated to {name}.")
-        # llm.register_function("set_user_identity", set_user_identity)
-
-        logger.info(f"✓ LLM initialized with {DEEPINFRA_MODEL}")
+        logger.info(f"✓ LLM initialized with {_LLM_MODEL}")
 
         # ====================================================================
         # TARS ROBOT CLIENT (gRPC commands)

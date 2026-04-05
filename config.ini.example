@@ -15,7 +15,7 @@ provider = deepgram-flux
 
 [TTS]
 # Available providers: elevenlabs, qwen3
-provider = qwen3
+provider = elevenlabs
 
 # Qwen3-TTS Configuration (only used if provider = qwen3)
 # Available models: Qwen/Qwen3-TTS-12Hz-0.6B-Base, Qwen/Qwen3-TTS-12Hz-1.7B-Base
