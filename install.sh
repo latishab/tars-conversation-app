@@ -179,4 +179,4 @@ else
 fi
 echo
 echo "For browser mode: python $APP_DIR/src/bot.py"
-echo "For dashboard: python $APP_DIR/ui/app.py"
+echo "For dashboard: python $APP_DIR/src/ui/gradio_app.py"

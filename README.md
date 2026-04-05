@@ -8,6 +8,9 @@ short_description: Real-time AI voice assistant for TARS
 pinned: false
 ---
 
+> **FYP Project 25CS048** | Latisha Besariani Hendra | Supervisor: Prof. Shengdong Zhao
+> Department of Computer Science, City University of Hong Kong
+
 # TARS Conversation App
 
 Real-time voice AI brain for the TARS robot. Connects to a Raspberry Pi hardware daemon via WebRTC and gRPC.
