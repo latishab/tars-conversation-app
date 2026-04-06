@@ -4,7 +4,7 @@ Quick reference for installing tars-conversation-app on Raspberry Pi.
 
 ## Prerequisites
 
-- Raspberry Pi 4 (4GB RAM recommended)
+- Raspberry Pi 5 (4GB RAM recommended)
 - Raspberry Pi OS (Trixie or later)
 - Python 3.10 or higher
 - Internet connection

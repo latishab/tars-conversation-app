@@ -2,36 +2,32 @@
 
 Guide for creating TARS-compatible applications that integrate with the tars-daemon.
 
-## Architecture Overview
-
-TARS apps connect to the tars-daemon running on Raspberry Pi:
+## Architecture
 
 ```
-[Your App] ←→ gRPC (50051) ←→ [tars-daemon] ←→ [Hardware]
-                                                  ├─ Motors
-                                                  ├─ Camera
-                                                  └─ Display
+[Your App] <-> gRPC (50051) <-> [tars-daemon] <-> [Hardware]
+                                                   |- Motors
+                                                   |- Camera
+                                                   +- Display
 ```
 
 ## App Structure
 
-### Minimal Structure
-
 ```
 your-app/
-├── app.json                 # App manifest (required)
-├── requirements.txt         # Python dependencies
-├── config.ini.example       # Configuration template
-├── env.example              # Environment variables template
-├── install.sh               # Installation script
-├── uninstall.sh             # Cleanup script
-├── main.py                  # Entry point
-└── README.md                # Documentation
+|- app.json                 # App manifest (required)
+|- requirements.txt         # Python dependencies
+|- config.ini.example       # Configuration template
+|- env.example              # Environment variables template
+|- install.sh               # Installation script
+|- uninstall.sh             # Cleanup script
+|- main.py                  # Entry point
++- README.md
 ```
 
 ## App Manifest (app.json)
 
-Required file for daemon dashboard integration:
+Required for daemon dashboard integration:
 
 ```json
 {
@@ -62,251 +58,44 @@ Required file for daemon dashboard integration:
 }
 ```
 
-## Configuration System
+## Configuration
 
-### Environment Variables (.env.local)
-
-Store secrets only, never commit:
-
-```bash
-# API Keys
-DEEPINFRA_API_KEY=your_key_here
-SPEECHMATICS_API_KEY=your_key_here
-ELEVENLABS_API_KEY=your_key_here
-```
-
-### User Configuration (config.ini)
-
-Runtime settings users can modify:
-
-```ini
-[Connection]
-mode = robot
-connection_type = local  # or manual, tailscale
-rpi_ip = 192.168.1.100  # if using manual mode
-auto_connect = false
-
-[LLM]
-model = openai/gpt-oss-20b
-gating_model = meta-llama/Llama-3.2-3B-Instruct
-```
-
-### Loading Configuration
-
-```python
-from pathlib import Path
-from configparser import ConfigParser
-from dotenv import load_dotenv
-import os
-
-# Load secrets
-env_local = Path(__file__).parent / ".env.local"
-load_dotenv(env_local, override=True)
-
-# Load config
-config = ConfigParser()
-config.read("config.ini")
-
-# Runtime reload without restart
-def get_fresh_config():
-    config = ConfigParser()
-    config.read("config.ini")
-    return config
-```
+- `.env.local` for secrets (gitignored). Copy from `env.example`.
+- `config.ini` for runtime settings (gitignored). Copy from `config.ini.example`.
+- Load with `dotenv` and `ConfigParser`. See [Configuration Reference](CONFIGURATION.md).
 
 ## Connecting to tars-daemon
 
-### gRPC Client
-
 ```python
 import grpc
-from tars_sdk import TarsClient
-
-# Singleton client
-_client = None
-
-def get_tars_client():
-    global _client
-    if _client is None:
-        grpc_address = os.getenv("RPI_GRPC", "tars.local:50051")
-        channel = grpc.insecure_channel(grpc_address)
-        _client = TarsClient(channel)
-    return _client
-
-# Use the client
-client = get_tars_client()
-client.execute_movement("wave_right")
-client.set_emotion("happy")
-```
-
-### Deployment Mode Detection
-
-Auto-detect if running locally on Pi or remotely:
-
-```python
-def detect_deployment_mode():
-    # Check if running on Raspberry Pi
-    try:
-        with open("/proc/cpuinfo", "r") as f:
-            if "Raspberry Pi" in f.read():
-                return "local"
-    except FileNotFoundError:
-        pass
-
-    # Check if daemon running on localhost
-    try:
-        import grpc
-        channel = grpc.insecure_channel("localhost:50051")
-        grpc.channel_ready_future(channel).result(timeout=1)
-        return "local"
-    except:
-        return "remote"
-
-def get_grpc_address():
-    if detect_deployment_mode() == "local":
-        return "localhost:50051"
-    return os.getenv("RPI_GRPC", "tars.local:50051")
-```
-
-## Installation Scripts
-
-### install.sh
-
-```bash
-#!/bin/bash
-set -e
-
-APP_NAME="your-app"
-APP_DIR="$HOME/$APP_NAME"
-
-echo "Installing $APP_NAME..."
-
-# Check Python version
-python3 --version | grep -q "3.1[0-9]" || {
-    echo "Error: Python 3.10+ required"
-    exit 1
-}
-
-# Install system dependencies
-sudo apt-get update
-sudo apt-get install -y portaudio19-dev ffmpeg
-
-# Create virtual environment
-python3 -m venv "$APP_DIR/venv"
-source "$APP_DIR/venv/bin/activate"
-
-# Install Python dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Setup configuration
-if [ ! -f config.ini ]; then
-    cp config.ini.example config.ini
-    echo "Created config.ini - please configure before running"
-fi
-
-if [ ! -f .env.local ]; then
-    cp env.example .env.local
-    echo "Created .env.local - please add API keys"
-fi
-
-echo "Installation complete!"
-echo "Next steps:"
-echo "1. Edit .env.local with your API keys"
-echo "2. Edit config.ini if needed"
-echo "3. Run: python main.py"
-```
-
-### uninstall.sh
-
-```bash
-#!/bin/bash
-set -e
-
-APP_NAME="your-app"
-APP_DIR="$HOME/$APP_NAME"
-
-echo "Uninstalling $APP_NAME..."
-
-# Stop running processes
-pkill -f "python.*$APP_NAME" || true
-
-# Remove virtual environment
-rm -rf "$APP_DIR/venv"
-
-# Remove generated data (optional)
-read -p "Remove data directories? (y/N) " -n 1 -r
-echo
-if [[ $REPL =~ ^[Yy]$ ]]; then
-    rm -rf chroma_memory memory_data
-fi
-
-echo "Uninstall complete!"
-```
-
-## Best Practices
-
-### 1. Project Structure
-
-- Keep source code in `src/` directory (see `tars-conversation-app` as reference: entry points at `src/tars_bot.py` and `src/bot.py`, UI at `src/ui/gradio_app.py`)
-- Separate configuration from code
-- Provide example configs (never commit secrets)
-- Include tests in `tests/` directory
-
-### 2. Configuration
-
-- Use `.env.local` for secrets (gitignore it)
-- Use `config.ini` for user settings (gitignore it)
-- Provide `.example` templates
-- Support runtime config reload when possible
-
-### 3. Dependencies
-
-- Pin major versions in requirements.txt
-- Document system dependencies in README
-- Test on fresh Pi OS installation
-- Keep dependencies minimal
-
-### 4. Error Handling
-
-- Validate configuration on startup
-- Provide clear error messages
-- Test connection to daemon before running
-- Graceful degradation if hardware unavailable
-
-### 5. Performance
-
-- Use gRPC for low-latency commands (~5-10ms)
-- Batch operations when possible
-- Monitor resource usage on Pi
-- Optimize for Raspberry Pi 4 (4GB RAM)
-
-### 6. Testing
-
-- Test on actual hardware
-- Provide test scripts for gestures/expressions
-- Document expected behavior
-- Include connection tests
-
-## Example: Minimal TARS App
-
-```python
-# main.py
-import grpc
-from tars_sdk import TarsClient
-from pathlib import Path
-from dotenv import load_dotenv
 import os
+from tars_sdk import TarsClient
 
-# Load configuration
-load_dotenv(Path(__file__).parent / ".env.local")
-
-# Connect to daemon
 grpc_address = os.getenv("RPI_GRPC", "tars.local:50051")
 channel = grpc.insecure_channel(grpc_address)
 client = TarsClient(channel)
 
-# Test connection
+client.set_emotion("happy")
+client.execute_movement("wave_right")
+```
+
+Use `localhost:50051` when running directly on the Pi.
+
+## Minimal App Example
+
+```python
+import grpc
+from tars_sdk import TarsClient
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+load_dotenv(Path(__file__).parent / ".env.local")
+
+grpc_address = os.getenv("RPI_GRPC", "tars.local:50051")
+channel = grpc.insecure_channel(grpc_address)
+client = TarsClient(channel)
+
 try:
     status = client.get_robot_status()
     print(f"Connected to TARS: {status}")
@@ -314,87 +103,36 @@ except Exception as e:
     print(f"Connection failed: {e}")
     exit(1)
 
-# Use robot
 client.set_emotion("happy")
 client.execute_movement("wave_right")
-print("TARS says hello!")
 ```
 
-## Integration with Claude Code
+## Install/Uninstall Scripts
 
-Structure your app for easy AI-assisted development:
+`install.sh` should:
+- Check Python 3.10+
+- Install system deps (`portaudio19-dev`, `ffmpeg`)
+- Create venv and install requirements
+- Copy example configs if missing
 
-1. **Clear directory structure** - AI can navigate easily
-2. **Documented configuration** - AI understands settings
-3. **Type hints** - AI provides better suggestions
-4. **Docstrings** - AI understands intent
-5. **README.md** - AI reads project context
+`uninstall.sh` should:
+- Stop running processes
+- Remove the venv
+- Optionally remove data directories
 
-See CLAUDE.md for project-specific guidelines.
+## Best Practices
 
-## Common Patterns
-
-### Startup Validation
-
-```python
-def validate_startup():
-    """Check all requirements before running"""
-    errors = []
-
-    # Check API keys
-    if not os.getenv("DEEPINFRA_API_KEY"):
-        errors.append("Missing DEEPINFRA_API_KEY in .env.local")
-
-    # Check config file
-    if not Path("config.ini").exists():
-        errors.append("config.ini not found")
-
-    # Test daemon connection
-    try:
-        client = get_tars_client()
-        client.get_robot_status()
-    except Exception as e:
-        errors.append(f"Cannot connect to daemon: {e}")
-
-    if errors:
-        print("Startup validation failed:")
-        for error in errors:
-            print(f"  - {error}")
-        exit(1)
-```
-
-### Graceful Shutdown
-
-```python
-import signal
-import sys
-
-def signal_handler(sig, frame):
-    """Clean shutdown on Ctrl+C"""
-    print("\nShutting down...")
-
-    # Reset robot state
-    try:
-        client = get_tars_client()
-        client.set_emotion("neutral")
-        client.set_eye_state(True, True)
-    except:
-        pass
-
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-```
+- Keep source in `src/`, tests in `tests/`
+- Pin major versions in requirements.txt
+- Never commit secrets -- use `.env.local`
+- Validate config and daemon connection on startup
+- Test on actual Pi hardware
+- Use gRPC for low-latency commands (~5-10ms)
 
 ## Resources
 
 - tars-daemon: `~/tars-daemon` on Pi
-- TARS SDK: Install via pip `pip install tars-sdk`
-- Example Apps: This repository (tars-conversation-app)
-- Pi Access: `ssh tars-pi` (use `tars.local` or your Pi's IP)
-
-## Support
-
-- Check daemon status: `systemctl status tars-daemon`
-- View daemon logs: `journalctl -u tars-daemon -f`
-- Test gRPC connection: `grpcurl -plaintext tars.local:50051 list`
+- TARS SDK: `pip install tars-sdk`
+- Pi access: `ssh tars-pi` (`tars.local` or Tailscale hostname `tars`)
+- Daemon status: `systemctl status tars-daemon`
+- Daemon logs: `journalctl -u tars-daemon -f`

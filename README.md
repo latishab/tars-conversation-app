@@ -17,9 +17,9 @@ Real-time voice AI brain for the TARS robot. Connects to a Raspberry Pi hardware
 
 ## Modes
 
-**Robot mode** (`src/tars_bot.py`) — connects to RPi over WebRTC + gRPC. Controls eyes, gestures, and movement.
+**Robot mode** (`src/tars_bot.py`) -- connects to RPi over WebRTC + gRPC. Controls eyes, gestures, and movement.
 
-**Browser mode** (`src/bot.py`) — browser mic/speaker via SmallWebRTC. Includes hybrid memory and Gradio dashboard.
+**Browser mode** (`src/bot.py`) -- browser mic/speaker via SmallWebRTC. Includes hybrid memory and Gradio dashboard.
 
 ## Stack
 
@@ -34,7 +34,7 @@ Real-time voice AI brain for the TARS robot. Connects to a Raspberry Pi hardware
 ## Quick Start
 
 **Via TARS daemon dashboard:**
-1. Open `http://tars.local:8000` → Apps tab → Install
+1. Open `http://tars.local:8000` -> Apps tab -> Install
 2. Configure API keys in `.env.local`
 3. Click Start
 
@@ -53,7 +53,7 @@ cp config.ini.example config.ini
 - macOS (Apple Silicon) or Linux for AI host
 - Raspberry Pi 5 for robot hardware
 - System packages: `portaudio19-dev`, `ffmpeg`
-- API keys: Cerebras (LLM), Soniox (STT), ElevenLabs (TTS). See `env.example` for all options.
+- API keys: see `env.example` for all options
 
 ## Run
 
@@ -65,64 +65,17 @@ python src/tars_bot.py
 python src/pipecat_service.py
 ```
 
-## Configuration
-
-`config.ini` — runtime settings (provider, model, connection):
-```ini
-[LLM]
-provider = cerebras
-model = gpt-oss-120b
-
-[STT]
-provider = deepgram
-
-[TTS]
-provider = elevenlabs
-
-[Connection]
-connection_type = local   # local | manual | tailscale
-auto_connect = true
-```
-
-`.env.local` — API keys:
-```
-CEREBRAS_API_KEY=
-DEEPGRAM_API_KEY=
-ELEVENLABS_API_KEY=
-ELEVENLABS_VOICE_ID=
-DEEPINFRA_API_KEY=
-GEMINI_API_KEY=
-```
-
-## Robot Connection
-
-| Type | How |
-|------|-----|
-| `local` | `tars.local` via mDNS (default) |
-| `manual` | Direct IP — set `rpi_ip` in config.ini |
-| `tailscale` | Tailscale MagicDNS hostname `tars` |
-
-If mDNS fails: `ssh tars-pi "hostname -I"` then set `connection_type = manual`.
-
-## Project Structure
-
-```
-src/
-├── tars_bot.py          # Robot mode entry point
-├── bot.py               # Browser mode entry point
-├── character/           # TARS persona and prompts
-├── processors/          # Pipeline filters (silence, express tags, reasoning)
-├── services/            # STT/TTS/LLM factories, memory, robot client
-├── tools/               # LLM-callable tools (robot, vision, persona)
-├── transport/           # aiortc WebRTC client
-└── ui/                  # Gradio metrics dashboard
-```
+See [Running TARS](docs/RUN.md) for Gradio UI, split routing, and troubleshooting.
 
 ## Docs
 
-- [Installation](docs/INSTALLATION_GUIDE.md)
-- [App Development](docs/DEVELOPING_APPS.md)
-- [Daemon Integration](docs/DAEMON_INTEGRATION.md)
+- [Installation](docs/INSTALLATION_GUIDE.md) -- full install steps, connection setup, systemd service
+- [Running TARS](docs/RUN.md) -- run modes, Gradio UI, split routing, troubleshooting
+- [Configuration](docs/CONFIGURATION.md) -- config.ini and .env.local reference
+- [Architecture](docs/ARCHITECTURE.md) -- pipeline, processors, observers, tools
+- [Persona](docs/PERSONA.md) -- character customization and personality parameters
+- [App Development](docs/DEVELOPING_APPS.md) -- building apps with the TARS SDK
+- [Daemon Integration](docs/DAEMON_INTEGRATION.md) -- how the Pi daemon manages apps
 
 ## License
 
