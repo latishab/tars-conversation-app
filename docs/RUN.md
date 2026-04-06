@@ -50,7 +50,7 @@ In Gradio:
 In terminal logs, look for:
 ```
 pipeline is now ready
-STT=Deepgram Nova-3, LLM=gpt-oss-120b, TTS=ElevenLabs
+STT=Deepgram Nova-3, LLM=qwen-3-235b-a22b-instruct-2507, TTS=ElevenLabs
 ```
 
 ---

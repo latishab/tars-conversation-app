@@ -95,6 +95,7 @@ class ProactiveMonitor(FrameProcessor):
         self._pending_confusion_detected_at: float = 0.0
         self._proactive_speech_ended_at: float = 0.0
         self._in_followup_conversation: bool = False
+        self._task_mode_activated_at: float = 0.0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -161,6 +162,20 @@ class ProactiveMonitor(FrameProcessor):
             return
 
         now = time.time()
+
+        # Grace period: suppress all triggers for 10s after task mode activation,
+        # or until first substantive user utterance (whichever comes first).
+        if self._task_mode_activated_at > 0:
+            elapsed = now - self._task_mode_activated_at
+            if elapsed < 10.0:
+                post_activation = [
+                    e for e in self._transcript_buffer
+                    if e.get("timestamp", 0) > self._task_mode_activated_at
+                ]
+                substantive = any(len(e.get("text", "").strip()) > 5 for e in post_activation)
+                if not substantive:
+                    return
+            self._task_mode_activated_at = 0.0
         trigger_type = None
         context_snippet = ""
         hesitation_score = 0
@@ -466,10 +481,12 @@ class ProactiveMonitor(FrameProcessor):
             self._cooldown = 30.0
             self._confusion_cooldown = 30.0
             self._consecutive_unanswered = 0
+            self._task_mode_activated_at = 0.0
             logger.info("ProactiveMonitor: task mode OFF")
         else:
             self._task_context = mode
             self._task_mode_just_activated = True
+            self._task_mode_activated_at = time.time()
             self._silence_threshold = 15.0  # longer silence expected during tasks
             self._cooldown = 60.0           # less frequent interventions
             self._confusion_cooldown = 30.0  # confusion can fire every 30s regardless

@@ -103,7 +103,7 @@ async def _describe_image(img_bytes: bytes, question: str) -> str:
 async def _describe_image_deepinfra(img_bytes: bytes, question: str) -> str:
     """Describe an image using DeepInfra vision model via OpenAI-compatible API."""
     from openai import AsyncOpenAI
-    from config import DEEPINFRA_API_KEY, DEEPINFRA_VISION_MODEL
+    from config import DEEPINFRA_API_KEY, LLM_VISION_MODEL
 
     img_b64 = base64.b64encode(img_bytes).decode("utf-8")
     client = AsyncOpenAI(
@@ -112,7 +112,7 @@ async def _describe_image_deepinfra(img_bytes: bytes, question: str) -> str:
     )
     try:
         response = await client.chat.completions.create(
-            model=DEEPINFRA_VISION_MODEL,
+            model=LLM_VISION_MODEL,
             messages=[{
                 "role": "user",
                 "content": [

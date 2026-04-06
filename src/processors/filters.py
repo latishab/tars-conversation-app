@@ -232,7 +232,7 @@ class SpaceNormalizer(FrameProcessor):
     """
     Fixes missing spaces in Cerebras LLM output before text reaches TTS.
 
-    Cerebras gpt-oss-120b sometimes emits tokens without the expected leading
+    Cerebras LLM sometimes emits tokens without the expected leading
     space, causing adjacent words to fuse ("forsupport", "TARSrobot", etc.).
 
     Two complementary fixes, both zero-latency (per-token, no buffering):

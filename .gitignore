@@ -5,6 +5,7 @@ node_modules/
 
 # testing
 /coverage
+/.pytest_cache
 
 # next.js
 /.next/
@@ -31,8 +32,7 @@ publish-to-hf.sh
 /memory_data/
 
 # logs
-logs/proactive_interventions_*.jsonl
-logs/participants/
+logs/
 
 # debug
 npm-debug.log*

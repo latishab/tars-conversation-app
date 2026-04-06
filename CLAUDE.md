@@ -37,7 +37,7 @@ python src/pipecat_service.py     # browser mode (WebRTC)
 - `env.example` → `.env.local` — API keys
 
 Key providers (set in `config.ini`):
-- **LLM**: `cerebras` (gpt-oss-120b/20b), `deepinfra` (Llama-3.3-70B)
+- **LLM**: `cerebras` (qwen-3-235b-a22b-instruct-2507), `deepinfra` (Llama-3.3-70B)
 - **STT**: `deepgram-flux` (recommended), `deepgram`, `speechmatics`
 - **TTS**: `elevenlabs`, `qwen3` (local, MPS/CUDA/CPU)
 - **Connection**: `robot` (Pi via gRPC) or `browser` (SmallWebRTC)

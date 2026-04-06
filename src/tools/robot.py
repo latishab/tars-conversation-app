@@ -246,9 +246,9 @@ def create_express_schema(custom_expressions: list = None) -> FunctionSchema:
         name="express",
         description=(
             "Set TARS eye expression to match the emotional tone of your response. "
-            "low = eyes only, costs nothing, use whenever your words carry emotion. "
-            "medium = eyes + gesture, for notable moments. "
-            "high = eyes + expressive gesture, for strong reactions. "
+            "low = eyes only, use for routine responses. "
+            "medium = eyes + gesture, use when greeting, celebrating, or reacting to something the user said. Preferred over low when the moment has energy. "
+            "high = eyes + expressive gesture, for strong excitement or surprise. "
             "Valid emotions: neutral, happy, sad, angry, excited, afraid, sleepy, "
             f"side eye L, side eye R, curious, skeptical, smug, surprised.{custom_str}"
         ),
@@ -261,7 +261,7 @@ def create_express_schema(custom_expressions: list = None) -> FunctionSchema:
             "intensity": {
                 "type": "string",
                 "enum": VALID_INTENSITIES,
-                "description": "Expression intensity: low (eyes only), medium (eyes + subtle gesture), high (eyes + expressive gesture)",
+                "description": "Expression intensity: low (eyes only, routine), medium (eyes + gesture, moments with energy), high (eyes + expressive gesture, strong excitement/surprise)",
                 "default": "low"
             }
         },
